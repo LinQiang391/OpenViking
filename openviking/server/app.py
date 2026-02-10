@@ -18,6 +18,7 @@ from openviking.server.routers import (
     content_router,
     debug_router,
     filesystem_router,
+    mcp_router,
     observer_router,
     pack_router,
     relations_router,
@@ -141,5 +142,6 @@ def create_app(
     app.include_router(pack_router)
     app.include_router(debug_router)
     app.include_router(observer_router)
+    app.include_router(mcp_router)
 
     return app
