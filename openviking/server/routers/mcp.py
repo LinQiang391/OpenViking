@@ -355,8 +355,12 @@ TOOL_HANDLERS: Dict[str, Callable] = {
 def handle_resource_status() -> str:
     """Handle status resource read."""
     service = get_service()
+    # Ensure initialized is always a boolean for JSON serialization
+    initialized = getattr(service, "_initialized", None)
+    if not isinstance(initialized, bool):
+        initialized = bool(initialized) if initialized is not None else True
     info = {
-        "initialized": getattr(service, "_initialized", True),
+        "initialized": initialized,
         "status": "running",
     }
     return json.dumps(info, indent=2)
