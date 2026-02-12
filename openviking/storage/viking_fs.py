@@ -69,6 +69,7 @@ def init_viking_fs(
     rerank_config: Optional["RerankConfig"] = None,
     vector_store: Optional["VikingDBInterface"] = None,
     timeout: int = 10,
+    enable_recorder: bool = False,
 ) -> "VikingFS":
     """Initialize VikingFS singleton.
 
@@ -78,6 +79,7 @@ def init_viking_fs(
         rerank_config: Rerank configuration
         vector_store: Vector store instance
         timeout: Request timeout in seconds
+        enable_recorder: Whether to enable IO recording
     """
     global _instance
     _instance = VikingFS(
@@ -87,7 +89,45 @@ def init_viking_fs(
         vector_store=vector_store,
         timeout=timeout,
     )
+
+    if enable_recorder:
+        _enable_viking_fs_recorder(_instance)
+
     return _instance
+
+
+def _enable_viking_fs_recorder(viking_fs: "VikingFS") -> None:
+    """
+    Enable recorder for a VikingFS instance.
+
+    This wraps the AGFS client with recording capabilities.
+    Called automatically when enable_recorder=True in init_viking_fs.
+
+    Args:
+        viking_fs: VikingFS instance to enable recording for
+    """
+    from openviking.storage.recorder import create_recording_agfs_client, get_recorder
+
+    recorder = get_recorder()
+    if not recorder.enabled:
+        from openviking.storage.recorder import init_recorder
+        init_recorder(enabled=True)
+
+    viking_fs.agfs = create_recording_agfs_client(viking_fs.agfs)
+    logger.info("[VikingFS] IO Recorder enabled")
+
+
+def enable_viking_fs_recorder() -> None:
+    """
+    Enable recorder for the global VikingFS singleton.
+
+    This function wraps the existing VikingFS's AGFS client with recording.
+    Must be called after init_viking_fs().
+    """
+    global _instance
+    if _instance is None:
+        raise RuntimeError("VikingFS not initialized. Call init_viking_fs() first.")
+    _enable_viking_fs_recorder(_instance)
 
 
 def get_viking_fs() -> "VikingFS":
@@ -154,8 +194,9 @@ class VikingFS:
                 return None
             except Exception:
                 pass
-
-        self.agfs.mkdir(path)
+        path = self._uri_to_path(uri)
+        # fix s3fs
+        return await asyncio.to_thread(self.agfs.mkdir, path, mode)
 
     async def rm(self, uri: str, recursive: bool = False) -> Dict[str, Any]:
         """Delete file/directory + recursively update vector index."""
@@ -1061,6 +1102,7 @@ class VikingFS:
         await self._ensure_parent_dirs(to_path)
         self.agfs.write(to_path, content)
         self.agfs.rm(from_path)
+        print(f"[VikingFS] Moved {from_uri} to {to_uri}")
 
     # ========== Temp File Operations (backward compatible) ==========
 

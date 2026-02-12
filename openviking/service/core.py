@@ -6,6 +6,7 @@ OpenViking Service Core.
 Main service class that composes all sub-services and manages infrastructure lifecycle.
 """
 
+import os
 from typing import Any, Optional
 
 from openviking.agfs_manager import AGFSManager
@@ -98,7 +99,7 @@ class OpenVikingService:
 
     def _init_storage(self, config: StorageConfig) -> None:
         """Initialize storage resources."""
-        if config.agfs.backend == "local":
+        if True:
             self._agfs_manager = AGFSManager(config=config.agfs)
             self._agfs_manager.start()
             self._agfs_url = self._agfs_manager.url
@@ -205,13 +206,17 @@ class OpenVikingService:
         await init_context_collection(self._vikingdb_manager)
 
         # Initialize VikingFS
+        enable_recorder = os.environ.get("OPENVIKING_ENABLE_RECORDER", "").lower() == "true"
         self._viking_fs = init_viking_fs(
             agfs_url=self._agfs_url or "http://localhost:8080",
             query_embedder=self._embedder,
             rerank_config=config.rerank,
             vector_store=self._vikingdb_manager,
             timeout=config.storage.agfs.timeout,
+            enable_recorder=enable_recorder,
         )
+        if enable_recorder:
+            logger.info("VikingFS IO Recorder enabled")
 
         # Initialize directories
         directory_initializer = DirectoryInitializer(vikingdb=self._vikingdb_manager)

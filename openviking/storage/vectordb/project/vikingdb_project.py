@@ -1,14 +1,26 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: Apache-2.0
+<<<<<<< Updated upstream
 from typing import Any, Dict, List, Optional
+=======
+from typing import Any, Dict, Optional, List
+>>>>>>> Stashed changes
 
 from openviking.storage.vectordb.collection.collection import Collection
 from openviking.storage.vectordb.collection.vikingdb_clients import (
     VIKINGDB_APIS,
     VikingDBClient,
 )
+<<<<<<< Updated upstream
 from openviking.storage.vectordb.collection.vikingdb_collection import VikingDBCollection
 from openviking_cli.utils.logger import default_logger as logger
+=======
+from openviking.storage.vectordb.collection.vikingdb_collection import (
+    VikingDBCollection,
+    get_or_create_vikingdb_collection,
+)
+from openviking.utils.logger import default_logger as logger
+>>>>>>> Stashed changes
 
 
 def get_or_create_vikingdb_project(
@@ -94,6 +106,10 @@ class VikingDBProject:
         except Exception:
             return None
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
     def _get_collections(self) -> List[str]:
         """List all collection names from server"""
         client = VikingDBClient(self.host, self.headers)
@@ -109,7 +125,11 @@ class VikingDBProject:
             return colls
         except Exception:
             return []
+<<<<<<< Updated upstream
 
+=======
+            
+>>>>>>> Stashed changes
     def list_collections(self) -> List[str]:
         """List all collection names from server"""
         colls = self._get_collections()
@@ -118,6 +138,7 @@ class VikingDBProject:
     def get_collections(self) -> Dict[str, Collection]:
         """Get all collections from server"""
         colls = self._get_collections()
+<<<<<<< Updated upstream
         return {
             c["CollectionName"]: Collection(
                 VikingDBCollection(host=self.host, headers=self.headers, meta_data=c)
@@ -128,6 +149,36 @@ class VikingDBProject:
     def create_collection(self, collection_name: str, meta_data: Dict[str, Any]) -> Collection:
         """collection should be pre-created"""
         raise NotImplementedError("collection should be pre-created")
+=======
+        return {c["CollectionName"]: Collection(VikingDBCollection(host=self.host, headers=self.headers, meta_data=c)) for c in colls}
+
+    def create_collection(self, collection_name: str, meta_data: Dict[str, Any]) -> Collection:
+        """
+        Create a new collection.
+
+        Args:
+            collection_name: Collection name
+            meta_data: Collection metadata
+
+        Returns:
+            Collection instance
+        """
+        config = {
+            "Host": self.host,
+            "Headers": self.headers,
+        }
+
+        # Update meta_data with CollectionName and ProjectName
+        updated_meta = {
+            **meta_data,
+            "CollectionName": collection_name,
+            "ProjectName": self.project_name,
+        }
+
+        logger.info(f"Creating VikingDB collection: {collection_name}")
+        collection = get_or_create_vikingdb_collection(config=config, meta_data=updated_meta)
+        return collection
+>>>>>>> Stashed changes
 
     def get_or_create_collection(
         self, collection_name: str, meta_data: Optional[Dict[str, Any]] = None
