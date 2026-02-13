@@ -74,6 +74,11 @@ jobs:
     - name: Install build dependencies
       run: uv pip install build setuptools_scm
 
+    - name: Clean workspace (force ignore dirty)
+      run: |
+        git reset --hard HEAD
+        git clean -fd
+
     - name: Build sdist
       run: uv run python -m build --sdist
 
@@ -184,6 +189,11 @@ jobs:
     - name: Install build dependencies
       run: uv pip install setuptools setuptools_scm pybind11 cmake wheel build
 
+    - name: Clean workspace (force ignore dirty)
+      run: |
+        git reset --hard HEAD
+        git clean -fd
+
     - name: Build package (Wheel Only)
       run: uv run python -m build --wheel
 
@@ -276,6 +286,11 @@ jobs:
 
     - name: Install build dependencies
       run: uv pip install setuptools setuptools_scm pybind11 cmake wheel build
+
+    - name: Clean workspace (force ignore dirty)
+      run: |
+        git reset --hard HEAD
+        git clean -fd
 
     - name: Build package (Wheel Only)
       run: uv run python -m build --wheel
