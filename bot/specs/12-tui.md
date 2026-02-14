@@ -2,16 +2,17 @@
 
 ## 概述
 
-为 vikingbot 开发一个基于 Textual 的终端用户界面（TUI），提供类似 OpenCode 的交互式编程体验。用户可以通过 TUI 与 AI 助手进行对话，完成编程、代码生成、调试等任务。
+为 vikingbot 开发一个基于 Textual 的终端用户界面（TUI），提供类似 OpenCode/ClawCode 的交互式编程体验。用户可以通过 TUI 与 AI 助手进行对话，完成编程、代码生成、调试等任务，并且能够实时查看模型的思考过程。
 
 ## 核心目标
 
 1. **现代化交互体验**: 提供流畅、响应迅速的终端界面
 2. **实时对话**: 支持与 AI 助手的实时对话交互
-3. **Markdown 渲染**: 正确渲染代码块、列表、链接等 Markdown 格式
-4. **代码高亮**: 支持多种编程语言的语法高亮
-5. **轻量级**: 保持 vikingbot 超轻量级的设计理念
-6. **不修改现有 CLI**: 作为独立的 `tui` 命令添加到 CLI
+3. **思考过程可视化**: 实时显示模型的推理、工具调用等思考步骤（类似 OpenCode/ClawCode）
+4. **Markdown 渲染**: 正确渲染代码块、列表、链接等 Markdown 格式
+5. **代码高亮**: 支持多种编程语言的语法高亮
+6. **轻量级**: 保持 vikingbot 超轻量级的设计理念
+7. **不修改现有 CLI**: 作为独立的 `tui` 命令添加到 CLI
 
 ## 技术栈
 
@@ -47,7 +48,7 @@ vikingbot/
 └── tui/
     ├── __init__.py           # 模块初始化
     ├── app.py                # 主 TUI 应用程序
-    ├── state.py              # 应用状态管理
+    ├── state.py              # 应用状态管理（含思考过程状态）
     ├── screens/
     │   ├── __init__.py
     │   ├── chat.py          # 主聊天屏幕
@@ -57,10 +58,163 @@ vikingbot/
     │   ├── message.py        # 消息显示组件
     │   ├── input.py         # 输入组件
     │   ├── thinking.py       # 思考状态指示器
+    │   ├── thinking_panel.py # 思考过程面板（新增）
     │   └── status_bar.py    # 状态栏组件
     └── styles/
         ├── __init__.py
         └── theme.py         # 主题定义
+```
+
+## 思考过程可视化设计
+
+### 设计目标
+
+类似 OpenCode/ClawCode，用户可以看到模型每一步的思考过程，包括：
+- 推理内容（reasoning）
+- 工具调用（tool calls）
+- 工具执行结果（tool results）
+- 迭代过程（iterations）
+
+### 数据结构
+
+```python
+# vikingbot/tui/state.py
+from enum import Enum
+
+class ThinkingStepType(Enum):
+    """思考步骤类型"""
+    REASONING = "reasoning"  # 推理内容
+    TOOL_CALL = "tool_call"  # 工具调用
+    TOOL_RESULT = "tool_result"  # 工具结果
+    ITERATION = "iteration"  # 迭代开始
+
+@dataclass
+class ThinkingStep:
+    """单个思考步骤"""
+    step_type: ThinkingStepType
+    content: str
+    timestamp: datetime
+    metadata: dict  # 存储额外信息（如工具名、参数等）
+
+@dataclass
+class TUIState:
+    # ... 现有字段 ...
+    
+    # 思考过程相关
+    current_thinking_steps: List[ThinkingStep] = field(default_factory=list)
+    show_thinking_panel: bool = True
+    thinking_callback: Optional[Callable[[ThinkingStep], None]] = None
+```
+
+### 回调机制
+
+Agent Loop 需要支持回调来暴露思考过程：
+
+```python
+# vikingbot/agent/loop.py
+class AgentLoop:
+    def __init__(self, ..., thinking_callback=None):
+        self.thinking_callback = thinking_callback
+        # ...
+    
+    async def _process_message(self, ...):
+        # 在关键步骤调用回调
+        if self.thinking_callback:
+            self.thinking_callback(ThinkingStep(
+                step_type=ThinkingStepType.ITERATION,
+                content=f"Iteration {iteration}/{self.max_iterations}",
+                metadata={"iteration": iteration}
+            ))
+        
+        # 调用 LLM 后
+        if response.reasoning_content and self.thinking_callback:
+            self.thinking_callback(ThinkingStep(
+                step_type=ThinkingStepType.REASONING,
+                content=response.reasoning_content,
+                metadata={}
+            ))
+        
+        # 工具调用前
+        if self.thinking_callback:
+            self.thinking_callback(ThinkingStep(
+                step_type=ThinkingStepType.TOOL_CALL,
+                content=f"{tool_call.name}({args_str})",
+                metadata={"tool": tool_call.name, "args": tool_call.arguments}
+            ))
+        
+        # 工具执行后
+        if self.thinking_callback:
+            self.thinking_callback(ThinkingStep(
+                step_type=ThinkingStepType.TOOL_RESULT,
+                content=str(result)[:500] + ("..." if len(str(result)) > 500 else ""),
+                metadata={"tool": tool_call.name}
+            ))
+```
+
+### UI 布局
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  🐈 vikingbot TUI - Interactive AI Programming Assistant │
+├──────────────────────────┬──────────────────────────────┤
+│                          │  [Thinking Panel]            │
+│  [Chat Messages]         │  • Iteration 1/20           │
+│                          │  • Reasoning: ...            │
+│  You: Hello!             │  • Tool: read_file(...)     │
+│                          │  • Result: ...               │
+│  🐈 vikingbot: Hi!       │  • Iteration 2/20           │
+│                          │                              │
+│                          │                              │
+│                          │                              │
+├──────────────────────────┴──────────────────────────────┤
+│  [Input Area] Type your message...            [Send]    │
+├─────────────────────────────────────────────────────────┤
+│  Messages: 5 | Tokens: 1234 | [F2] Toggle Thinking    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 键盘快捷键扩展
+
+| 快捷键 | 功能 |
+|---------|------|
+| `F2` | 切换思考面板显示/隐藏 |
+| `F3` | 清空当前思考过程 |
+| `Shift+Up/Down` | 在思考面板中滚动 |
+
+### 思考面板组件
+
+```python
+# vikingbot/tui/widgets/thinking_panel.py
+from textual.widgets import RichLog, Static
+from textual.containers import Vertical
+from vikingbot.tui.state import ThinkingStep, ThinkingStepType
+
+class ThinkingPanel(Vertical):
+    """思考过程面板"""
+    
+    def __init__(self):
+        super().__init__()
+        self.log = RichLog(markup=True, wrap=True, auto_scroll=True)
+        self.title = Static("[bold yellow]🧠 Thinking Process[/bold yellow]")
+    
+    def compose(self):
+        yield self.title
+        yield self.log
+    
+    def add_step(self, step: ThinkingStep):
+        """添加思考步骤"""
+        if step.step_type == ThinkingStepType.ITERATION:
+            self.log.write(f"[dim]━━━ {step.content} ━━━[/dim]")
+        elif step.step_type == ThinkingStepType.REASONING:
+            self.log.write(f"[cyan]💭 Reasoning:[/cyan] {step.content}")
+        elif step.step_type == ThinkingStepType.TOOL_CALL:
+            self.log.write(f"[magenta]🔧 Tool:[/magenta] {step.content}")
+        elif step.step_type == ThinkingStepType.TOOL_RESULT:
+            self.log.write(f"[green]✓ Result:[/green] {step.content}")
+    
+    def clear(self):
+        """清空思考过程"""
+        self.log.clear()
 ```
 
 ## 详细设计
@@ -613,6 +767,10 @@ def tui():
 | `Esc` | 返回聊天界面（从帮助屏幕） |
 | `Ctrl+L` | 清除聊天历史 |
 | `Ctrl+S` | 保存当前会话 |
+| `F2` | 切换思考面板显示/隐藏 |
+| `F3` | 清空当前思考过程 |
+| `Shift+Up` | 思考面板向上滚动 |
+| `Shift+Down` | 思考面板向下滚动 |
 
 ## 功能特性
 
@@ -623,22 +781,30 @@ def tui():
    - 显示思考状态（spinner）
    - 错误处理和提示
 
-2. **消息历史**
+2. **思考过程可视化（新增）**
+   - 实时显示模型推理内容
+   - 显示工具调用详情
+   - 显示工具执行结果
+   - 支持切换显示/隐藏思考面板
+   - 支持清空当前思考过程
+   - 可折叠/展开的思考面板
+
+3. **消息历史**
    - 保存所有对话消息
    - 支持输入历史导航
    - 会话持久化
 
-3. **Markdown 渲染**
+4. **Markdown 渲染**
    - 标题、列表、链接
    - 代码块检测和渲染
    - 引用块支持
 
-4. **代码高亮**
+5. **代码高亮**
    - 自动检测编程语言
    - 支持 100+ 种语言
    - 语法着色
 
-5. **会话管理**
+6. **会话管理**
    - 自动保存会话
    - 支持会话恢复
    - 会话 ID 显示

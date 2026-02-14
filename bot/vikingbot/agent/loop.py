@@ -51,6 +51,7 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         sandbox_manager: "SandboxManager | None" = None,
+        thinking_callback=None,
     ):
         from vikingbot.config.schema import ExecToolConfig
         from vikingbot.cron.service import CronService
@@ -81,6 +82,7 @@ class AgentLoop:
         )
 
         self._running = False
+        self.thinking_callback = thinking_callback
         self._register_default_tools()
     
     def _register_default_tools(self) -> None:

@@ -553,7 +553,7 @@ That's it! Environment variables, model prefixing, config matching, and `vikingb
 
 ### Sandbox
 
-vikingbot supports sandboxed execution for enhanced security. By default, sandbox is enabled with SRT backend in per-session mode.
+vikingbot supports sandboxed execution for enhanced security. By default, sandbox is disabled. To enable sandbox with SRT backend in per-session mode, set `"enabled": true`.
 
 <details>
 <summary><b>Sandbox Configuration (SRT Backend)</b></summary>
@@ -561,7 +561,7 @@ vikingbot supports sandboxed execution for enhanced security. By default, sandbo
 ```json
 {
   "sandbox": {
-    "enabled": true,
+    "enabled": false,
     "backend": "srt",
     "mode": "per-session",
     "network": {
@@ -580,7 +580,7 @@ vikingbot supports sandboxed execution for enhanced security. By default, sandbo
     },
     "backends": {
       "srt": {
-        "nodePath": "/usr/local/bin/node"
+        "nodePath": "node"
       }
     }
   }
@@ -591,7 +591,7 @@ vikingbot supports sandboxed execution for enhanced security. By default, sandbo
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `true` | Enable sandbox execution |
+| `enabled` | `false` | Enable sandbox execution |
 | `backend` | `"srt"` | Sandbox backend: `srt` or `docker` |
 | `mode` | `"per-session"` | Sandbox mode: `per-session` (isolated per session) or `shared` (shared across sessions) |
 | `network.allowedDomains` | `[]` | List of allowed domains for network access (empty = all allowed) |
