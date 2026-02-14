@@ -1,96 +1,14 @@
-<div align="center">
-  <img src="vikingbot_logo.png" alt="vikingbot" width="500">
-  <h1>vikingbot: Ultra-Lightweight Personal AI Assistant</h1>
-  <p>
-    <a href="https://pypi.org/project/vikingbot-ai/"><img src="https://img.shields.io/pypi/v/vikingbot-ai" alt="PyPI"></a>
-    <a href="https://pepy.tech/project/vikingbot-ai"><img src="https://static.pepy.tech/badge/vikingbot-ai" alt="Downloads"></a>
-    <img src="https://img.shields.io/badge/python-≥3.11-blue" alt="Python">
-    <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-    <a href="./COMMUNICATION.md"><img src="https://img.shields.io/badge/Feishu-Group-E9DBFC?style=flat&logo=feishu&logoColor=white" alt="Feishu"></a>
-    <a href="./COMMUNICATION.md"><img src="https://img.shields.io/badge/WeChat-Group-C5EAB4?style=flat&logo=wechat&logoColor=white" alt="WeChat"></a>
-    <a href="https://discord.gg/MnCvHqpUGB"><img src="https://img.shields.io/badge/Discord-Community-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
-  </p>
-</div>
 
-🐈 **vikingbot** is an **ultra-lightweight** personal AI assistant inspired by [OpenClaw](https://github.com/openclaw/openclaw) 
-
-⚡️ Delivers core agent functionality in just **~4,000** lines of code — **99% smaller** than Clawdbot's 430k+ lines.
-
-📏 Real-time line count: **3,582 lines** (run `bash core_agent_lines.sh` to verify anytime)
-
-## 📢 News
-
-- **2026-02-13** 🎉 Released v0.1.3.post7 — includes security hardening and multiple improvements. All users are recommended to upgrade to the latest version. See [release notes](https://github.com/HKUDS/vikingbot/releases/tag/v0.1.3.post7) for more details.
-- **2026-02-12** 🧠 Redesigned memory system — Less code, more reliable. Join the [discussion](https://github.com/HKUDS/vikingbot/discussions/566) about it!
-- **2026-02-10** 🎉 Released v0.1.3.post6 with improvements! Check the updates [notes](https://github.com/HKUDS/vikingbot/releases/tag/v0.1.3.post6) and our [roadmap](https://github.com/HKUDS/vikingbot/discussions/431).
-- **2026-02-09** 💬 Added Slack, Email, and QQ support — vikingbot now supports multiple chat platforms!
-- **2026-02-08** 🔧 Refactored Providers—adding a new LLM provider now takes just 2 simple steps! Check [here](#providers).
-- **2026-02-07** 🚀 Released v0.1.3.post5 with Qwen support & several key improvements! Check [here](https://github.com/HKUDS/vikingbot/releases/tag/v0.1.3.post5) for details.
-- **2026-02-06** ✨ Added Moonshot/Kimi provider, Discord integration, and enhanced security hardening!
-- **2026-02-05** ✨ Added Feishu channel, DeepSeek provider, and enhanced scheduled tasks support!
-- **2026-02-04** 🚀 Released v0.1.3.post4 with multi-provider & Docker support! Check [here](https://github.com/HKUDS/vikingbot/releases/tag/v0.1.3.post4) for details.
-- **2026-02-03** ⚡ Integrated vLLM for local LLM support and improved natural language task scheduling!
-- **2026-02-02** 🎉 vikingbot officially launched! Welcome to try 🐈 vikingbot!
-
-## Key Features of vikingbot:
-
-🪶 **Ultra-Lightweight**: Just ~4,000 lines of core agent code — 99% smaller than Clawdbot.
-
-🔬 **Research-Ready**: Clean, readable code that's easy to understand, modify, and extend for research.
-
-⚡️ **Lightning Fast**: Minimal footprint means faster startup, lower resource usage, and quicker iterations.
-
-💎 **Easy-to-Use**: One-click to deploy and you're ready to go.
-
-## 🏗️ Architecture
-
-<p align="center">
-  <img src="vikingbot_arch.png" alt="vikingbot architecture" width="800">
-</p>
-
-## ✨ Features
-
-<table align="center">
-  <tr align="center">
-    <th><p align="center">📈 24/7 Real-Time Market Analysis</p></th>
-    <th><p align="center">🚀 Full-Stack Software Engineer</p></th>
-    <th><p align="center">📅 Smart Daily Routine Manager</p></th>
-    <th><p align="center">📚 Personal Knowledge Assistant</p></th>
-  </tr>
-  <tr>
-    <td align="center"><p align="center"><img src="case/search.gif" width="180" height="400"></p></td>
-    <td align="center"><p align="center"><img src="case/code.gif" width="180" height="400"></p></td>
-    <td align="center"><p align="center"><img src="case/scedule.gif" width="180" height="400"></p></td>
-    <td align="center"><p align="center"><img src="case/memory.gif" width="180" height="400"></p></td>
-  </tr>
-  <tr>
-    <td align="center">Discovery • Insights • Trends</td>
-    <td align="center">Develop • Deploy • Scale</td>
-    <td align="center">Schedule • Automate • Organize</td>
-    <td align="center">Learn • Memory • Reasoning</td>
-  </tr>
-</table>
+  <h1>vikingbot</h1>
 
 ## 📦 Install
 
 **Install from source** (latest features, recommended for development)
 
 ```bash
-git clone https://github.com/HKUDS/vikingbot.git
-cd vikingbot
+git clone https://github.com/volcengine/OpenViking
+cd OpenViking/bot
 pip install -e .
-```
-
-**Install with [uv](https://github.com/astral-sh/uv)** (stable, fast)
-
-```bash
-uv tool install vikingbot-ai
-```
-
-**Install from PyPI** (stable)
-
-```bash
-pip install vikingbot-ai
 ```
 
 ## 🚀 Quick Start
@@ -130,43 +48,6 @@ vikingbot agent -m "What is 2+2?"
 ```
 
 That's it! You have a working AI assistant in 2 minutes.
-
-## 🖥️ Local Models (vLLM)
-
-Run vikingbot with your own local models using vLLM or any OpenAI-compatible server.
-
-**1. Start your vLLM server**
-
-```bash
-vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
-```
-
-**2. Configure** (`~/.vikingbot/config.json`)
-
-```json
-{
-  "providers": {
-    "vllm": {
-      "apiKey": "dummy",
-      "apiBase": "http://localhost:8000/v1"
-    }
-  },
-  "agents": {
-    "defaults": {
-      "model": "meta-llama/Llama-3.1-8B-Instruct"
-    }
-  }
-}
-```
-
-**3. Chat**
-
-```bash
-vikingbot agent -m "Hello from my local LLM!"
-```
-
-> [!TIP]
-> The `apiKey` can be any non-empty string for local servers that don't require authentication.
 
 ## 💬 Chat Apps
 
@@ -724,67 +605,3 @@ docker run -v ~/.vikingbot:/root/.vikingbot -p 18790:18790 vikingbot gateway
 docker run -v ~/.vikingbot:/root/.vikingbot --rm vikingbot agent -m "Hello!"
 docker run -v ~/.vikingbot:/root/.vikingbot --rm vikingbot status
 ```
-
-## 📁 Project Structure
-
-```
-vikingbot/
-├── agent/          # 🧠 Core agent logic
-│   ├── loop.py     #    Agent loop (LLM ↔ tool execution)
-│   ├── context.py  #    Prompt builder
-│   ├── memory.py   #    Persistent memory
-│   ├── skills.py   #    Skills loader
-│   ├── subagent.py #    Background task execution
-│   └── tools/      #    Built-in tools (incl. spawn)
-├── skills/         # 🎯 Bundled skills (github, weather, tmux...)
-├── channels/       # 📱 Chat channel integrations
-├── bus/            # 🚌 Message routing
-├── cron/           # ⏰ Scheduled tasks
-├── heartbeat/      # 💓 Proactive wake-up
-├── providers/      # 🤖 LLM providers (OpenRouter, etc.)
-├── session/        # 💬 Conversation sessions
-├── config/         # ⚙️ Configuration
-└── cli/            # 🖥️ Commands
-```
-
-## 🤝 Contribute & Roadmap
-
-PRs welcome! The codebase is intentionally small and readable. 🤗
-
-**Roadmap** — Pick an item and [open a PR](https://github.com/HKUDS/vikingbot/pulls)!
-
-- [x] **Voice Transcription** — Support for Groq Whisper (Issue #13)
-- [ ] **Multi-modal** — See and hear (images, voice, video)
-- [ ] **Long-term memory** — Never forget important context
-- [ ] **Better reasoning** — Multi-step planning and reflection
-- [ ] **More integrations** — Calendar and more
-- [ ] **Self-improvement** — Learn from feedback and mistakes
-
-### Contributors
-
-<a href="https://github.com/HKUDS/vikingbot/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=HKUDS/vikingbot&max=100&columns=12&updated=20260210" alt="Contributors" />
-</a>
-
-
-## ⭐ Star History
-
-<div align="center">
-  <a href="https://star-history.com/#HKUDS/vikingbot&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=HKUDS/vikingbot&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=HKUDS/vikingbot&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=HKUDS/vikingbot&type=Date" style="border-radius: 15px; box-shadow: 0 0 30px rgba(0, 217, 255, 0.3);" />
-    </picture>
-  </a>
-</div>
-
-<p align="center">
-  <em> Thanks for visiting ✨ vikingbot!</em><br><br>
-  <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.vikingbot&style=for-the-badge&color=00d4ff" alt="Views">
-</p>
-
-
-<p align="center">
-  <sub>vikingbot is for educational, research, and technical exchange purposes only</sub>
-</p>

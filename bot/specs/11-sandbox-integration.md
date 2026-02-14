@@ -174,6 +174,7 @@ from vikingbot.sandbox.base import SandboxBackend
 # 后端注册表
 _BACKENDS: Dict[str, Type[SandboxBackend]] = {}
 
+
 def register_backend(name: str) -> callable:
     """
     装饰器，用于注册沙箱后端。
@@ -183,18 +184,23 @@ def register_backend(name: str) -> callable:
         class SrtBackend(SandboxBackend):
             ...
     """
+
     def decorator(cls: Type[SandboxBackend]) -> Type[SandboxBackend]:
         _BACKENDS[name] = cls
         return cls
+
     return decorator
+
 
 def get_backend(name: str) -> Type[SandboxBackend] | None:
     """根据名称获取后端类。"""
     return _BACKENDS.get(name)
 
+
 def list_backends() -> list[str]:
     """列出所有已注册的后端。"""
     return list(_BACKENDS.keys())
+
 
 # 导入后端实现以触发注册
 from vikingbot.sandbox.backends.srt import SrtBackend
@@ -206,6 +212,7 @@ from vikingbot.sandbox.backends.srt import SrtBackend
 ```python
 from vikingbot.sandbox.backends import get_backend
 from vikingbot.sandbox.base import SandboxBackend
+
 
 class SandboxManager:
     """
@@ -300,11 +307,12 @@ class SandboxManager:
             await sandbox.stop()
         self._sandboxes.clear()
 
+
 ()
 
-        if self._shared_sandbox:
-            await self._shared_sandbox.stop()
-            self._shared_sandbox = None
+if self._shared_sandbox:
+    await self._shared_sandbox.stop()
+    self._shared_sandbox = None
 ```
 
 ### 4.4 SRT 后端实现 (sandbox/backends/srt.py)
@@ -314,6 +322,7 @@ import asyncio
 import json
 from pathlib import Path
 from vikingbot.sandbox.base import SandboxBackend
+
 
 @register_backend("srt")
 class SrtBackend(SandboxBackend):

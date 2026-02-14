@@ -123,9 +123,10 @@ from textual.widgets import Header, Footer
 from vikingbot.tui.screens.chat import ChatScreen
 from vikingbot.tui.screens.help import HelpScreen
 
+
 class NanobotTUI(App):
     """vikingbot TUI 主应用"""
-    
+
     CSS = """
     Screen {
         background: $background;
@@ -143,20 +144,20 @@ class NanobotTUI(App):
         color: $text;
     }
     """
-    
+
     TITLE = "vikingbot TUI"
     SUB_TITLE = "Interactive AI Programming Assistant"
-    
+
     def __init__(self, agent_loop, bus, config):
         super().__init__()
         self.agent_loop = agent_loop
         self.bus = bus
         self.config = config
-    
+
     def on_mount(self) -> None:
         """应用挂载时初始化"""
         self.push_screen(ChatScreen())
-    
+
     def show_help(self) -> None:
         """显示帮助屏幕"""
         self.push_screen(HelpScreen())
@@ -174,9 +175,10 @@ from vikingbot.tui.widgets.input import ChatInput
 from vikingbot.tui.widgets.thinking import ThinkingIndicator
 from vikingbot.tui.widgets.status_bar import StatusBar
 
+
 class ChatScreen(Screen):
     """主聊天屏幕"""
-    
+
     CSS = """
     ChatScreen {
         layout: vertical;
@@ -202,80 +204,80 @@ class ChatScreen(Screen):
         height: 1;
     }
     """
-    
+
     def __init__(self):
         super().__init__()
         self.state = TUIState()
-    
+
     def compose(self) -> ComposeResult:
         """构建 UI"""
         yield MessageList(id="message_list")
         yield ThinkingIndicator(id="thinking_indicator")
         yield ChatInput(id="input_area")
         yield StatusBar(id="status_bar")
-    
+
     def on_mount(self) -> None:
         """屏幕挂载时初始化"""
         self.query_one(ThinkingIndicator).visible = False
-    
+
     def add_message(self, role: MessageRole, content: str) -> None:
         """添加消息到界面"""
         message = Message(role=role, content=content)
         self.state.messages.append(message)
         self.state.message_count += 1
-        
+
         message_list = self.query_one(MessageList)
         message_list.add_message(message)
-        
+
         # 更新状态栏
         self._update_status_bar()
-    
+
     def show_thinking(self, message: str = None) -> None:
         """显示思考状态"""
         self.state.is_thinking = True
         self.state.thinking_message = message or "vikingbot is thinking..."
-        
+
         thinking_indicator = self.query_one(ThinkingIndicator)
         thinking_indicator.message = self.state.thinking_message
         thinking_indicator.visible = True
-    
+
     def hide_thinking(self) -> None:
         """隐藏思考状态"""
         self.state.is_thinking = False
         thinking_indicator = self.query_one(ThinkingIndicator)
         thinking_indicator.visible = False
-    
+
     async def send_message(self, text: str) -> None:
         """发送消息到 AI"""
         # 添加用户消息
         self.add_message(MessageRole.USER, content=text)
-        
+
         # 添加到历史
         if text.strip():
             self.state.input_history.append(text.strip())
             self.state.history_index = len(self.state.input_history)
-        
+
         # 显示思考状态
         self.show_thinking()
-        
+
         try:
             # 发送到 agent
             response = await self.app.agent_loop.process_direct(
                 text,
                 session_id=self.state.session_id
             )
-            
+
             # 隐藏思考状态
             self.hide_thinking()
-            
+
             # 添加助手回复
             self.add_message(MessageRole.ASSISTANT, content=response)
-            
+
         except Exception as e:
             self.hide_thinking()
             self.state.last_error = str(e)
             self._show_error(f"Error: {e}")
-    
+
     def _update_status_bar(self) -> None:
         """更新状态栏"""
         status_bar = self.query_one(StatusBar)
@@ -284,7 +286,7 @@ class ChatScreen(Screen):
             message_count=self.state.message_count,
             is_thinking=self.state.is_thinking
         )
-    
+
     def _show_error(self, message: str) -> None:
         """显示错误消息"""
         self.app.notify(message, severity="error")
@@ -303,29 +305,30 @@ from pygments.lexers import get_lexer_by_name, guess_lexer
 from pygments.util import ClassNotFound
 from vikingbot.tui.state import Message, MessageRole
 
+
 class MessageItem(Static):
     """单条消息显示"""
-    
+
     def __init__(self, message: Message):
         super().__init__()
         self.message = message
-    
+
     def render(self) -> str:
         """渲染消息"""
         if self.message.role == MessageRole.USER:
             return self._render_user_message()
         else:
             return self._render_assistant_message()
-    
+
     def _render_user_message(self) -> str:
         """渲染用户消息"""
         content = self.message.content
         return f"[bold cyan]You:[/bold cyan] {content}"
-    
+
     def _render_assistant_message(self) -> str:
         """渲染助手消息（支持 Markdown）"""
         content = self.message.content
-        
+
         # 尝试检测代码块并高亮
         try:
             md = Markdown(content)
@@ -333,18 +336,19 @@ class MessageItem(Static):
         except Exception:
             return f"[bold green]🐈 vikingbot:[/bold green] {content}"
 
+
 class MessageList(VerticalScroll):
     """消息列表"""
-    
+
     def __init__(self):
         super().__init__()
         self.can_focus = False
-    
+
     def add_message(self, message: Message) -> None:
         """添加消息到列表"""
         message_item = MessageItem(message)
         self.mount(message_item)
-        
+
         # 滚动到底部
         self.scroll_end(animate=False)
 ```
@@ -563,16 +567,16 @@ def tui():
     from vikingbot.agent.loop import AgentLoop
     from vikingbot.session.manager import SessionManager
     from vikingbot.tui.app import NanobotTUI
-    
+
     config = load_config()
     bus = MessageBus()
-    
+
     # 创建 provider
     provider = _make_provider(config)
-    
+
     # 创建 session manager
     session_manager = SessionManager(config.workspace_path)
-    
+
     # 创建 agent loop
     agent_loop = AgentLoop(
         bus=bus,
@@ -586,7 +590,7 @@ def tui():
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
     )
-    
+
     # 启动 TUI
     app = NanobotTUI(
         agent_loop=agent_loop,
@@ -697,12 +701,14 @@ def tui():
 import pytest
 from vikingbot.tui.state import TUIState, Message, MessageRole
 
+
 def test_state_initialization():
     """测试状态初始化"""
     state = TUIState()
     assert state.session_id == "tui:default"
     assert len(state.messages) == 0
     assert state.is_thinking == False
+
 
 def test_add_message():
     """测试添加消息"""
@@ -721,23 +727,24 @@ import pytest
 from unittest.mock import Mock
 from vikingbot.tui.app import NanobotTUI
 
+
 @pytest.mark.asyncio
 async def test_send_message():
     """测试发送消息"""
     # 创建 mock agent
     mock_agent = Mock()
     mock_agent.process_direct = Mock(return_value="Test response")
-    
+
     # 创建 TUI
     app = NanobotTUI(
         agent_loop=mock_agent,
         bus=Mock(),
         config=Mock()
     )
-    
+
     # 发送消息
     await app.screen.send_message("Test message")
-    
+
     # 验证
     mock_agent.process_direct.assert_called_once()
     assert len(app.screen.state.messages) == 2  # user + assistant
