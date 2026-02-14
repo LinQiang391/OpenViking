@@ -9,7 +9,7 @@ on:
       - 'Cargo.toml'
       - '.github/workflows/rust-cli.yml'
     tags:
-      - 'cli-*'  # Trigger release on tags starting with cli-
+      - 'cli@*'  # Trigger release on tags starting with cli@
   pull_request:
     branches: [ main ]
     paths:
@@ -132,7 +132,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: build
-    if: startsWith(github.ref, 'refs/tags/cli-')
+    if: startsWith(github.ref, 'refs/tags/cli@')
     permissions:
       contents: write
     steps:
@@ -141,7 +141,7 @@ jobs:
 
     - name: Get version from tag
       id: get_version
-      run: echo "version=${GITHUB_REF#refs/tags/cli-}" >> $GITHUB_OUTPUT
+      run: echo "version=${GITHUB_REF#refs/tags/cli@}" >> $GITHUB_OUTPUT
 
     - name: Download all artifacts
       uses: actions/download-artifact@v4
@@ -162,7 +162,7 @@ jobs:
 
           ### Quick Install (macOS/Linux)
           ```bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/refs/tags/cli-${{ steps.get_version.outputs.version }}/crates/ov_cli/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/refs/tags/cli@${{ steps.get_version.outputs.version }}/crates/ov_cli/install.sh | bash
           ```
 
           ### Manual Installation
@@ -182,7 +182,7 @@ jobs:
           SHA256 checksums are provided for each binary for verification.
 
           ## Changes
-          See the [commit history](https://github.com/${{ github.repository }}/commits/cli-${{ steps.get_version.outputs.version }}) for details.
+          See the [commit history](https://github.com/${{ github.repository }}/commits/cli@${{ steps.get_version.outputs.version }}) for details.
         files: |
           artifacts/**/*.tar.gz
           artifacts/**/*.zip

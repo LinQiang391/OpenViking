@@ -3,7 +3,7 @@ set -e
 
 # OpenViking CLI Installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/refs/tags/<TAG>/crates/ov_cli/install.sh | bash
-# Example: curl -fsSL https://raw.githubusercontent.com/volcengine/openviking/refs/tags/cli-0.1.0/crates/ov_cli/install.sh | bash
+# Example: curl -fsSL https://raw.githubusercontent.com/volcengine/openviking/refs/tags/cli@0.1.0/crates/ov_cli/install.sh | bash
 # Skip checksum: curl -fsSL ... | SKIP_CHECKSUM=1 bash
 # Custom repo: REPO=owner/repo curl -fsSL ... | bash
 
@@ -79,7 +79,7 @@ get_latest_release() {
         fi
         
         # Find first CLI release in this page
-        TAG_NAME=$(echo "$RELEASES" | jq -r '.[] | select(.tag_name | startswith("cli-")) | .tag_name' | head -n 1)
+        TAG_NAME=$(echo "$RELEASES" | jq -r '.[] | select(.tag_name | startswith("cli@")) | .tag_name' | head -n 1)
         
         if [[ -n "$TAG_NAME" ]]; then
             break
