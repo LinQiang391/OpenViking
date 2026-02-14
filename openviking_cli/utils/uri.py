@@ -32,7 +32,7 @@ class VikingURI:
     """
 
     SCHEME = "viking"
-    VALID_SCOPES = {"resources", "user", "agent", "session", "queue"}
+    VALID_SCOPES = {"resources", "user", "agent", "session", "queue", "temp"}
 
     def __init__(self, uri: str):
         """
@@ -244,3 +244,12 @@ class VikingURI:
 
     def __hash__(self) -> int:
         return hash(self.uri)
+
+    @classmethod
+    def create_temp_uri(cls) -> str:
+        """Create temp directory URI like viking://temp/MMDDHHMM_XXXXXX"""
+        import datetime
+        import uuid
+
+        temp_id = uuid.uuid4().hex[:6]
+        return f"viking://temp/{datetime.datetime.now().strftime('%m%d%H%M')}_{temp_id}"
