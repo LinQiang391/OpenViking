@@ -245,6 +245,7 @@ class SandboxRuntimeConfig(BaseModel):
 class SrtBackendConfig(BaseModel):
     """SRT backend configuration."""
     settings_path: str = "~/.vikingbot/srt-settings.json"
+    node_path: str = "/usr/local/bin/node"
 
 
 class DockerBackendConfig(BaseModel):
@@ -261,9 +262,9 @@ class SandboxBackendsConfig(BaseModel):
 
 class SandboxConfig(BaseModel):
     """Sandbox configuration."""
-    enabled: bool = False
+    enabled: bool = True
     backend: str = "srt"
-    mode: str = "disabled"
+    mode: str = "per-session"
     network: SandboxNetworkConfig = Field(default_factory=SandboxNetworkConfig)
     filesystem: SandboxFilesystemConfig = Field(default_factory=SandboxFilesystemConfig)
     runtime: SandboxRuntimeConfig = Field(default_factory=SandboxRuntimeConfig)

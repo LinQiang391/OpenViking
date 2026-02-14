@@ -1,4 +1,5 @@
 """Tool registry for dynamic tool management."""
+from loguru import logger
 
 from typing import Any
 
@@ -59,6 +60,7 @@ class ToolRegistry:
                 return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors)
             return await tool.execute(**params)
         except Exception as e:
+            logger.error('Tool call fail: ', e)
             return f"Error executing {name}: {str(e)}"
     
     @property

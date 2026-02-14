@@ -27,6 +27,7 @@ class SandboxManager:
 
     async def get_sandbox(self, session_key: str) -> SandboxBackend:
         """Get sandbox instance based on configuration mode."""
+
         if not self.config.enabled:
             raise SandboxDisabledError()
 
@@ -54,7 +55,11 @@ class SandboxManager:
         """Create new sandbox instance."""
         workspace = self.workspace / session_key.replace(":", "_")
         instance = self._backend_cls(self.config, session_key, workspace)
-        await instance.start()
+        try:
+            await instance.start()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
         await self._copy_bootstrap_files(workspace)
         return instance
 

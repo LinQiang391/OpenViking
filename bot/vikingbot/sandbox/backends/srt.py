@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
+from loguru import logger
 from vikingbot.sandbox.base import SandboxBackend, SandboxNotStartedError
 from vikingbot.sandbox.backends import register_backend
 
@@ -51,13 +51,13 @@ class SrtBackend(SandboxBackend):
         self._workspace.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            "node",
+            self.config.backends.srt.node_path,
             "-e",
             self._get_wrapper_script(),
             "--settings", str(self._settings_path),
             "--workspace", str(self._workspace)
         ]
-
+        logger.info(f'sandbox_cmd = {cmd}')
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -84,6 +84,7 @@ class SrtBackend(SandboxBackend):
                 process.communicate(),
                 timeout=timeout
             )
+            # logger.info(f'sandbox_cmd_result = {stdout},{stderr}')
         except asyncio.TimeoutError:
             process.kill()
             return f"Error: Command timed out after {timeout} seconds"

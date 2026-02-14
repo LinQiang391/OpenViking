@@ -1,5 +1,8 @@
 
-  <h1>vikingbot</h1>
+# Vikingbot
+
+**Vikingbot** is developed based on the project [nanobot](https://github.com/HKUDS/nanobot) , with the goal of providing an OpenClaw-like bot integrated with OpenViking.
+
 
 ## 📦 Install
 
@@ -8,7 +11,8 @@
 ```bash
 git clone https://github.com/volcengine/OpenViking
 cd OpenViking/bot
-pip install -e .
+uv pip install -e .
+source .venv/bin/activate
 ```
 
 ## 🚀 Quick Start
@@ -547,6 +551,101 @@ That's it! Environment variables, model prefixing, config matching, and `vikingb
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
 | `channels.*.allowFrom` | `[]` (allow all) | Whitelist of user IDs. Empty = allow everyone; non-empty = only listed users can interact. |
 
+### Sandbox
+
+vikingbot supports sandboxed execution for enhanced security. By default, sandbox is enabled with SRT backend in per-session mode.
+
+<details>
+<summary><b>Sandbox Configuration (SRT Backend)</b></summary>
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "backend": "srt",
+    "mode": "per-session",
+    "network": {
+      "allowedDomains": [],
+      "deniedDomains": [],
+      "allowLocalBinding": false
+    },
+    "filesystem": {
+      "denyRead": [],
+      "allowWrite": [],
+      "denyWrite": []
+    },
+    "runtime": {
+      "cleanupOnExit": true,
+      "timeout": 300
+    },
+    "backends": {
+      "srt": {
+        "nodePath": "/usr/local/bin/node"
+      }
+    }
+  }
+}
+```
+
+**Configuration Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `true` | Enable sandbox execution |
+| `backend` | `"srt"` | Sandbox backend: `srt` or `docker` |
+| `mode` | `"per-session"` | Sandbox mode: `per-session` (isolated per session) or `shared` (shared across sessions) |
+| `network.allowedDomains` | `[]` | List of allowed domains for network access (empty = all allowed) |
+| `network.deniedDomains` | `[]` | List of denied domains (blocked regardless of allowed list) |
+| `network.allowLocalBinding` | `false` | Allow binding to local addresses (localhost, 127.0.0.1) |
+| `filesystem.denyRead` | `[]` | Paths/files to deny read access |
+| `filesystem.allowWrite` | `[]` | Paths/files to explicitly allow write access |
+| `filesystem.denyWrite` | `[]` | Paths/files to deny write access |
+| `runtime.cleanupOnExit` | `true` | Clean up sandbox resources on exit |
+| `runtime.timeout` | `300` | Command execution timeout in seconds |
+| `backends.srt.nodePath` | `"/usr/local/bin/node"` | Path to Node.js executable (use full path if `node` is not in PATH) |
+
+**SRT Backend Setup:**
+
+The SRT backend uses `@anthropic-ai/sandbox-runtime`. It's automatically installed when you run `vikingbot onboard`.
+
+To verify installation:
+
+```bash
+npm list -g @anthropic-ai/sandbox-runtime
+```
+
+If not installed, install it manually:
+
+```bash
+npm install -g @anthropic-ai/sandbox-runtime
+```
+
+**Node.js Path Configuration:**
+
+If `node` command is not found in PATH, specify the full path in your config:
+
+```json
+{
+  "sandbox": {
+    "backends": {
+      "srt": {
+        "nodePath": "/usr/local/bin/node"
+      }
+    }
+  }
+}
+```
+
+To find your Node.js path:
+
+```bash
+which node
+# or
+which nodejs
+```
+
+</details>
+
 
 ## CLI Reference
 
@@ -557,12 +656,30 @@ That's it! Environment variables, model prefixing, config matching, and `vikingb
 | `vikingbot agent` | Interactive chat mode |
 | `vikingbot agent --no-markdown` | Show plain-text replies |
 | `vikingbot agent --logs` | Show runtime logs during chat |
+| `vikingbot tui` | Launch TUI (Terminal User Interface) |
 | `vikingbot gateway` | Start the gateway |
 | `vikingbot status` | Show status |
 | `vikingbot channels login` | Link WhatsApp (scan QR) |
 | `vikingbot channels status` | Show channel status |
 
 Interactive mode exits: `exit`, `quit`, `/exit`, `/quit`, `:q`, or `Ctrl+D`.
+
+<details>
+<summary><b>TUI (Terminal User Interface)</b></summary>
+
+Launch the vikingbot TUI for a rich terminal-based chat experience:
+
+```bash
+vikingbot tui
+```
+
+The TUI provides:
+- Rich text rendering with markdown support
+- Message history and conversation management
+- Real-time agent responses
+- Keyboard shortcuts for navigation
+
+</details>
 
 <details>
 <summary><b>Scheduled Tasks (Cron)</b></summary>
