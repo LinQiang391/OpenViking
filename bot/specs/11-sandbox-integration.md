@@ -515,7 +515,9 @@ list_dir("/")             # 实际列出 /tmp/sandbox/session1/
 **安全策略说明**：
 - **沙箱启用时**：跳过本地安全守卫 `_guard_command()`，完全依赖 SRT 沙箱的隔离能力
   - 沙箱内的文件用户有完全控制权，允许 `rm -r`/`rm -rf` 等操作
-  - SRT 沙箱本身仍会根据 `filesystem.denyRead`/`filesystem.allowWrite`/`filesystem.denyWrite` 规则限制沙箱外的访问
+  - **重要**：SRT 后端会**动态将沙箱工作目录的绝对路径添加到 `allowWrite`** 中
+  - 默认 `filesystem.allowWrite` 为空列表，无需手动配置
+  - 只能写入/删除沙箱工作目录及其子目录，沙箱外的访问会被阻止（返回 Operation not permitted）
 - **沙箱禁用时**：应用本地安全守卫，阻止 `rm -rf` 等危险模式
 
 ### 5.2 修改 ExecTool
