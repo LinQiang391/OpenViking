@@ -451,6 +451,8 @@ def _make_provider(config):
 @app.command()
 def gateway(
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
+    console_port: int = typer.Option(18791, "--console-port", help="Console web UI port"),
+    enable_console: bool = typer.Option(True, "--console/--no-console", help="Enable console web UI"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the vikingbot gateway."""
@@ -553,14 +555,24 @@ def gateway(
     
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
     
+    if enable_console:
+        console.print(f"[green]✓[/green] Console: http://localhost:{console_port}")
+    
     async def run():
+        tasks = []
+        
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
-            )
+            
+            tasks.append(agent.run())
+            tasks.append(channels.start_all())
+            
+            if enable_console:
+                from vikingbot.console.server import start_console_server
+                tasks.append(start_console_server(port=console_port))
+            
+            await asyncio.gather(*tasks)
         except KeyboardInterrupt:
             console.print("\nShutting down...")
             heartbeat.stop()
@@ -1013,7 +1025,10 @@ def status():
 
 
 @app.command()
-def tui():
+def tui(
+    console_port: int = typer.Option(18791, "--console-port", help="Console web UI port"),
+    enable_console: bool = typer.Option(True, "--console/--no-console", help="Enable console web UI"),
+):
     """Launch vikingbot TUI interface interface."""
     from vikingbot.config.loader import load_config
     from vikingbot.bus.queue import MessageBus
@@ -1059,7 +1074,19 @@ def tui():
         sandbox_manager=sandbox_manager,
     )
     
-    asyncio.run(run_tui(agent_loop, bus, config))
+    if enable_console:
+        console.print(f"[green]✓[/green] Console: http://localhost:{console_port}")
+    
+    async def run_with_console():
+        tasks = [run_tui(agent_loop, bus, config)]
+        
+        if enable_console:
+            from vikingbot.console.server import start_console_server
+            tasks.append(start_console_server(port=console_port))
+        
+        await asyncio.gather(*tasks)
+    
+    asyncio.run(run_with_console())
 
 
 if __name__ == "__main__":

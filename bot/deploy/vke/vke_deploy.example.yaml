@@ -1,0 +1,45 @@
+# Vikingbot VKE 部署配置
+# 复制此文件到 ~/.config/vikingbot/vke_deploy.yaml 并填入你的信息
+
+volcengine_access_key: AKLTxxxxxxxxxx
+volcengine_secret_key: xxxxxxxxxx
+volcengine_region: cn-beijing
+
+vke_cluster_id: ccxxxxxxxxxx
+
+image_registry: vikingbot-cn-beijing.cr.volces.com
+image_namespace: vikingbot
+image_repository: vikingbot
+image_tag: latest
+local_image_name: vikingbot
+
+registry_username: ""
+registry_password: ""
+
+dockerfile_path: deploy/Dockerfile
+build_context: .
+
+# K8s manifest文件
+k8s_manifest_path: deploy/vke/k8s/deployment.yaml
+k8s_namespace: default
+k8s_deployment_name: vikingbot
+
+kubeconfig_path: ~/.kube/config
+
+wait_for_rollout: true
+rollout_timeout: 120
+
+# 如果本地镜像已存在，是否跳过检查和重新构建
+# skip_image_check: false
+
+# 存储类型选择
+# 可选值: local (本地存储, 默认), tos (对象存储, 需要手动创建PV), nas (文件存储, 需要NAS实例)
+storage_type: local
+
+# TOS配置 (仅当storage_type=tos时需要)
+# tos_bucket: your-tos-bucket-name
+# tos_region: cn-beijing
+
+# NAS配置 (仅当storage_type=nas时需要)
+# nas_server: your-nas-server-address
+# nas_path: /your/nas/path

@@ -6,7 +6,9 @@ import io
 import json
 import re
 import threading
+import tempfile
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -27,12 +29,15 @@ try:
         CreateMessageReactionRequestBody,
         Emoji,
         P2ImMessageReceiveV1,
+        GetImageRequest,
+        GetMessageResourceRequest,
     )
     FEISHU_AVAILABLE = True
 except ImportError:
     FEISHU_AVAILABLE = False
     lark = None
     Emoji = None
+    GetImageRequest = None
 
 # Message type display mapping
 MSG_TYPE_MAP = {
@@ -144,6 +149,47 @@ class FeishuChannel(BaseChannel):
         else:
             # Assume it's base64 without prefix
             return base64.b64decode(data_uri)
+    
+    async def _download_feishu_image(self, image_key: str) -> bytes:
+        """
+        Download an image from Feishu using image_key.
+        """
+        token = await self._get_tenant_access_token()
+        url = f"https://open.feishu.cn/open-apis/im/v1/images/{image_key}"
+        
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+        
+        logger.debug(f"Downloading image from {url} with token {token[:20]}...")
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(url, headers=headers)
+            logger.debug(f"Download response status: {resp.status_code}")
+            resp.raise_for_status()
+            result = resp.json()
+            if result.get("code") != 0:
+                raise Exception(f"Failed to download image: {result}")
+            
+            # Get the image data from the response
+            # Feishu API returns image in the data field
+            image_data = result.get("data", {}).get("image", "")
+            if not image_data:
+                raise Exception("No image data in response")
+            
+            # If it's base64 encoded
+            return base64.b64decode(image_data)
+    
+    async def _save_image_to_temp(self, image_bytes: bytes) -> str:
+        """
+        Save image bytes to a temporary file and return the path.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(image_bytes)
+            temp_path = f.name
+        
+        logger.debug(f"Saved image to temp file: {temp_path}")
+        return temp_path
     
     def _extract_images(self, content: str) -> tuple[list[str], str]:
         """Extract image data URIs from content."""
@@ -498,12 +544,164 @@ class FeishuChannel(BaseChannel):
             # Add reaction to indicate "seen"
             await self._add_reaction(message_id, "MeMeMe")
             
-            # Parse message content
+            # Parse message content and media
+            content = ""
+            media = []
+            
+            # Log detailed message info for debugging
+            logger.info(f"Received Feishu message: msg_type={msg_type}, content={message.content[:200]}")
+            
             if msg_type == "text":
                 try:
                     content = json.loads(message.content).get("text", "")
                 except json.JSONDecodeError:
                     content = message.content or ""
+            elif msg_type == "image" or msg_type == "post":
+                # Handle both image and post types
+                content = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
+                text_content = ""
+                try:
+                    # Parse message content to get image_key
+                    msg_content = json.loads(message.content)
+                    image_keys = []
+                    
+                    # Try to get image_key from different possible locations
+                    if msg_type == "image":
+                        image_key = msg_content.get("image_key")
+                        if image_key:
+                            image_keys.append(image_key)
+                    elif msg_type == "post":
+                        # For post messages, extract content and all images
+                        # Post structure: {"title": "", "content": [[{"tag": "img", "image_key": "..."}], [{"tag": "text", "text": "..."}]]}
+                        post_content = msg_content.get("content", [])
+                        
+                        # Extract all images by tag, regardless of position
+                        for block in post_content:
+                            for element in block:
+                                if element.get("tag") == "img":
+                                    img_key = element.get("image_key")
+                                    if img_key:
+                                        image_keys.append(img_key)
+                        
+                        # Extract text content from the post
+                        text_parts = []
+                        for block in post_content:
+                            for element in block:
+                                if element.get("tag") == "text":
+                                    text_parts.append(element.get("text", ""))
+                        text_content = " ".join(text_parts).strip()
+                        if text_content:
+                            content = text_content
+                    
+                    # Process each image key
+                    if image_keys:
+                        for image_key in image_keys:
+                            # Download image using the SDK client
+                            logger.info(f"Downloading Feishu image with image_key: {image_key}, message_id: {message_id}")
+                            
+                            # Use SDK to download image
+                            image_bytes = None
+                            if self._client and GetImageRequest and GetMessageResourceRequest:
+                                try:
+                                    # SDK client is synchronous, run in executor
+                                    loop = asyncio.get_running_loop()
+                                    
+                                    def sync_download():
+                                        # Try GetMessageResource first (for newer image keys like img_v3)
+                                        mr_request = GetMessageResourceRequest.builder() \
+                                            .message_id(message_id) \
+                                            .file_key(image_key) \
+                                            .type("image") \
+                                            .build()
+                                        mr_response = self._client.im.v1.message_resource.get(mr_request)
+                                        logger.debug(f"SDK message resource get response: success={mr_response.success()}, code={mr_response.code}, msg={mr_response.msg}")
+                                        if mr_response.success():
+                                            if hasattr(mr_response, 'file') and mr_response.file is not None:
+                                                if hasattr(mr_response.file, 'read'):
+                                                    return mr_response.file.read()
+                                                return mr_response.file
+                                            else:
+                                                logger.warning(f"Message resource response success but no file attribute: {dir(mr_response)}")
+                                        else:
+                                            logger.warning(f"SDK message resource get failed: code={mr_response.code}, msg={mr_response.msg}, falling back to GetImage")
+                                        
+                                        # Fallback to GetImageRequest if message resource fails
+                                        request = GetImageRequest.builder() \
+                                            .image_key(image_key) \
+                                            .build()
+                                        response = self._client.im.v1.image.get(request)
+                                        logger.debug(f"SDK image get response: success={response.success()}, code={response.code}, msg={response.msg}")
+                                        if response.success():
+                                            if hasattr(response, 'file') and response.file is not None:
+                                                # Read the file-like object
+                                                if hasattr(response.file, 'read'):
+                                                    return response.file.read()
+                                                return response.file
+                                            else:
+                                                logger.warning(f"SDK response success but no file attribute: {dir(response)}")
+                                        else:
+                                            logger.warning(f"SDK image get failed: code={response.code}, msg={response.msg}")
+                                        return None
+                                    
+                                    image_bytes = await loop.run_in_executor(None, sync_download)
+                                except Exception as sdk_e:
+                                    logger.warning(f"SDK image download failed, falling back to HTTP: {sdk_e}", exc_info=True)
+                            
+                            # Fallback to direct HTTP download
+                            if not image_bytes:
+                                token = await self._get_tenant_access_token()
+                                url = f"https://open.feishu.cn/open-apis/im/v1/images/{image_key}"
+                                
+                                headers = {
+                                    "Authorization": f"Bearer {token}"
+                                }
+                                
+                                try:
+                                    async with httpx.AsyncClient(timeout=60.0) as client:
+                                        resp = await client.get(url, headers=headers)
+                                        logger.info(f"Image download status: {resp.status_code}")
+                                        logger.debug(f"Image download response headers: {resp.headers}")
+                                        logger.debug(f"Image download response content (first 200 chars): {resp.text[:200]}")
+                                        
+                                        if resp.status_code == 200:
+                                            # Check content type
+                                            content_type = resp.headers.get("content-type", "")
+                                            if "application/json" in content_type:
+                                                result = resp.json()
+                                                logger.info(f"Image download JSON response: {result}")
+                                                if result.get("code") == 0:
+                                                    # Some APIs return base64 in the response
+                                                    image_data = result.get("data", {}).get("image")
+                                                    if image_data:
+                                                        image_bytes = base64.b64decode(image_data)
+                                            else:
+                                                # Raw image bytes
+                                                image_bytes = resp.content
+                                        else:
+                                            logger.warning(f"HTTP image download failed with status {resp.status_code}: {resp.text}")
+                                except Exception as http_e:
+                                    logger.warning(f"HTTP image download failed: {http_e}", exc_info=True)
+                            
+                            if image_bytes:
+                                # Save to ~/.vikingbot/media directory like Telegram
+                                from pathlib import Path
+                                media_dir = Path.home() / ".vikingbot" / "media"
+                                media_dir.mkdir(parents=True, exist_ok=True)
+                                
+                                import uuid
+                                file_path = media_dir / f"feishu_{uuid.uuid4().hex[:16]}.png"
+                                file_path.write_bytes(image_bytes)
+                                
+                                media.append(str(file_path))
+                                logger.info(f"Feishu image saved to: {file_path}")
+                            else:
+                                logger.warning(f"Could not download image for image_key: {image_key}")
+                    else:
+                        logger.warning(f"No image_key found in message content: {msg_content}")
+                except Exception as e:
+                    logger.warning(f"Failed to download Feishu image: {e}")
+                    import traceback
+                    logger.debug(f"Stack trace: {traceback.format_exc()}")
             else:
                 content = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
             
@@ -516,6 +714,7 @@ class FeishuChannel(BaseChannel):
                 sender_id=sender_id,
                 chat_id=reply_to,
                 content=content,
+                media=media if media else None,
                 metadata={
                     "message_id": message_id,
                     "chat_type": chat_type,

@@ -198,7 +198,28 @@
   - 键盘快捷键支持
   - 会话持久化
 
-### 10. [数据模型和数据库设计](./09-data-model-database.md)
+### 10. [Console Web UI 模块](./13-console.md)
+- Console Server (Web 服务)
+  - 基于 FastAPI 的异步 Web 服务
+  - 作为 gateway/tui 的子服务启动
+- API 设计
+  - Configuration API: 配置读写
+  - Sessions API: 会话管理
+  - Workspace API: 工作区文件浏览
+  - Partials API: HTMX 前端片段
+- 前端设计
+  - 简洁实用的 Web 界面
+  - 配置编辑器
+  - 会话浏览器
+  - 工作区文件管理
+- 集成方式
+  - gateway 命令集成
+  - tui 命令集成
+- 安全考虑
+  - 默认绑定 127.0.0.1
+  - 路径安全检查
+
+### 11. [数据模型和数据库设计](./09-data-model-database.md)
 - 数据存储位置
   - 配置文件
   - 工作空间
@@ -227,7 +248,7 @@
   - 路径遍历
   - 数据备份
 
-### 10. [API 接口文档](./10-api-interfaces.md)
+### 12. [API 接口文档](./10-api-interfaces.md)
 - 内部模块接口
   - MessageBus 接口
   - ToolRegistry 接口
@@ -272,7 +293,7 @@
   - 权限控制
   - 敏感数据
 
-### 11. [沙箱集成技术规范](./11-sandbox-integration.md)
+### 13. [沙箱集成技术规范](./11-sandbox-integration.md)
 - 概述
   - 基于 @anthropic-ai/sandbox-runtime 的沙箱支持
   - 为每个 session 提供独立的文件系统和网络隔离环境
@@ -332,6 +353,8 @@
   - [06-providers.md](./06-providers.md) - Providers 模块
   - [07-session.md](./07-session.md) - Session 模块
   - [08-cron.md](./08-cron.md) - Cron 模块
+  - [12-tui.md](./12-tui.md) - TUI 模块
+  - [13-console.md](./13-console.md) - Console Web UI 模块
 - **数据模型**: [09-data-model-database.md](./09-data-model-database.md)
 - **API 规范**: [10-api-interfaces.md](./10-api-interfaces.md)
 - **沙箱集成**: [11-sandbox-integration.md](./11-sandbox-integration.md)
@@ -339,9 +362,10 @@
 ### 按开发任务查找
 
 - **添加新功能**: 阅读 [01-project-overview.md](./01-project-overview.md) 了解架构
-- **实现新模块**: 参考相应的模块设计文档（02-08）
+- **实现新模块**: 参考相应的模块设计文档（02-13）
 - **设计数据结构**: 查看 [09-data-model-database.md](./09-data-model-database.md) 的数据模型
 - **集成外部服务**: 参考 [10-api-interfaces.md](./10-api-interfaces.md) 的接口定义
+- **Web UI 开发**: 参考 [13-console.md](./13-console.md) 的 Console Web UI 规范
 - **沙箱集成**: 参考 [11-sandbox-integration.md](./11-sandbox-integration.md) 的沙箱集成规范
 
 ## 开发工作流
@@ -354,10 +378,10 @@
 
 ## 版本信息
 
-- **项目**: Nanobot
+- **项目**: Vikingbot (基于 Nanobot)
 - **版本**: 0.1.3.post7
-- **文档版本**: 1.0.0
-- **最后更新**: 2026-02-13
+- **文档版本**: 1.1.0
+- **最后更新**: 2026-02-18
 
 ## 贡献指南
 

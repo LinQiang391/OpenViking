@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vikingbot-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: csi-ebs-ssd-default
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vikingbot
+  labels:
+    app: vikingbot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vikingbot
+  template:
+    metadata:
+      labels:
+        app: vikingbot
+    spec:
+      containers:
+      - name: vikingbot
+        image: __IMAGE_NAME__
+        ports:
+        - containerPort: 18790
+        volumeMounts:
+        - name: vikingbot-data
+          mountPath: /root/.vikingbot
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        livenessProbe:
+          tcpSocket:
+            port: 18790
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          tcpSocket:
+            port: 18790
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        command: ["vikingbot"]
+        args: ["gateway"]
+      volumes:
+      - name: vikingbot-data
+        persistentVolumeClaim:
+          claimName: vikingbot-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vikingbot
+spec:
+  type: ClusterIP
+  selector:
+    app: vikingbot
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 18790

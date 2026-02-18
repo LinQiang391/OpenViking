@@ -41,6 +41,8 @@ dependencies = [
     "textual>=0.50.0",
     "pygments>=2.16.0",
     "ddgs>=9.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -69,6 +71,7 @@ include = [
     "vikingbot/**/*.py",
     "vikingbot/skills/**/*.md",
     "vikingbot/skills/**/*.sh",
+    "vikingbot/console/static/**/*",
 ]
 
 [tool.hatch.build.targets.sdist]

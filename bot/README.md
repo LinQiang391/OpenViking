@@ -1,8 +1,7 @@
 
 # Vikingbot
 
-**Vikingbot** is developed based on the project [nanobot](https://github.com/HKUDS/nanobot) , with the goal of providing an OpenClaw-like bot integrated with OpenViking.
-
+**Vikingbot**, built on the [Nanobot](https://github.com/HKUDS/nanobot) project, is designed to deliver an OpenClaw-like bot integrated with OpenViking.
 
 ## 📦 Install
 

@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import sys
+import json
+import subprocess
+import time
+from typing import Optional, Dict, Any
+
+HAS_YAML = False
+yaml_module = None
+try:
+    import yaml
+    HAS_YAML = True
+    yaml_module = yaml
+except ImportError:
+    pass
+
+
+class VKEDeployer:
+    def __init__(self, config_path: Optional[str] = None):
+        if config_path is None:
+            config_path = self.get_default_config_path()
+        self.config_path = config_path
+        print(f"使用配置文件: {config_path}")
+        self.config = self.load_config(config_path)
+        self.validate_config()
+        self.print_config_summary()
+
+    def get_default_config_path(self) -> str:
+        config_dir = os.path.expanduser("~/.config/vikingbot")
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, "vke_deploy.yaml")
+
+    def load_config(self, config_path: str) -> Dict[str, Any]:
+        if not os.path.exists(config_path):
+            print(f"配置文件不存在: {config_path}")
+            print(f"正在创建默认配置文件...")
+            self.create_default_config(config_path)
+            print(f"\n已创建默认配置文件: {config_path}")
+            print("请编辑该文件，填入你的配置信息后重新运行脚本。")
+            sys.exit(1)
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            if config_path.endswith('.json'):
+                return json.load(f)
+            elif HAS_YAML and yaml_module is not None:
+                return yaml_module.safe_load(f)
+            else:
+                print(f"配置文件格式不支持，且未安装pyyaml。请安装: pip install pyyaml")
+                sys.exit(1)
+
+    def create_default_config(self, config_path: str):
+        example_config_path = os.path.join(os.path.dirname(__file__), "vke_deploy.example.yaml")
+
+        if os.path.exists(example_config_path):
+            with open(example_config_path, 'r', encoding='utf-8') as src:
+                content = src.read()
+        else:
+            content = """# Vikingbot VKE 部署配置
+# 请填入你的配置信息
+
+volcengine_access_key: AKLTxxxxxxxxxx
+volcengine_secret_key: xxxxxxxxxx
+volcengine_region: cn-beijing
+
+vke_cluster_id: ccxxxxxxxxxx
+
+image_registry: vikingbot-cn-beijing.cr.volces.com
+image_namespace: vikingbot
+image_repository: vikingbot
+image_tag: latest
+local_image_name: vikingbot
+
+registry_username: ""
+registry_password: ""
+
+dockerfile_path: deploy/Dockerfile
+build_context: .
+
+k8s_manifest_path: deploy/vke/k8s/deployment.yaml
+k8s_namespace: default
+k8s_deployment_name: vikingbot
+
+kubeconfig_path: ~/.kube/config
+
+wait_for_rollout: true
+rollout_timeout: 300
+
+# 如果本地镜像已存在，是否跳过检查和重新构建
+# skip_image_check: false
+
+# 存储类型选择
+# 可选值: local (本地存储, 默认), tos (对象存储, 需要手动创建PV), nas (文件存储, 需要NAS实例)
+storage_type: local
+
+# TOS配置 (仅当storage_type=tos时需要)
+# tos_bucket: your-tos-bucket-name
+# tos_region: cn-beijing
+
+# NAS配置 (仅当storage_type=nas时需要)
+# nas_server: your-nas-server-address
+# nas_path: /your/nas/path
+"""
+
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+    def validate_config(self):
+        required_fields = [
+            "volcengine_access_key", "volcengine_secret_key",
+            "volcengine_region", "vke_cluster_id",
+            "image_registry", "image_namespace", "image_repository", "image_tag"
+        ]
+
+        missing_fields = []
+        for field in required_fields:
+            if field not in self.config or not self.config[field] or self.config[field] in ["AKLTxxxxxxxxxx", "xxxxxxxxxx", "ccxxxxxxxxxx"]:
+                missing_fields.append(field)
+
+        if missing_fields:
+            print("\n配置验证失败！缺少或未更新以下字段：")
+            for field in missing_fields:
+                print(f"  - {field}")
+            print(f"\n请编辑配置文件: {self.config_path}")
+            sys.exit(1)
+
+        print("配置验证通过！")
+
+    def print_config_summary(self):
+        print("\n当前配置摘要：")
+        print(f"  地域: {self.config.get('volcengine_region')}")
+        print(f"  集群ID: {self.config.get('vke_cluster_id')}")
+        print(f"  镜像: {self.config.get('image_registry')}/{self.config.get('image_namespace')}/{self.config.get('image_repository')}:{self.config.get('image_tag')}")
+        print(f"  Dockerfile: {self.config.get('dockerfile_path', 'deploy/Dockerfile')}")
+        print(f"  K8s manifest: {self.config.get('k8s_manifest_path', 'deploy/vke/k8s/deployment.yaml')}")
+        print(f"  存储类型: {self.config.get('storage_type', 'local')}")
+        print()
+
+    def run_command(self, cmd: str, cwd: Optional[str] = None, show_output: bool = False) -> tuple[int, str, str]:
+        print(f"执行命令: {cmd}")
+        
+        if show_output:
+            proc = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=cwd,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            stdout_lines = []
+            if proc.stdout:
+                for line in iter(proc.stdout.readline, ''):
+                    print(line, end='')
+                    stdout_lines.append(line)
+            stdout = ''.join(stdout_lines)
+            proc.wait()
+            return proc.returncode, stdout, ''
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=cwd,
+                text=True
+            )
+            stdout, stderr = proc.communicate()
+            return proc.returncode, stdout, stderr
+
+    def check_image_exists(self, image_name: str, image_tag: str) -> bool:
+        cmd = f"docker images -q {image_name}:{image_tag}"
+        code, stdout, stderr = self.run_command(cmd)
+        return code == 0 and stdout.strip() != ""
+
+    def build_image(self) -> bool:
+        print("\n=== 步骤1: 构建Docker镜像 ===")
+
+        dockerfile_path = self.config.get("dockerfile_path", "deploy/Dockerfile")
+        context_path = self.config.get("build_context", ".")
+        local_image_name = self.config.get("local_image_name", "vikingbot")
+        image_tag = self.config["image_tag"]
+        full_local_image = f"{local_image_name}:{image_tag}"
+        skip_image_check = self.config.get("skip_image_check", False)
+
+        if not os.path.exists(dockerfile_path):
+            print(f"Dockerfile不存在: {dockerfile_path}")
+            return False
+
+        if not skip_image_check and self.check_image_exists(local_image_name, image_tag):
+            print(f"镜像已存在: {full_local_image}")
+            try:
+                response = input("是否跳过重新构建？(Y/n): ").strip().lower()
+                if response in ["", "y", "yes"]:
+                    print("跳过镜像构建")
+                    return True
+            except (EOFError, KeyboardInterrupt):
+                print("\n用户中断，继续构建...")
+
+        cmd = f"docker build -f {dockerfile_path} -t {full_local_image} --platform linux/amd64 {context_path}"
+        code, stdout, stderr = self.run_command(cmd, show_output=True)
+
+        if code != 0:
+            print(f"镜像构建失败")
+            return False
+
+        print(f"镜像构建成功: {full_local_image}")
+        return True
+
+    def login_registry(self) -> bool:
+        print("\n=== 步骤2: 登录镜像仓库 ===")
+
+        registry = self.config["image_registry"]
+        username = self.config.get("registry_username", self.config["volcengine_access_key"])
+        password = self.config.get("registry_password", self.config["volcengine_secret_key"])
+
+        cmd = f"docker login -u {username} -p {password} {registry}"
+        code, stdout, stderr = self.run_command(cmd)
+
+        if code != 0:
+            print(f"镜像仓库登录失败: {stderr}")
+            return False
+
+        print("镜像仓库登录成功")
+        return True
+
+    def push_image(self) -> bool:
+        print("\n=== 步骤3: 推送镜像 ===")
+
+        local_image_name = self.config.get("local_image_name", "vikingbot")
+        image_tag = self.config["image_tag"]
+        
+        registry = self.config["image_registry"]
+        namespace = self.config.get("image_namespace", "vikingbot")
+        repository = self.config.get("image_repository", "vikingbot")
+        full_image_name = f"{registry}/{namespace}/{repository}:{image_tag}"
+
+        print("打标签...")
+        cmd = f"docker tag {local_image_name}:{image_tag} {full_image_name}"
+        code, stdout, stderr = self.run_command(cmd)
+        if code != 0:
+            print(f"打标签失败: {stderr}")
+            return False
+
+        print("推送镜像...")
+        cmd = f"docker push {full_image_name}"
+        code, stdout, stderr = self.run_command(cmd, show_output=True)
+
+        if code != 0:
+            print(f"镜像推送失败")
+            return False
+
+        print(f"镜像推送成功: {full_image_name}")
+        self.config["full_image_name"] = full_image_name
+        return True
+
+    def get_vke_kubeconfig(self) -> Optional[str]:
+        print("\n=== 步骤4: 获取VKE集群kubeconfig ===")
+
+        kubeconfig_path = self.config.get("kubeconfig_path", "~/.kube/config")
+        kubeconfig_path = os.path.expanduser(kubeconfig_path)
+
+        if os.path.exists(kubeconfig_path):
+            print(f"使用现有kubeconfig: {kubeconfig_path}")
+            return kubeconfig_path
+
+        print("\n未找到kubeconfig，请按以下步骤获取：")
+        print("1. 访问火山引擎VKE控制台: https://console.volcengine.com/vke")
+        print(f"2. 找到集群: {self.config['vke_cluster_id']}")
+        print("3. 点击 \"连接集群\" -> \"生成KubeConfig\"")
+        print(f"4. 保存到: {kubeconfig_path}")
+        print("\n或者修改配置文件指定kubeconfig_path")
+
+        return None
+
+    def deploy_to_vke(self, kubeconfig_path: str) -> bool:
+        print("\n=== 步骤5: 部署应用到VKE ===")
+
+        manifest_path = self.config.get("k8s_manifest_path", "deploy/vke/k8s/deployment.yaml")
+
+        if not os.path.exists(manifest_path):
+            print(f"K8s manifest不存在: {manifest_path}")
+            return False
+
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest_content = f.read()
+
+        registry = self.config["image_registry"]
+        namespace = self.config.get("image_namespace", "vikingbot")
+        repository = self.config.get("image_repository", "vikingbot")
+        full_image_name = f"{registry}/{namespace}/{repository}:{self.config['image_tag']}"
+
+        if "__IMAGE_NAME__" in manifest_content:
+            manifest_content = manifest_content.replace("__IMAGE_NAME__", full_image_name)
+            temp_manifest = "/tmp/vke_deploy_temp.yaml"
+            with open(temp_manifest, 'w', encoding='utf-8') as f:
+                f.write(manifest_content)
+            deploy_path = temp_manifest
+            print(f"已替换镜像为: {full_image_name}")
+        else:
+            deploy_path = manifest_path
+
+        os.environ["KUBECONFIG"] = kubeconfig_path
+
+        k8s_namespace = self.config.get("k8s_namespace", "default")
+        cmd = f"kubectl apply -f {deploy_path} -n {k8s_namespace}"
+        code, stdout, stderr = self.run_command(cmd)
+
+        if code != 0:
+            print(f"部署失败: {stderr}")
+            return False
+
+        print(f"部署成功:\n{stdout}")
+
+        if self.config.get("wait_for_rollout", True):
+            self.wait_for_rollout(k8s_namespace)
+
+        return True
+
+    def print_deployment_diagnostics(self, namespace: str, deployment_name: str):
+        print("\n=== 部署诊断信息 ===")
+
+        print("\n1. Pod状态:")
+        cmd = f"kubectl get pods -n {namespace} -l app={deployment_name}"
+        code, stdout, stderr = self.run_command(cmd)
+        if code == 0 and stdout:
+            print(stdout)
+        else:
+            print(f"获取Pod状态失败: {stderr}")
+
+        print("\n2. Pod事件:")
+        cmd = f"kubectl get events -n {namespace} --sort-by='.lastTimestamp' | tail -20"
+        code, stdout, stderr = self.run_command(cmd)
+        if code == 0 and stdout:
+            print(stdout)
+        else:
+            print(f"获取事件失败: {stderr}")
+
+        print("\n3. Deployment详情:")
+        cmd = f"kubectl describe deployment/{deployment_name} -n {namespace}"
+        code, stdout, stderr = self.run_command(cmd)
+        if code == 0 and stdout:
+            print(stdout)
+        else:
+            print(f"获取Deployment详情失败: {stderr}")
+
+        pods_cmd = f"kubectl get pods -n {namespace} -l app={deployment_name} -o name"
+        code, pods_out, _ = self.run_command(pods_cmd)
+        if code == 0 and pods_out:
+            pod_name = pods_out.strip().split('\n')[0].replace('pod/', '')
+            print(f"\n4. Pod日志 ({pod_name}):")
+            log_cmd = f"kubectl logs {pod_name} -n {namespace} --tail=50"
+            code, log_out, log_err = self.run_command(log_cmd)
+            if code == 0 and log_out:
+                print(log_out)
+            elif log_err:
+                print(log_err)
+
+    def wait_for_rollout(self, namespace: str):
+        print("\n=== 等待部署完成 ===")
+
+        deployment_name = self.config.get("k8s_deployment_name", "vikingbot")
+
+        timeout = self.config.get("rollout_timeout", 300)
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            cmd = f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout=30s"
+            code, stdout, stderr = self.run_command(cmd)
+
+            if code == 0:
+                print("部署完成！")
+                return
+
+            print("等待中...")
+            time.sleep(10)
+
+        print("等待超时，正在收集诊断信息...")
+        self.print_deployment_diagnostics(namespace, deployment_name)
+        print("\n部署未完成，请根据上述信息排查问题。")
+
+    def run(self):
+        print("=" * 50)
+        print("火山引擎VKE一键部署工具")
+        print("=" * 50)
+
+        if self.config.get("skip_build", False):
+            print("跳过镜像构建")
+        else:
+            if not self.build_image():
+                return False
+
+        if self.config.get("skip_push", False):
+            print("跳过镜像推送")
+        else:
+            if not self.login_registry():
+                return False
+            if not self.push_image():
+                return False
+
+        kubeconfig_path = self.get_vke_kubeconfig()
+        if not kubeconfig_path:
+            return False
+
+        if self.config.get("skip_deploy", False):
+            print("跳过VKE部署")
+        else:
+            if not self.deploy_to_vke(kubeconfig_path):
+                return False
+
+        print("\n" + "=" * 50)
+        print("🎉 部署流程完成！")
+        print("=" * 50)
+        return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="火山引擎VKE一键部署工具")
+    parser.add_argument(
+        "--config", "-c",
+        help="配置文件路径 (默认: ~/.config/vikingbot/vke_deploy.yaml)"
+    )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="跳过镜像构建"
+    )
+    parser.add_argument(
+        "--skip-push",
+        action="store_true",
+        help="跳过镜像推送"
+    )
+    parser.add_argument(
+        "--skip-deploy",
+        action="store_true",
+        help="跳过VKE部署"
+    )
+    parser.add_argument(
+        "--skip-image-check",
+        action="store_true",
+        help="跳过镜像存在检查，直接构建"
+    )
+    parser.add_argument(
+        "--image-tag",
+        help="覆盖配置中的镜像tag"
+    )
+
+    args = parser.parse_args()
+
+    deployer = VKEDeployer(args.config)
+
+    if args.skip_build:
+        deployer.config["skip_build"] = True
+    if args.skip_push:
+        deployer.config["skip_push"] = True
+    if args.skip_deploy:
+        deployer.config["skip_deploy"] = True
+    if args.skip_image_check:
+        deployer.config["skip_image_check"] = True
+    if args.image_tag:
+        deployer.config["image_tag"] = args.image_tag
+
+    success = deployer.run()
+    sys.exit(0 if success else 1)
+
+
+if __name__ == "__main__":
+    main()
