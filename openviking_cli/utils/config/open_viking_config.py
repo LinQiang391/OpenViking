@@ -136,7 +136,7 @@ class OpenVikingConfig(BaseModel):
         # Make a copy to avoid modifying the original
         config_copy = config.copy()
 
-        # Remove server section (handled separately by ServerConfig)
+        # Remove sections managed by other loaders (e.g. server config)
         config_copy.pop("server", None)
 
         # Handle parser configurations from nested "parsers" section
