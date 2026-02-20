@@ -74,11 +74,9 @@ class SkillProcessor:
                 "source_path": skill_dict.get("source_path", ""),
             },
         )
-        overview = await self._generate_overview(skill_dict, config)
+        context.set_vectorize(Vectorize(text=context.abstract))
 
-        # Use overview for vectorization (richer semantic content than abstract alone)
-        vectorize_text = overview if overview else context.abstract
-        context.set_vectorize(Vectorize(text=vectorize_text))
+        overview = await self._generate_overview(skill_dict, config)
 
         skill_dir_uri = f"viking://agent/skills/{context.meta['name']}"
 
