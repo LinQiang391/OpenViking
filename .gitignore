@@ -109,6 +109,7 @@ AGENTS.md
 
 # Git worktrees
 .worktrees/
+worktree/
 
 # Logs
 *.log
