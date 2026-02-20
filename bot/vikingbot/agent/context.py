@@ -68,8 +68,12 @@ class ContextBuilder:
         parts.append(self._get_identity())
         
         # Sandbox environment info
-        if self.sandbox_manager and self.sandbox_manager.config.enabled:
-            parts.append("## Sandbox Environment\n\nYou are running in a sandboxed environment. All file operations and command execution are restricted to the sandbox directory.\nThe sandbox root directory is `/` (use relative paths for all operations).")
+        if self.sandbox_manager:
+            sandbox_cwd = self.sandbox_manager.get_sandbox_cwd()
+            if self.sandbox_manager._is_direct_mode:
+                parts.append(f"## Environment\n\nYou are running directly on the host system. The workspace directory is `{sandbox_cwd}`.")
+            else:
+                parts.append(f"## Sandbox Environment\n\nYou are running in a sandboxed environment. All file operations and command execution are restricted to the sandbox directory.\nThe sandbox root directory is `{sandbox_cwd}` (use relative paths for all operations).")
         
         # Bootstrap files
         bootstrap = self._load_bootstrap_files()
@@ -112,8 +116,8 @@ Skills with available="false" need dependencies installed first - you can try in
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
         
         # Determine workspace display based on sandbox state
-        if self.sandbox_manager and self.sandbox_manager.config.enabled:
-            workspace_display = "/"
+        if self.sandbox_manager:
+            workspace_display = self.sandbox_manager.get_sandbox_cwd()
         else:
             workspace_display = workspace_path
         

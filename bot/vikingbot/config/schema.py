@@ -385,11 +385,18 @@ class ToolsConfig(BaseModel):
     """Tools configuration."""
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
-    restrict_to_workspace: bool = True  # If true, restrict all tool access to workspace directory
 
 
 class SandboxNetworkConfig(BaseModel):
-    """Sandbox network configuration."""
+    """Sandbox network configuration.
+    
+    SRT uses allow-only pattern: all network access is denied by default.
+    You must explicitly allow domains.
+    
+    - allowed_domains: List of allowed domains (supports wildcards like "*.example.com")
+    - denied_domains: List of denied domains (checked first, takes precedence over allowed_domains)
+    - allow_local_binding: Allow binding to local ports
+    """
     allowed_domains: list[str] = Field(default_factory=list)
     denied_domains: list[str] = Field(default_factory=list)
     allow_local_binding: bool = False
@@ -408,6 +415,11 @@ class SandboxRuntimeConfig(BaseModel):
     timeout: int = 300
 
 
+class DirectBackendConfig(BaseModel):
+    """Direct backend configuration."""
+    restrict_to_workspace: bool = False  # If true, restrict file access to workspace directory
+
+
 class SrtBackendConfig(BaseModel):
     """SRT backend configuration."""
     settings_path: str = "~/.vikingbot/srt-settings.json"
@@ -420,17 +432,51 @@ class DockerBackendConfig(BaseModel):
     network_mode: str = "bridge"
 
 
+class OpenSandboxNetworkConfig(BaseModel):
+    """OpenSandbox network configuration."""
+    allowed_domains: list[str] = Field(default_factory=list)
+    denied_domains: list[str] = Field(default_factory=list)
+
+
+class OpenSandboxRuntimeConfig(BaseModel):
+    """OpenSandbox runtime configuration."""
+    timeout: int = 300
+    cpu: str = "500m"
+    memory: str = "1Gi"
+
+
+class OpenSandboxBackendConfig(BaseModel):
+    """OpenSandbox backend configuration.
+    
+    Auto-detects runtime environment:
+    - Local: uses configured server_url (default http://localhost:18792)
+    - VKE: auto-detects KUBERNETES_SERVICE_HOST, uses http://opensandbox-server:8080
+    """
+    server_url: str = "http://localhost:18792"
+    api_key: str = ""
+    default_image: str = "opensandbox/code-interpreter:v1.0.1"
+    network: OpenSandboxNetworkConfig = Field(default_factory=OpenSandboxNetworkConfig)
+    runtime: OpenSandboxRuntimeConfig = Field(default_factory=OpenSandboxRuntimeConfig)
+
+
+class AioSandboxBackendConfig(BaseModel):
+    """AIO Sandbox backend configuration."""
+    base_url: str = "http://localhost:18794"
+
+
 class SandboxBackendsConfig(BaseModel):
     """Sandbox backends configuration."""
     srt: SrtBackendConfig = Field(default_factory=SrtBackendConfig)
     docker: DockerBackendConfig = Field(default_factory=DockerBackendConfig)
+    opensandbox: OpenSandboxBackendConfig = Field(default_factory=OpenSandboxBackendConfig)
+    direct: DirectBackendConfig = Field(default_factory=DirectBackendConfig)
+    aiosandbox: AioSandboxBackendConfig = Field(default_factory=AioSandboxBackendConfig)
 
 
 class SandboxConfig(BaseModel):
     """Sandbox configuration."""
-    enabled: bool = False
-    backend: str = "srt"
-    mode: str = "per-session"
+    backend: str = "direct"
+    mode: str = "shared"
     network: SandboxNetworkConfig = Field(default_factory=SandboxNetworkConfig)
     filesystem: SandboxFilesystemConfig = Field(default_factory=SandboxFilesystemConfig)
     runtime: SandboxRuntimeConfig = Field(default_factory=SandboxRuntimeConfig)

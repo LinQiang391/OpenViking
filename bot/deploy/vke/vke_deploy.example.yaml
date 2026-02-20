@@ -10,8 +10,13 @@ vke_cluster_id: ccxxxxxxxxxx
 image_registry: vikingbot-cn-beijing.cr.volces.com
 image_namespace: vikingbot
 image_repository: vikingbot
-# image_tag: 设置为 latest 或留空会自动生成时间戳标签(推荐)
-# 也可以手动指定固定标签，如: v1.0.0, build-123 等
+# 镜像标签配置
+# use_timestamp_tag: 是否使用时间戳标签 (true/false)
+#   - true: 自动生成时间戳标签，格式: build-YYYYMMDD-HHMMSS
+#   - false: 使用 image_tag 指定的标签
+use_timestamp_tag: false
+# image_tag: 固定标签 (仅当 use_timestamp_tag: false 时生效)
+#   - 可以设置为: latest, v1.0.0, build-123 等
 image_tag: latest
 local_image_name: vikingbot
 
@@ -47,3 +52,9 @@ tos_region: cn-beijing
 # NAS配置 (仅当storage_type=nas时需要)
 # nas_server: your-nas-server-address
 # nas_path: /your/nas/path
+
+# OpenSandbox 配置
+# 是否启用 OpenSandbox Sidecar 容器
+opensandbox_enabled: true
+# OpenSandbox Server 镜像
+opensandbox_image: opensandbox/server:latest

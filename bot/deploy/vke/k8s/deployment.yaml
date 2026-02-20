@@ -67,6 +67,27 @@ spec:
           failureThreshold: 3
         command: ["vikingbot"]
         args: ["gateway"]
+        env:
+        - name: NANOBOT_SANDBOX__BACKEND
+          value: "opensandbox"
+        - name: NANOBOT_SANDBOX__OPENSANDBOX__SERVER_URL
+          value: "http://localhost:8080"
+      
+      - name: opensandbox-server
+        image: opensandbox/server:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: vikingbot-data
+          mountPath: /root/.vikingbot
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
       volumes:
       - name: vikingbot-data
         persistentVolumeClaim:

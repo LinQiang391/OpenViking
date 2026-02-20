@@ -58,9 +58,8 @@ def test_sandbox_backends_config_defaults():
 def test_sandbox_config_defaults():
     """Test default values for SandboxConfig."""
     config = SandboxConfig()
-    assert config.enabled is False
-    assert config.backend == "srt"
-    assert config.mode == "per-session"
+    assert config.backend == "direct"
+    assert config.mode == "shared"
     assert isinstance(config.network, SandboxNetworkConfig)
     assert isinstance(config.filesystem, SandboxFilesystemConfig)
     assert isinstance(config.runtime, SandboxRuntimeConfig)
@@ -70,11 +69,9 @@ def test_sandbox_config_defaults():
 def test_sandbox_config_custom_values():
     """Test SandboxConfig with custom values."""
     config = SandboxConfig(
-        enabled=True,
         backend="docker",
         mode="per-session",
     )
-    assert config.enabled is True
     assert config.backend == "docker"
     assert config.mode == "per-session"
 

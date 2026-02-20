@@ -50,13 +50,8 @@ def get_workspace_path(workspace: str | None = None, ensure_exists: bool = True)
 
 
 def ensure_workspace_templates(workspace: Path) -> None:
-    """
-    Ensure workspace has template files, copy from source if empty.
-    
-    Args:
-        workspace: The workspace directory to ensure templates exist.
-    """
     import shutil
+    from vikingbot.agent.skills import BUILTIN_SKILLS_DIR
     
     # Ensure workspace directory exists first
     ensure_dir(workspace)
@@ -72,41 +67,70 @@ def ensure_workspace_templates(workspace: Path) -> None:
         if not source_dir.exists():
             # Fallback: create minimal templates
             _create_minimal_workspace_templates(workspace)
-            return
-        
-        # Copy all files and directories from source workspace
-        for item in source_dir.iterdir():
-            src = source_dir / item.name
-            dst = workspace / item.name
-            
-            if src.is_dir():
-                if src.name == "memory":
-                    # Ensure memory directory exists
-                    dst.mkdir(exist_ok=True)
-                    # Copy memory files
-                    for mem_file in src.iterdir():
-                        if mem_file.is_file():
-                            shutil.copy2(mem_file, dst / mem_file.name)
+        else:
+            # Copy all files and directories from source workspace
+            for item in source_dir.iterdir():
+                src = source_dir / item.name
+                dst = workspace / item.name
+                
+                if src.is_dir():
+                    if src.name == "memory":
+                        # Ensure memory directory exists
+                        dst.mkdir(exist_ok=True)
+                        # Copy memory files
+                        for mem_file in src.iterdir():
+                            if mem_file.is_file():
+                                shutil.copy2(mem_file, dst / mem_file.name)
+                    else:
+                        # Copy other directories
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
                 else:
-                    # Copy other directories
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
-            else:
-                # Copy individual files
-                if not dst.exists():
-                    shutil.copy2(src, dst)
-        
-        # Ensure skills directory exists (for custom user skills)
-        skills_dir = workspace / "skills"
-        skills_dir.mkdir(exist_ok=True)
-        
-        # Copy built-in skills to workspace skills directory
-        from vikingbot.agent.skills import BUILTIN_SKILLS_DIR
-        if BUILTIN_SKILLS_DIR.exists() and BUILTIN_SKILLS_DIR.is_dir():
-            for skill_dir in BUILTIN_SKILLS_DIR.iterdir():
-                if skill_dir.is_dir() and skill_dir.name != "README.md":
-                    dst_skill_dir = skills_dir / skill_dir.name
-                    if not dst_skill_dir.exists():
-                        shutil.copytree(skill_dir, dst_skill_dir)
+                    # Copy individual files
+                    if not dst.exists():
+                        shutil.copy2(src, dst)
+            
+            # Ensure skills directory exists (for custom user skills)
+            skills_dir = workspace / "skills"
+            skills_dir.mkdir(exist_ok=True)
+            
+            # Copy built-in skills to workspace skills directory
+            if BUILTIN_SKILLS_DIR.exists() and BUILTIN_SKILLS_DIR.is_dir():
+                for skill_dir in BUILTIN_SKILLS_DIR.iterdir():
+                    if skill_dir.is_dir() and skill_dir.name != "README.md":
+                        dst_skill_dir = skills_dir / skill_dir.name
+                        if not dst_skill_dir.exists():
+                            shutil.copytree(skill_dir, dst_skill_dir)
+    
+    # Always ensure memory and skills directories exist
+    memory_dir = workspace / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    
+    # Create default memory files if they don't exist
+    memory_file = memory_dir / "MEMORY.md"
+    if not memory_file.exists():
+        memory_file.write_text("""# Long-term Memory
+
+This file stores important information that should persist across sessions.
+
+## User Information
+
+(Important facts about the user)
+
+## Preferences
+
+(User preferences learned over time)
+
+## Important Notes
+
+(Things to remember)
+""")
+    
+    history_file = memory_dir / "HISTORY.md"
+    if not history_file.exists():
+        history_file.write_text("")
+    
+    skills_dir = workspace / "skills"
+    skills_dir.mkdir(exist_ok=True)
 
 
 def get_session_workspace_path(session_key: str) -> Path:
@@ -123,23 +147,10 @@ def get_session_workspace_path(session_key: str) -> Path:
     return get_data_path() / "workspace" / safe_key
 
 
-def ensure_session_workspace(session_key: str) -> Path:
-    """
-    Ensure a session workspace exists. If it doesn't exist, create it and copy templates.
-    
-    Args:
-        session_key: The session key (format: "channel:chat_id")
-        
-    Returns:
-        Path to the session workspace directory
-    """
-    workspace_path = get_session_workspace_path(session_key)
-    
-    # If workspace already exists, just return it
+def ensure_session_workspace(workspace_path: Path) -> Path:
     if workspace_path.exists() and workspace_path.is_dir():
         return workspace_path
     
-    # Workspace doesn't exist, create it and copy templates
     ensure_workspace_templates(workspace_path)
     return workspace_path
 

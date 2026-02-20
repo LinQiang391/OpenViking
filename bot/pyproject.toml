@@ -43,6 +43,9 @@ dependencies = [
     "ddgs>=9.0.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
+    "opensandbox>=0.1.0",
+    "opensandbox-server>=0.1.0",
+    "agent-sandbox>=0.0.23",
 ]
 
 [project.optional-dependencies]

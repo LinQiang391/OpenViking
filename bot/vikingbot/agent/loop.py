@@ -72,7 +72,6 @@ class AgentLoop:
         gen_image_model: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         cron_service: "CronService | None" = None,
-        restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         sandbox_manager: "SandboxManager | None" = None,
         thinking_callback=None,
@@ -90,10 +89,7 @@ class AgentLoop:
         self.gen_image_model = gen_image_model or "openai/doubao-seedream-4-5-251128"
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
-        # When sandbox is enabled, automatically enable restrict_to_workspace
         self.sandbox_manager = sandbox_manager
-        sandbox_enabled = sandbox_manager and sandbox_manager.config.enabled
-        self.restrict_to_workspace = bool(restrict_to_workspace or sandbox_enabled)
 
         self.context = ContextBuilder(workspace, sandbox_manager=sandbox_manager)
         self.sessions = session_manager or SessionManager(workspace, sandbox_manager=sandbox_manager)
@@ -106,7 +102,6 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exa_api_key=exa_api_key,
             exec_config=self.exec_config,
-            restrict_to_workspace=restrict_to_workspace,
             sandbox_manager=sandbox_manager,
         )
 
@@ -116,22 +111,17 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register default set of tools."""
-        # File tools (restrict to workspace if configured)
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        # File tools (use sandbox manager for all file operations)
         self.tools.register(ReadFileTool(
-            allowed_dir=allowed_dir,
             sandbox_manager=self.sandbox_manager,
         ))
         self.tools.register(WriteFileTool(
-            allowed_dir=allowed_dir,
             sandbox_manager=self.sandbox_manager,
         ))
         self.tools.register(EditFileTool(
-            allowed_dir=allowed_dir,
             sandbox_manager=self.sandbox_manager,
         ))
         self.tools.register(ListDirTool(
-            allowed_dir=allowed_dir,
             sandbox_manager=self.sandbox_manager,
         ))
 
@@ -139,7 +129,6 @@ class AgentLoop:
         self.tools.register(ExecTool(
             working_dir=str(self.workspace),
             timeout=self.exec_config.timeout,
-            restrict_to_workspace=self.restrict_to_workspace,
             sandbox_manager=self.sandbox_manager,
         ))
 
@@ -263,8 +252,16 @@ class AgentLoop:
             if tool and hasattr(tool, "set_session_key"):
                 tool.set_session_key(session_key_for_tools)
 
+        if self.sandbox_manager:
+            message_workspace = self.sandbox_manager.get_workspace_path(key)
+        else:
+            message_workspace = self.workspace
+        
+        from vikingbot.agent.context import ContextBuilder
+        message_context = ContextBuilder(message_workspace, sandbox_manager=self.sandbox_manager)
+        
         # Build initial messages (use get_history for LLM-formatted messages)
-        messages = self.context.build_messages(
+        messages = message_context.build_messages(
             history=session.get_history(),
             current_message=msg.content,
             media=msg.media if msg.media else None,
@@ -346,9 +343,9 @@ class AgentLoop:
                             metadata={"tool": tool_call.name, "args": tool_call.arguments}
                         ))
 
-                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
+                    logger.info(f"[TOOL_CALL]: {tool_call.name}({args_str[:200]})")
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
-
+                    logger.info(f"[RESULT]: {str(result)[:600]}")
                     # Special handling for image generation tool
                     if tool_call.name == "generate_image" and result and not result.startswith("Error"):
                         # Send image directly as a separate message
@@ -513,7 +510,13 @@ class AgentLoop:
         """Consolidate old messages into MEMORY.md + HISTORY.md, then trim session."""
         if not session.messages:
             return
-        memory = MemoryStore(self.workspace)
+        
+        if self.sandbox_manager:
+            memory_workspace = self.sandbox_manager.get_workspace_path(session.key)
+        else:
+            memory_workspace = self.workspace
+        
+        memory = MemoryStore(memory_workspace)
         if archive_all:
             old_messages = session.messages
             keep_count = 0

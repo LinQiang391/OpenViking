@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Any, Dict
 
 from vikingbot.config.loader import load_config, save_config, get_config_path
+from vikingbot.sandbox.backends import list_backends
 
 router = APIRouter()
 
@@ -78,3 +79,16 @@ async def get_config_path_endpoint():
             "path": str(get_config_path())
         }
     }
+
+
+@router.get("/sandbox/backends")
+async def get_sandbox_backends():
+    """Get list of available sandbox backends."""
+    try:
+        backends = list_backends()
+        return {
+            "success": True,
+            "data": backends
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -118,8 +118,8 @@ class FeishuChannel(BaseChannel):
             "image_type": "message"
         }
         
-        logger.debug(f"Uploading image to {url} with token {token[:20]}...")
-        
+        logger.debug(f"Uploading image to {url} with image_data {image_data[:20]}...")
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, headers=headers, data=data, files=files)
             logger.debug(f"Upload response status: {resp.status_code}")

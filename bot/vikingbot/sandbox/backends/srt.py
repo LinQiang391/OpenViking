@@ -19,6 +19,8 @@ class SrtBackend(SandboxBackend):
     """SRT backend using @anthropic-ai/sandbox-runtime."""
 
     def __init__(self, config, session_key: str, workspace: Path):
+        # SRT has built-in isolation, restrict_to_workspace is not needed
+        super().__init__(restrict_to_workspace=True)
         self.config = config
         self.session_key = session_key
         self._workspace = workspace
@@ -34,18 +36,7 @@ class SrtBackend(SandboxBackend):
 
     def _generate_settings(self) -> Path:
         """Generate SRT configuration file."""
-        srt_config = {
-            "network": {
-                "allowedDomains": self.config.network.allowed_domains,
-                "deniedDomains": self.config.network.denied_domains,
-                "allowLocalBinding": self.config.network.allow_local_binding
-            },
-            "filesystem": {
-                "denyRead": self.config.filesystem.deny_read,
-                "allowWrite": self.config.filesystem.allow_write,
-                "denyWrite": self.config.filesystem.deny_write
-            },
-        }
+        srt_config = self._load_config()
 
         settings_path = Path.home() / ".vikingbot" / "sandboxes" / f"{self.session_key.replace(':', '_')}-srt-settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +122,7 @@ class SrtBackend(SandboxBackend):
             raise SandboxNotStartedError()
         
         if command.strip() == "pwd":
-            return "/"
+            return str(self._workspace.resolve())
         
         # Execute via wrapper
         custom_config = kwargs.get("custom_config")
@@ -217,13 +208,14 @@ class SrtBackend(SandboxBackend):
         """Get sandbox workspace directory."""
         return self._workspace
 
+    @property
+    def sandbox_cwd(self) -> str:
+        """Get the current working directory inside the sandbox."""
+        return str(self._workspace.resolve())
+
     def _load_config(self) -> dict[str, Any]:
-        """Load and format config for SRT."""
         sandbox_workspace_str = str(self._workspace.resolve())
-        allow_write = list(self.config.filesystem.allow_write)
-        
-        if sandbox_workspace_str not in allow_write:
-            allow_write.append(sandbox_workspace_str)
+        allow_write = [sandbox_workspace_str]
         
         tmp_dir = "/tmp"
         if tmp_dir not in allow_write:
@@ -241,6 +233,75 @@ class SrtBackend(SandboxBackend):
                 "denyWrite": self.config.filesystem.deny_write,
             },
         }
+
+    async def read_file(self, path: str) -> str:
+        if not self._process:
+            raise SandboxNotStartedError()
+        
+        sandbox_path = path
+        if not Path(path).is_absolute():
+            sandbox_path = str(self._workspace.resolve() / path)
+        
+        await self._send_message({
+            "type": "read_file",
+            "path": sandbox_path
+        })
+        
+        response = await self._wait_for_response()
+        
+        if response.get("type") == "error":
+            raise RuntimeError(f"Read file error: {response.get('message')}")
+        
+        if response.get("type") != "file_read":
+            raise RuntimeError(f"Unexpected response from wrapper: {response}")
+        
+        return response.get("content", "")
+
+    async def write_file(self, path: str, content: str) -> None:
+        if not self._process:
+            raise SandboxNotStartedError()
+        
+        sandbox_path = path
+        if not Path(path).is_absolute():
+            sandbox_path = str(self._workspace.resolve() / path)
+        
+        await self._send_message({
+            "type": "write_file",
+            "path": sandbox_path,
+            "content": content
+        })
+        
+        response = await self._wait_for_response()
+        
+        if response.get("type") == "error":
+            raise RuntimeError(f"Write file error: {response.get('message')}")
+        
+        if response.get("type") != "file_written":
+            raise RuntimeError(f"Unexpected response from wrapper: {response}")
+
+    async def list_dir(self, path: str) -> list[tuple[str, bool]]:
+        if not self._process:
+            raise SandboxNotStartedError()
+        
+        sandbox_path = path
+        if not Path(path).is_absolute():
+            sandbox_path = str(self._workspace.resolve() / path)
+        
+        await self._send_message({
+            "type": "list_dir",
+            "path": sandbox_path
+        })
+        
+        response = await self._wait_for_response()
+        
+        if response.get("type") == "error":
+            raise RuntimeError(f"List dir error: {response.get('message')}")
+        
+        if response.get("type") != "dir_listed":
+            raise RuntimeError(f"Unexpected response from wrapper: {response}")
+        
+        items = response.get("items", [])
+        return [(item.get("name", ""), item.get("is_dir", False)) for item in items]
 
     async def _send_message(self, message: dict[str, Any]) -> None:
         """Send a message to the Node.js wrapper."""

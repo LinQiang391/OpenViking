@@ -39,7 +39,6 @@ class SubagentManager:
         brave_api_key: str | None = None,
         exa_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
-        restrict_to_workspace: bool = False,
         sandbox_manager: "SandboxManager | None" = None,
     ):
         from vikingbot.config.schema import ExecToolConfig
@@ -50,7 +49,6 @@ class SubagentManager:
         self.brave_api_key = brave_api_key
         self.exa_api_key = exa_api_key
         self.exec_config = exec_config or ExecToolConfig()
-        self.restrict_to_workspace = restrict_to_workspace
         self.sandbox_manager = sandbox_manager
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
@@ -106,15 +104,14 @@ class SubagentManager:
         try:
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
-            allowed_dir = self.workspace if self.restrict_to_workspace else None
-            tools.register(ReadFileTool(allowed_dir=allowed_dir))
-            tools.register(WriteFileTool(allowed_dir=allowed_dir))
-            tools.register(EditFileTool(allowed_dir=allowed_dir))
-            tools.register(ListDirTool(allowed_dir=allowed_dir))
+            tools.register(ReadFileTool(sandbox_manager=self.sandbox_manager))
+            tools.register(WriteFileTool(sandbox_manager=self.sandbox_manager))
+            tools.register(EditFileTool(sandbox_manager=self.sandbox_manager))
+            tools.register(ListDirTool(sandbox_manager=self.sandbox_manager))
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
-                restrict_to_workspace=self.restrict_to_workspace,
+                sandbox_manager=self.sandbox_manager,
             ))
             tools.register(WebSearchTool(
                 backend="auto",

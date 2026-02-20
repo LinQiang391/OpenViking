@@ -37,7 +37,6 @@ class MockBackend:
 def test_sandbox_manager_init():
     """Test SandboxManager initialization."""
     mock_config = MagicMock()
-    mock_config.enabled = True
     mock_config.mode = "per-session"
     mock_config.backend = "mock"
 
@@ -50,7 +49,6 @@ def test_sandbox_manager_init():
 def test_sandbox_manager_unsupported_backend():
     """Test SandboxManager with unsupported backend."""
     mock_config = MagicMock()
-    mock_config.enabled = True
     mock_config.mode = "per-session"
     mock_config.backend = "unsupported"
 
@@ -59,24 +57,9 @@ def test_sandbox_manager_unsupported_backend():
             SandboxManager(mock_config, Path("/tmp/workspace"), Path("/tmp/source"))
 
 
-async def test_get_sandbox_disabled():
-    """Test getting sandbox when disabled."""
-    mock_config = MagicMock()
-    mock_config.enabled = False
-    mock_config.mode = "per-session"
-    mock_config.backend = "mock"
-
-    with patch("vikingbot.sandbox.manager.get_backend", return_value=MockBackend):
-        manager = SandboxManager(mock_config, Path("/tmp/workspace"), Path("/tmp/source"))
-
-        with pytest.raises(SandboxDisabledError):
-            await manager.get_sandbox("test_session")
-
-
 async def test_get_sandbox_per_session():
     """Test getting per-session sandbox."""
     mock_config = MagicMock()
-    mock_config.enabled = True
     mock_config.mode = "per-session"
     mock_config.backend = "mock"
 
@@ -92,7 +75,6 @@ async def test_get_sandbox_per_session():
 async def test_get_sandbox_shared():
     """Test getting shared sandbox."""
     mock_config = MagicMock()
-    mock_config.enabled = True
     mock_config.mode = "shared"
     mock_config.backend = "mock"
 
@@ -108,7 +90,6 @@ async def test_get_sandbox_shared():
 async def test_cleanup_session():
     """Test cleaning up a session sandbox."""
     mock_config = MagicMock()
-    mock_config.enabled = True
     mock_config.mode = "per-session"
     mock_config.backend = "mock"
 
@@ -125,7 +106,6 @@ async def test_cleanup_session():
 async def test_cleanup_all():
     """Test cleaning up all sandboxes."""
     mock_config = MagicMock()
-    mock_config.enabled = True
     mock_config.mode = "per-session"
     mock_config.backend = "mock"
 

@@ -32,6 +32,25 @@ class MockBackend:
     async def execute(self, command, timeout=60, **kwargs):
         return f"Mock executed: {command}"
 
+    async def read_file(self, path: str) -> str:
+        sandbox_path = self._workspace / path
+        if sandbox_path.exists():
+            return sandbox_path.read_text(encoding="utf-8")
+        raise FileNotFoundError(f"File not found: {path}")
+
+    async def write_file(self, path: str, content: str) -> None:
+        sandbox_path = self._workspace / path
+        sandbox_path.parent.mkdir(parents=True, exist_ok=True)
+        sandbox_path.write_text(content, encoding="utf-8")
+
+    async def list_dir(self, path: str) -> list[tuple[str, bool]]:
+        sandbox_path = self._workspace / path
+        items = []
+        if sandbox_path.exists() and sandbox_path.is_dir():
+            for item in sandbox_path.iterdir():
+                items.append((item.name, item.is_dir()))
+        return items
+
     async def stop(self):
         self._running = False
 
@@ -61,22 +80,12 @@ def temp_source_workspace():
 def sandbox_manager(temp_workspace, temp_source_workspace):
     """Create a mock sandbox manager."""
     mock_config = MagicMock()
-    mock_config.enabled = True
     mock_config.mode = "per-session"
     mock_config.backend = "mock"
 
     with patch("vikingbot.sandbox.manager.get_backend", return_value=MockBackend):
         manager = SandboxManager(mock_config, temp_workspace, temp_source_workspace)
         yield manager
-
-
-@pytest.fixture
-def disabled_sandbox_manager(temp_workspace, temp_source_workspace):
-    """Create a mock sandbox manager with sandbox disabled."""
-    mock_config = MagicMock()
-    mock_config.enabled = False
-    mock_config.mode = "disabled"
-    mock_config.backend = "mock"
 
     with patch("vikingbot.sandbox.manager.get_backend", return_value=MockBackend):
         manager = SandboxManager(mock_config, temp_workspace, temp_source_workspace)

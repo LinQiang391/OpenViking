@@ -499,17 +499,13 @@ def gateway(
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
 
-    # Create sandbox manager if enabled
-    sandbox_manager = None
-    if config.sandbox.enabled:
-        from vikingbot.sandbox.manager import SandboxManager
-        from vikingbot.utils.helpers import get_sandbox_parent_path, get_source_workspace_path
-        sandbox_parent_path = get_sandbox_parent_path()
-        source_workspace_path = get_source_workspace_path()
-        sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
-        console.print(f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})")
-    else:
-        console.print("[dim]Sandbox: disabled[/dim]")
+    # Create sandbox manager
+    from vikingbot.sandbox.manager import SandboxManager
+    from vikingbot.utils.helpers import get_sandbox_parent_path, get_source_workspace_path
+    sandbox_parent_path = get_sandbox_parent_path()
+    source_workspace_path = get_source_workspace_path()
+    sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
+    console.print(f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})")
     
     # Create agent with cron service
     agent = AgentLoop(
@@ -524,7 +520,6 @@ def gateway(
         gen_image_model=config.agents.defaults.gen_image_model,
         exec_config=config.tools.exec,
         cron_service=cron,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
         sandbox_manager=sandbox_manager,
     )
@@ -642,7 +637,6 @@ def agent(
         memory_window=config.agents.defaults.memory_window,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on
@@ -1066,17 +1060,13 @@ def tui(
     
     provider = _make_provider(config)
     
-    # Create sandbox manager if enabled
-    sandbox_manager = None
-    if config.sandbox.enabled:
-        from vikingbot.sandbox.manager import SandboxManager
-        from vikingbot.utils.helpers import get_sandbox_parent_path, get_source_workspace_path
-        sandbox_parent_path = get_sandbox_parent_path()
-        source_workspace_path = get_source_workspace_path()
-        sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
-        console.print(f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})")
-    else:
-        console.print("[dim]Sandbox: disabled[/dim]")
+    # Create sandbox manager
+    from vikingbot.sandbox.manager import SandboxManager
+    from vikingbot.utils.helpers import get_sandbox_parent_path, get_source_workspace_path
+    sandbox_parent_path = get_sandbox_parent_path()
+    source_workspace_path = get_source_workspace_path()
+    sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
+    console.print(f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})")
     
     session_manager = SessionManager(config.workspace_path)
     
@@ -1089,7 +1079,6 @@ def tui(
         memory_window=config.agents.defaults.memory_window,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
         sandbox_manager=sandbox_manager,
     )

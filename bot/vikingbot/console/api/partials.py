@@ -299,8 +299,11 @@ def render_config_tools():
     """Render tools config form"""
     config = load_config()
     tools = config.tools if config.tools else None
+    sandbox = config.sandbox if config.sandbox else None
+    backends = sandbox.backends if sandbox else None
+    direct = backends.direct if backends else None
     
-    restrict_checked = 'checked' if (tools and tools.restrict_to_workspace) else ''
+    restrict_checked = 'checked' if (direct and direct.restrict_to_workspace) else ''
     web_api_key = tools.web.search.api_key if (tools and tools.web and tools.web.search) else ''
     web_max_results = tools.web.search.max_results if (tools and tools.web and tools.web.search) else 5
     exec_timeout = tools.exec.timeout if (tools and tools.exec) else 60
@@ -345,9 +348,9 @@ def render_config_sandbox():
     config = load_config()
     sandbox = config.sandbox if config.sandbox else None
     
-    sandbox_checked = 'checked' if (sandbox and sandbox.enabled) else ''
     backend_srt_selected = 'selected' if (sandbox and sandbox.backend == 'srt') else ''
     backend_docker_selected = 'selected' if (sandbox and sandbox.backend == 'docker') else ''
+    backend_direct_selected = 'selected' if (sandbox and sandbox.backend == 'direct') else ''
     mode_per_session_selected = 'selected' if (sandbox and sandbox.mode == 'per-session') else ''
     mode_shared_selected = 'selected' if (sandbox and sandbox.mode == 'shared') else ''
     
@@ -355,18 +358,11 @@ def render_config_sandbox():
         <div class="form-section">
             <h4 class="mb-4 text-gray-800">Sandbox</h4>
             
-            <div class="mb-3">
-                <label class="block mb-1.5 font-medium text-gray-700">
-                    <input type="checkbox" class="w-4 h-4 text-blue-600 mr-2" {sandbox_checked}>
-                    Enable Sandbox
-                </label>
-                <p class="text-xs text-gray-500">Enable sandboxed execution for enhanced security. Requires Node.js for SRT backend.</p>
-            </div>
-            
             <div class="grid grid-cols-2 gap-4 mb-3">
                 <div class="mb-0">
                     <label class="block mb-1.5 font-medium text-gray-700">Backend</label>
                     <select class="w-full px-3 py-2 border border-gray-300 rounded bg-white">
+                        <option value="direct" {backend_direct_selected}>Direct (No Sandbox)</option>
                         <option value="srt" {backend_srt_selected}>SRT (Anthropic Sandbox Runtime)</option>
                         <option value="docker" {backend_docker_selected}>Docker</option>
                     </select>

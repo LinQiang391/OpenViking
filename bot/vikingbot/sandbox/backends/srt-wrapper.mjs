@@ -123,6 +123,15 @@ const require = createRequire(import.meta.url);
         case 'execute':
           await executeCommand(message.command, message.timeout, message.customConfig);
           break;
+        case 'read_file':
+          await readFile(message.path);
+          break;
+        case 'write_file':
+          await writeFile(message.path, message.content);
+          break;
+        case 'list_dir':
+          await listDir(message.path);
+          break;
         case 'update_config':
           updateConfig(message.config);
           break;
@@ -230,6 +239,144 @@ const require = createRequire(import.meta.url);
     } catch (error) {
       sendError('Execution failed: ' + error.message);
     }
+  }
+
+  async function readFile(path) {
+    if (!initialized) {
+      sendError('Not initialized');
+      return;
+    }
+    
+    try {
+      // Use cat command through sandbox to read file
+      const result = await executeCommandInternal(`cat "${path}"`, 30000);
+      
+      if (result.exitCode !== 0) {
+        sendError('Read file failed: ' + (result.stderr || 'Unknown error'));
+        return;
+      }
+      
+      sendResponse({
+        type: 'file_read',
+        content: result.stdout
+      });
+    } catch (error) {
+      sendError('Read file failed: ' + error.message);
+    }
+  }
+
+  async function writeFile(path, content) {
+    if (!initialized) {
+      sendError('Not initialized');
+      return;
+    }
+    
+    try {
+      // Escape content for shell
+      const escapedContent = content.replace(/'/g, "'\\''");
+      const escapedPath = path.replace(/'/g, "'\\''");
+      
+      // First ensure directory exists, then write file through sandbox
+      const { dirname } = await import('path');
+      const dir = dirname(path);
+      const escapedDir = dir.replace(/'/g, "'\\''");
+      
+      // Create directory first
+      const mkdirResult = await executeCommandInternal(`mkdir -p '${escapedDir}'`, 30000);
+      if (mkdirResult.exitCode !== 0) {
+        sendError('Create directory failed: ' + (mkdirResult.stderr || 'Unknown error'));
+        return;
+      }
+      
+      // Write file using here-doc through sandbox
+      const writeResult = await executeCommandInternal(`cat > '${escapedPath}' << 'EOF_SANDBOX'\n${content}\nEOF_SANDBOX`, 30000);
+      
+      if (writeResult.exitCode !== 0) {
+        sendError('Write file failed: ' + (writeResult.stderr || 'Unknown error'));
+        return;
+      }
+      
+      sendResponse({
+        type: 'file_written'
+      });
+    } catch (error) {
+      sendError('Write file failed: ' + error.message);
+    }
+  }
+
+  async function listDir(path) {
+    if (!initialized) {
+      sendError('Not initialized');
+      return;
+    }
+    
+    try {
+      // Use ls -la command through sandbox to list directory
+      const escapedPath = path.replace(/'/g, "'\\''");
+      const result = await executeCommandInternal(`ls -la '${escapedPath}'`, 30000);
+      
+      if (result.exitCode !== 0) {
+        sendError('List dir failed: ' + (result.stderr || 'Unknown error'));
+        return;
+      }
+      
+      // Parse ls -la output to get items
+      const items = [];
+      const lines = result.stdout.trim().split('\n');
+      
+      // Skip first two lines (total and .)
+      for (let i = 2; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        
+        const parts = line.split(/\s+/);
+        if (parts.length >= 9) {
+          const name = parts.slice(8).join(' ');
+          if (name === '.' || name === '..') continue;
+          
+          const isDir = parts[0].startsWith('d');
+          items.push({
+            name: name,
+            is_dir: isDir
+          });
+        }
+      }
+      
+      sendResponse({
+        type: 'dir_listed',
+        items: items
+      });
+    } catch (error) {
+      sendError('List dir failed: ' + error.message);
+    }
+  }
+
+  async function executeCommandInternal(command, timeout) {
+    const sandboxedCommand = await SandboxManager.wrapWithSandbox(command);
+    
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    
+    let stdout = '';
+    let stderr = '';
+    let exitCode = 0;
+    
+    try {
+      const result = await execAsync(sandboxedCommand, {
+        timeout: timeout || 60000,
+        cwd: process.argv[3] || process.cwd()
+      });
+      stdout = result.stdout;
+      stderr = result.stderr;
+      exitCode = 0;
+    } catch (error) {
+      stdout = error.stdout || '';
+      stderr = error.stderr || '';
+      exitCode = error.code || 1;
+    }
+    
+    return { stdout, stderr, exitCode };
   }
 
   function updateConfig(config) {

@@ -22,15 +22,14 @@ class SandboxManager:
         self._shared_sandbox: SandboxBackend | None = None
 
         backend_cls = get_backend(config.backend)
+        
         if not backend_cls:
             raise UnsupportedBackendError(f"Unknown sandbox backend: {config.backend}")
         self._backend_cls = backend_cls
+        self._is_direct_mode = config.backend == "direct"
 
     async def get_sandbox(self, session_key: str) -> SandboxBackend:
         """Get sandbox instance based on configuration mode."""
-
-        if not self.config.enabled:
-            raise SandboxDisabledError()
 
         if self.config.mode == "per-session":
             return await self._get_or_create_session_sandbox(session_key)
@@ -116,3 +115,18 @@ class SandboxManager:
         if self._shared_sandbox:
             await self._shared_sandbox.stop()
             self._shared_sandbox = None
+
+    def get_workspace_path(self, session_key: str) -> Path:
+        if self.config.mode == "shared":
+            return self.workspace / "shared"
+        else:
+            return self.workspace / session_key.replace(":", "_")
+
+    def get_sandbox_cwd(self) -> str:
+        """Get the sandbox working directory path for system prompt."""
+        if self._is_direct_mode:
+            # Direct mode uses the actual workspace path
+            return str(self.source_workspace)
+        # For actual sandbox backends, return the generic "/"
+        # The actual cwd depends on the specific backend instance
+        return "/"

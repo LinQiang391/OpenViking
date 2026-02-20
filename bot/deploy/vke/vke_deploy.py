@@ -25,6 +25,15 @@ class VKEDeployer:
         self.config_path = config_path
         print(f"使用配置文件: {config_path}")
         self.config = self.load_config(config_path)
+        
+        use_timestamp_tag = self.config.get("use_timestamp_tag", False)
+        if use_timestamp_tag:
+            import datetime
+            now = datetime.datetime.now()
+            timestamp_tag = now.strftime("build-%Y%m%d-%H%M%S")
+            self.config["image_tag"] = timestamp_tag
+            print(f"已启用时间戳标签，自动生成: {timestamp_tag}")
+        
         self.validate_config()
         self.print_config_summary()
 
@@ -70,6 +79,13 @@ vke_cluster_id: ccxxxxxxxxxx
 image_registry: vikingbot-cn-beijing.cr.volces.com
 image_namespace: vikingbot
 image_repository: vikingbot
+# 镜像标签配置
+# use_timestamp_tag: 是否使用时间戳标签 (true/false)
+#   - true: 自动生成时间戳标签，格式: build-YYYYMMDD-HHMMSS
+#   - false: 使用 image_tag 指定的标签
+use_timestamp_tag: false
+# image_tag: 固定标签 (仅当 use_timestamp_tag: false 时生效)
+#   - 可以设置为: latest, v1.0.0, build-123 等
 image_tag: latest
 local_image_name: vikingbot
 
@@ -79,6 +95,7 @@ registry_password: ""
 dockerfile_path: deploy/Dockerfile
 build_context: .
 
+# K8s manifest文件
 k8s_manifest_path: deploy/vke/k8s/deployment.yaml
 k8s_namespace: default
 k8s_deployment_name: vikingbot
@@ -104,6 +121,12 @@ tos_region: cn-beijing
 # NAS配置 (仅当storage_type=nas时需要)
 # nas_server: your-nas-server-address
 # nas_path: /your/nas/path
+
+# OpenSandbox 配置
+# 是否启用 OpenSandbox Sidecar 容器
+opensandbox_enabled: true
+# OpenSandbox Server 镜像
+opensandbox_image: opensandbox/server:latest
 """
 
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
@@ -136,9 +159,15 @@ tos_region: cn-beijing
         print(f"  地域: {self.config.get('volcengine_region')}")
         print(f"  集群ID: {self.config.get('vke_cluster_id')}")
         print(f"  镜像: {self.config.get('image_registry')}/{self.config.get('image_namespace')}/{self.config.get('image_repository')}:{self.config.get('image_tag')}")
+        use_timestamp_tag = self.config.get("use_timestamp_tag", False)
+        print(f"  时间戳标签: {'启用' if use_timestamp_tag else '禁用'}")
         print(f"  Dockerfile: {self.config.get('dockerfile_path', 'deploy/Dockerfile')}")
         print(f"  K8s manifest: {self.config.get('k8s_manifest_path', 'deploy/vke/k8s/deployment.yaml')}")
         print(f"  存储类型: {self.config.get('storage_type', 'local')}")
+        opensandbox_enabled = self.config.get('opensandbox_enabled', True)
+        print(f"  OpenSandbox: {'启用' if opensandbox_enabled else '禁用'}")
+        if opensandbox_enabled:
+            print(f"  OpenSandbox 镜像: {self.config.get('opensandbox_image', 'opensandbox/server:latest')}")
         print()
 
     def run_command(self, cmd: str, cwd: Optional[str] = None, show_output: bool = False, timeout: Optional[float] = 60.0) -> tuple[int, str, str]:
@@ -286,17 +315,8 @@ tos_region: cn-beijing
 
     def check_pvc_exists(self, namespace: str, pvc_name: str = "vikingbot-data") -> bool:
         cmd = f"kubectl get pvc {pvc_name} -n {namespace} --no-headers 2>/dev/null || true"
-        # Use shell=True to handle the || true
-        import subprocess
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        # Check if the command succeeded and output is not empty
-        return result.returncode == 0 and result.stdout.strip() != ""
+        code, stdout, stderr = self.run_command(cmd, timeout=60.0)
+        return code == 0 and stdout.strip() != ""
 
 
 
@@ -335,6 +355,31 @@ tos_region: cn-beijing
             print(f"已设置副本数为: {k8s_replicas}")
             modified = True
         
+        opensandbox_enabled = self.config.get("opensandbox_enabled", True)
+        if not opensandbox_enabled:
+            print("OpenSandbox 已禁用，移除 Sidecar 容器...")
+            import re
+            manifest_content = re.sub(
+                r'(\n\s+-\s+name:\s+opensandbox-server.*?(?=\n\s+-\s+name:|\n\s+volumes:)', 
+                '', 
+                manifest_content, 
+                flags=re.DOTALL
+            )
+            manifest_content = re.sub(
+                r'\n\s+- name: NANOBOT_SANDBOX__OPENSANDBOX__SERVER_URL.*?\n', '', manifest_content)
+            manifest_content = re.sub(
+                r'\n\s+- name: NANOBOT_SANDBOX__OPENSANDBOX__TOS__ENABLED.*?\n', '', manifest_content)
+            manifest_content = re.sub(
+                r'\n\s+- name: NANOBOT_SANDBOX__OPENSANDBOX__TOS__PVC_NAME.*?\n', '', manifest_content)
+            modified = True
+            print("已移除 OpenSandbox Sidecar 容器")
+        else:
+            opensandbox_image = self.config.get("opensandbox_image", "opensandbox/server:latest")
+            if "opensandbox/server:latest" in manifest_content:
+                manifest_content = manifest_content.replace("opensandbox/server:latest", opensandbox_image)
+                print(f"已设置 OpenSandbox 镜像为: {opensandbox_image}")
+                modified = True
+        
         if modified:
             temp_manifest = "/tmp/vke_deploy_temp.yaml"
             with open(temp_manifest, 'w', encoding='utf-8') as f:
@@ -366,6 +411,32 @@ tos_region: cn-beijing
             pv_exists = code == 0 and stdout.strip() != ""
             
             if not pv_exists:
+                secret_name = "secret-tos-aksk"
+                print(f"Creating secret {secret_name} for TOS...")
+                secret_yaml = f"""apiVersion: v1
+kind: Secret
+metadata:
+  name: {secret_name}
+  namespace: {k8s_namespace}
+type: Opaque
+stringData:
+  accessKeyId: {self.config['volcengine_access_key']}
+  accessKeySecret: {self.config['volcengine_secret_key']}
+"""
+                temp_secret_file = "/tmp/vke_deploy_secret.yaml"
+                with open(temp_secret_file, "w", encoding="utf-8") as f:
+                    f.write(secret_yaml)
+                print(f"Secret YAML:\n{secret_yaml}")
+                cmd = f"kubectl apply -f {temp_secret_file}"
+                code, stdout, stderr = self.run_command(cmd)
+                if code != 0:
+                    print(f"Failed to create secret:")
+                    print(f"  stdout: {stdout}")
+                    print(f"  stderr: {stderr}")
+                    print("Continuing deployment without TOS secret...")
+                else:
+                    print(f"Secret {secret_name} created: {stdout}")
+                
                 print(f"Creating PV {pv_name} for TOS...")
                 pv_yaml = f"""apiVersion: v1
 kind: PersistentVolume
@@ -387,18 +458,22 @@ spec:
       subpath: /
       type: TOS
       server: tos-{tos_region}.ivolces.com
-      secretName: secret-tos-aksk
+      secretName: {secret_name}
       secretNamespace: {k8s_namespace}
 """
                 temp_pv_file = "/tmp/vke_deploy_pv.yaml"
                 with open(temp_pv_file, "w", encoding="utf-8") as f:
                     f.write(pv_yaml)
+                print(f"PV YAML:\n{pv_yaml}")
                 cmd = f"kubectl apply -f {temp_pv_file}"
                 code, stdout, stderr = self.run_command(cmd)
                 if code != 0:
-                    print(f"Failed to create PV: {stderr}")
-                    return False
-                print(f"PV {pv_name} created")
+                    print(f"Failed to create PV:")
+                    print(f"  stdout: {stdout}")
+                    print(f"  stderr: {stderr}")
+                    print("Continuing deployment without TOS PV...")
+                else:
+                    print(f"PV {pv_name} created: {stdout}")
             
             # Check if PVC exists
             pvc_exists = self.check_pvc_exists(k8s_namespace, pvc_name)
@@ -421,12 +496,16 @@ spec:
                 temp_pvc_file = "/tmp/vke_deploy_pvc.yaml"
                 with open(temp_pvc_file, "w", encoding="utf-8") as f:
                     f.write(pvc_yaml)
+                print(f"PVC YAML:\n{pvc_yaml}")
                 cmd = f"kubectl apply -f {temp_pvc_file}"
                 code, stdout, stderr = self.run_command(cmd)
                 if code != 0:
-                    print(f"Failed to create PVC: {stderr}")
-                    return False
-                print(f"PVC {pvc_name} created")
+                    print(f"Failed to create PVC:")
+                    print(f"  stdout: {stdout}")
+                    print(f"  stderr: {stderr}")
+                    print("Continuing deployment without TOS PVC...")
+                else:
+                    print(f"PVC {pvc_name} created: {stdout}")
         
         if pvc_exists:
             print("PVC vikingbot-data 已存在，跳过PVC部署以避免修改不可变字段")

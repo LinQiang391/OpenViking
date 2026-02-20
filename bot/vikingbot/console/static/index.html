@@ -628,6 +628,8 @@
 
         async function loadConfig() {
             try {
+                await loadSandboxBackends();
+                
                 var data = await api('/config');
                 if (data.success) {
                     currentConfig = data.data;
@@ -937,6 +939,28 @@
             return html;
         }
 
+        var availableSandboxBackends = ['srt', 'docker'];
+
+        async function loadSandboxBackends() {
+            try {
+                var data = await api('/sandbox/backends');
+                if (data.success) {
+                    availableSandboxBackends = data.data;
+                }
+            } catch (e) {
+                console.error('Failed to load sandbox backends:', e);
+            }
+        }
+
+        function getBackendDisplayName(backend) {
+            var names = {
+                'srt': 'SRT (Anthropic Sandbox Runtime)',
+                'docker': 'Docker',
+                'opensandbox': 'OpenSandbox'
+            };
+            return names[backend] || backend;
+        }
+
         function renderSandboxForm() {
             var html = [];
             var sandbox = currentConfig && currentConfig.sandbox ? currentConfig.sandbox : {};
@@ -949,17 +973,18 @@
             html.push('<input type="checkbox" id="sandbox.enabled" ' + sandboxChecked + '>');
             html.push(' Enable Sandbox');
             html.push('</label>');
-            html.push('<div class="form-help">Enable sandboxed execution for enhanced security. Requires Node.js for SRT backend.</div>');
+            html.push('<div class="form-help">Enable sandboxed execution for enhanced security.</div>');
             html.push('</div>');
 
-            var backendSrtSelected = sandbox.backend === 'srt' ? 'selected' : '';
-            var backendDockerSelected = sandbox.backend === 'docker' ? 'selected' : '';
             html.push('<div class="form-row">');
             html.push('<div class="form-group">');
             html.push('<label class="form-label">Backend</label>');
             html.push('<select id="sandbox.backend">');
-            html.push('<option value="srt" ' + backendSrtSelected + '>SRT (Anthropic Sandbox Runtime)</option>');
-            html.push('<option value="docker" ' + backendDockerSelected + '>Docker</option>');
+            for (var i = 0; i < availableSandboxBackends.length; i++) {
+                var backend = availableSandboxBackends[i];
+                var selected = sandbox.backend === backend ? 'selected' : '';
+                html.push('<option value="' + backend + '" ' + selected + '>' + getBackendDisplayName(backend) + '</option>');
+            }
             html.push('</select>');
             html.push('<div class="form-help">Sandbox backend to use</div>');
             html.push('</div>');

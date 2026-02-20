@@ -23,7 +23,6 @@ class ExecTool(Tool):
         working_dir: str | None = None,
         deny_patterns: list[str] | None = None,
         allow_patterns: list[str] | None = None,
-        restrict_to_workspace: bool = False,
         sandbox_manager: "SandboxManager | None" = None,
     ):
         self.timeout = timeout
@@ -39,7 +38,6 @@ class ExecTool(Tool):
             r":\(\)\s*\{.*\};\s*:",          # fork bomb
         ]
         self.allow_patterns = allow_patterns or []
-        self.restrict_to_workspace = restrict_to_workspace
         self.sandbox_manager = sandbox_manager
         self._session_key: str | None = None
 
@@ -74,20 +72,16 @@ class ExecTool(Tool):
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
         cwd = working_dir or self.working_dir or os.getcwd()
         
-        # Check if sandbox is enabled before trying to use it
-        if self.sandbox_manager and self._session_key and self.sandbox_manager.config.enabled:
-            try:
-                sandbox = await self.sandbox_manager.get_sandbox(self._session_key)
-                
-                if command.strip() == "pwd":
-                    return "/"
-                
-                # Sandbox mode: skip local safety guards (sandbox provides isolation)
-                return await sandbox.execute(command, timeout=self.timeout)
-            except Exception as e:
-                return f"Error executing in sandbox: {str(e)}"
-        
-        # Non-sandbox mode: apply safety guards
+        # Always use sandbox manager (includes direct mode)
+        try:
+            sandbox = await self.sandbox_manager.get_sandbox(self._session_key)
+            
+            if command.strip() == "pwd":
+                return sandbox.sandbox_cwd
+            
+            return await sandbox.execute(command, timeout=self.timeout)
+        except Exception as e:
+            return f"Error executing: {str(e)}"
         guard_error = self._guard_command(command, cwd)
         if guard_error:
             return guard_error
@@ -148,25 +142,5 @@ class ExecTool(Tool):
         if self.allow_patterns:
             if not any(re.search(p, lower) for p in self.allow_patterns):
                 return "Error: Command blocked by safety guard (not in allowlist)"
-
-        if self.restrict_to_workspace:
-            if "..\\" in cmd or "../" in cmd:
-                return "Error: Command blocked by safety guard (path traversal detected)"
-
-            cwd_path = Path(cwd).resolve()
-
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
-            # Only match absolute paths — avoid false positives on relative
-            # paths like ".venv/bin/python" where "/bin/python" would be
-            # incorrectly extracted by the old pattern.
-            posix_paths = re.findall(r"(?:^|[\s|>])(/[^\s\"'>]+)", cmd)
-
-            for raw in win_paths + posix_paths:
-                try:
-                    p = Path(raw.strip()).resolve()
-                except Exception:
-                    continue
-                if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
-                    return "Error: Command blocked by safety guard (path outside working dir)"
 
         return None

@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 # Default builtin skills directory (relative to this file)
-BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "workspace" / "skills"
 
 
 class SkillsLoader:
