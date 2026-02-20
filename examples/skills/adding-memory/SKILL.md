@@ -6,7 +6,7 @@ compatibility: configuration file at `~/.openviking/ovcli.conf`
 
 # OpenViking (OV) `add-memory`
 
-The `ov add-memory` command adds long persistant memory — turning text and structured conversations into searchable, retrievable memories in the OpenViking context database.
+The `ov add-memory` command adds long persistent memory — turning text and structured conversations into searchable, retrievable memories in the OpenViking context database.
 
 ## When to Use
 
@@ -16,6 +16,7 @@ The `ov add-memory` command adds long persistant memory — turning text and str
 - When an agent wants to store context for future retrieval
 
 ## Input Modes
+
 choose wisely between plain text and multi-turn mode. Multi-turn mode can contain more complex insights, let openviking handle the memory extraction.
 
 ### Mode 1: Plain Text for compressed memory
@@ -35,7 +36,7 @@ ov add-memory '[
   {"role": "user", "content": "I love traveling. Give me some options of Transport from Beijing to Shanghai."},
   {"role": "assistant", "content": "You can use train, bus, or plane. Train is the fastest, but you need to book in advance. Bus is cheaper, but you need to wait. Plane is the most expensive, but you can get there any time of day."},
   {"role": "user", "content": "I prefer train. I like sightseeing on the train. Can you give me the train schedule?"},
-  < ... more possible conversation about schedule and tickest need to be memorized ... >
+  < ... more possible conversation about schedule and tickets need to be memorized ... >
 ]'
 ```
 
@@ -47,24 +48,32 @@ Returns count of memory extracted:
 memories_extracted   1
 ```
 
+If `memories_extracted` is 0, the content was filtered as noise (no meaningful memory to store).
+
 ## Agent Best Practices
+
+### Split Loosely Unrelated Topics
+
+If the conversation covers clearly distinct topics (e.g., a user preference AND an unrelated debugging case), consider making separate calls — one per topic. This helps OpenViking focus extraction and avoids one topic drowning out another.
+
+That said, don't split artificially. If facts are part of the same story or share context, keep them together.
+
+```bash
+# One call for a debugging case — related facts belong together
+ov add-memory '[
+  {"role": "user", "content": "gRPC service has intermittent deadline exceeded errors"},
+  {"role": "user", "content": "Traced to a slow Redis node, replaced it, problem solved"}
+]'
+
+# Separate call for an unrelated user preference
+ov add-memory "User prefers vim + tmux, dislikes IDEs."
+```
 
 ### How to Write Good Memories
 
 1. **Be specific** — Include concrete details, not vague summaries
 2. **Include context** — Why this matters, when it applies
 3. **Use structured format** — Separate the what from the why
-
-### Batch Related Facts
-
-Group related memories in one call rather than many small ones:
-
-```bash
-ov add-memory '[
-  {"role": "user", "content": "Key facts about the ov_cli Rust crate"},
-  {"role": "assistant", "content": "1. runs faster than python cli\n2. uses HttpClient to connect openviking server\n3. Output formatting supports table and JSON modes\n4. Config lives at ~/.openviking/ovcli.conf"}
-]'
-```
 
 ## Prerequisites
 
