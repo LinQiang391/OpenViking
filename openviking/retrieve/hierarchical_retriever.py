@@ -320,20 +320,27 @@ class HierarchicalRetriever:
                     alpha * score + (1 - alpha) * current_score if current_score else score
                 )
 
-                if passes_threshold(final_score) and uri not in visited:
+                if not passes_threshold(final_score):
+                    logger.debug(
+                        f"[RecursiveSearch] URI {uri} score {final_score} did not pass threshold {effective_threshold}"
+                    )
+                    continue
+
+                # Always collect results that pass threshold, even if already
+                # visited as a directory starting point. The visited set only
+                # prevents re-entering directories for child search.
+                if not any(c.get("uri") == uri for c in collected):
                     r["_final_score"] = final_score
                     collected.append(r)
                     logger.debug(
                         f"[RecursiveSearch] Added URI: {uri} to candidates with score: {final_score}"
                     )
+
+                if uri not in visited:
                     if r.get("is_leaf"):
                         visited.add(uri)
-                        continue
-                    heapq.heappush(dir_queue, (-final_score, uri))
-                else:
-                    logger.debug(
-                        f"[RecursiveSearch] URI {uri} score {final_score} did not pass threshold {effective_threshold}"
-                    )
+                    else:
+                        heapq.heappush(dir_queue, (-final_score, uri))
 
             # Convergence check
             current_topk = sorted(collected, key=lambda x: x.get("_final_score", 0), reverse=True)[
