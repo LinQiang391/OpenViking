@@ -3,19 +3,17 @@
 # Hook: SubagentStop
 # When a subagent finishes, extract its transcript into OpenViking memory.
 
-set -euo pipefail
+LOG=/tmp/ov-hooks.log
 
 INPUT=$(cat)
 AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // "unknown"')
 AGENT_TRANSCRIPT=$(echo "$INPUT" | jq -r '.agent_transcript_path // empty')
-LOG=/tmp/ov-hooks.log
 
 if [ -z "$AGENT_TRANSCRIPT" ] || [ ! -f "$AGENT_TRANSCRIPT" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] SubagentStop/memory: no transcript for $AGENT_TYPE" >> "$LOG"
   exit 0
 fi
 
-# Extract user/assistant text turns from JSONL transcript
 MESSAGES=$(jq -sc '
   map(select(.type == "user" or .type == "assistant"))
   | map({
@@ -38,5 +36,14 @@ if [ "$COUNT" -eq 0 ]; then
   exit 0
 fi
 
-ov add-memory "$MESSAGES" >> "$LOG" 2>&1
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] SubagentStop/memory: saved $COUNT msgs from $AGENT_TYPE to ov" >> "$LOG"
+# Write messages to temp file for background process
+TMPFILE=$(mktemp /tmp/ov-hook-XXXXXX.json)
+echo "$MESSAGES" > "$TMPFILE"
+
+nohup bash -c "
+  ov add-memory \"\$(cat $TMPFILE)\" >> '$LOG' 2>&1
+  echo \"[\$(date '+%Y-%m-%d %H:%M:%S')] SubagentStop/memory: saved $COUNT msgs from $AGENT_TYPE to ov\" >> '$LOG'
+  rm -f '$TMPFILE'
+" > /dev/null 2>&1 &
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] SubagentStop/memory: queued $COUNT msgs from $AGENT_TYPE" >> "$LOG"
