@@ -9,19 +9,74 @@ Wraps existing storage backends to record IO operations.
 import time
 from typing import Any, Dict, List, Optional, Union
 
-from openviking.storage.recorder import IORecorder, IOType, get_recorder
+from openviking.eval.recorder import (
+    IORecorder,
+    IOType,
+    get_recorder,
+    RecordContext,
+    AGFSCallRecord,
+)
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
+class _AGFSCallCollector:
+    """
+    Helper to collect AGFS calls from a wrapped AGFS client.
+    
+    This wraps an AGFS client and collects all calls made through it.
+    """
+
+    def __init__(self, agfs_client: Any):
+        self._agfs = agfs_client
+        self.calls: List[AGFSCallRecord] = []
+
+    def __getattr__(self, name: str):
+        original_attr = getattr(self._agfs, name)
+        if not callable(original_attr):
+            return original_attr
+
+        def wrapped(*args, **kwargs):
+            start_time = time.time()
+            request = {"args": args, "kwargs": kwargs}
+            success = True
+            error = None
+            response = None
+
+            try:
+                response = original_attr(*args, **kwargs)
+                return response
+            except Exception as e:
+                success = False
+                error = str(e)
+                raise
+            finally:
+                latency_ms = (time.time() - start_time) * 1000
+                call = AGFSCallRecord(
+                    operation=name,
+                    request=request,
+                    response=response,
+                    latency_ms=latency_ms,
+                    success=success,
+                    error=error,
+                )
+                self.calls.append(call)
+
+        return wrapped
+
+
 class RecordingVikingFS:
     """
     Wrapper for VikingFS that records all operations.
-
+    
+    This wrapper records VikingFS operations at two levels:
+    1. VikingFS level: One record per VikingFS operation
+    2. AGFS level: Collects all internal AGFS calls made during the operation
+    
     Usage:
-        from openviking.storage.recorder import init_recorder
-        from openviking.storage.recorder.wrapper import RecordingVikingFS
+        from openviking.eval.recorder import init_recorder
+        from openviking.eval.recorder.wrapper import RecordingVikingFS
 
         init_recorder(enabled=True)
         fs = RecordingVikingFS(viking_fs)
@@ -38,203 +93,134 @@ class RecordingVikingFS:
         """
         self._fs = viking_fs
         self._recorder = recorder or get_recorder()
-
-    def _record(
-        self,
-        operation: str,
-        request: Dict[str, Any],
-        response: Any = None,
-        latency_ms: float = 0.0,
-        success: bool = True,
-        error: Optional[str] = None,
-    ) -> None:
-        """Record an FS operation."""
-        self._recorder.record_fs(
-            operation=operation,
-            request=request,
-            response=response,
-            latency_ms=latency_ms,
-            success=success,
-            error=error,
-        )
-
-    async def read(self, uri: str, offset: int = 0, size: int = -1) -> bytes:
-        """Read file with recording."""
-        request = {"uri": uri, "offset": offset, "size": size}
-        start_time = time.time()
-        try:
-            result = await self._fs.read(uri, offset, size)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("read", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("read", request, None, latency_ms, False, str(e))
-            raise
-
-    async def write(self, uri: str, data: Union[bytes, str]) -> str:
-        """Write file with recording."""
-        request = {"uri": uri}
-        start_time = time.time()
-        try:
-            result = await self._fs.write(uri, data)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("write", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("write", request, None, latency_ms, False, str(e))
-            raise
-
-    async def ls(self, uri: str) -> List[Dict[str, Any]]:
-        """List directory with recording."""
-        request = {"uri": uri}
-        start_time = time.time()
-        try:
-            result = await self._fs.ls(uri)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("ls", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("ls", request, None, latency_ms, False, str(e))
-            raise
-
-    async def stat(self, uri: str) -> Dict[str, Any]:
-        """Get file info with recording."""
-        request = {"uri": uri}
-        start_time = time.time()
-        try:
-            result = await self._fs.stat(uri)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("stat", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("stat", request, None, latency_ms, False, str(e))
-            raise
-
-    async def mkdir(self, uri: str, mode: str = "755", exist_ok: bool = False) -> None:
-        """Create directory with recording."""
-        request = {"uri": uri, "mode": mode, "exist_ok": exist_ok}
-        start_time = time.time()
-        try:
-            result = await self._fs.mkdir(uri, mode, exist_ok)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("mkdir", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("mkdir", request, None, latency_ms, False, str(e))
-            raise
-
-    async def rm(self, uri: str, recursive: bool = False) -> Dict[str, Any]:
-        """Delete with recording."""
-        request = {"uri": uri, "recursive": recursive}
-        start_time = time.time()
-        try:
-            result = await self._fs.rm(uri, recursive)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("rm", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("rm", request, None, latency_ms, False, str(e))
-            raise
-
-    async def mv(self, old_uri: str, new_uri: str) -> Dict[str, Any]:
-        """Move with recording."""
-        request = {"old_uri": old_uri, "new_uri": new_uri}
-        start_time = time.time()
-        try:
-            result = await self._fs.mv(old_uri, new_uri)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("mv", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("mv", request, None, latency_ms, False, str(e))
-            raise
-
-    async def grep(self, uri: str, pattern: str, case_insensitive: bool = False) -> Dict:
-        """Grep with recording."""
-        request = {"uri": uri, "pattern": pattern, "case_insensitive": case_insensitive}
-        start_time = time.time()
-        try:
-            result = await self._fs.grep(uri, pattern, case_insensitive)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("grep", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("grep", request, None, latency_ms, False, str(e))
-            raise
-
-    async def tree(
-        self,
-        uri: str = "viking://",
-        output: str = "original",
-        abs_limit: int = 256,
-        show_all_hidden: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """Tree with recording."""
-        request = {"uri": uri, "output": output, "abs_limit": abs_limit, "show_all_hidden": show_all_hidden}
-        start_time = time.time()
-        try:
-            result = await self._fs.tree(uri, output, abs_limit, show_all_hidden)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("tree", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("tree", request, None, latency_ms, False, str(e))
-            raise
-
-    async def glob(self, pattern: str, uri: str = "viking://") -> Dict:
-        """Glob with recording."""
-        request = {"pattern": pattern, "uri": uri}
-        start_time = time.time()
-        try:
-            result = await self._fs.glob(pattern, uri)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("glob", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("glob", request, None, latency_ms, False, str(e))
-            raise
-
-    async def abstract(self, uri: str) -> str:
-        """Get abstract with recording."""
-        request = {"uri": uri}
-        start_time = time.time()
-        try:
-            result = await self._fs.abstract(uri)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("abstract", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("abstract", request, None, latency_ms, False, str(e))
-            raise
-
-    async def overview(self, uri: str) -> str:
-        """Get overview with recording."""
-        request = {"uri": uri}
-        start_time = time.time()
-        try:
-            result = await self._fs.overview(uri)
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("overview", request, result, latency_ms)
-            return result
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self._record("overview", request, None, latency_ms, False, str(e))
-            raise
+        self._original_agfs = getattr(viking_fs, "agfs", None)
 
     def __getattr__(self, name: str) -> Any:
-        """Pass through any other attributes to the wrapped fs."""
-        return getattr(self._fs, name)
+        """
+        Smart attribute getter that wraps async methods for recording.
+        
+        This will automatically wrap all async methods of VikingFS,
+        ensuring every operation is recorded.
+        """
+        original_attr = getattr(self._fs, name)
+        
+        if not callable(original_attr) or name.startswith("_"):
+            return original_attr
+        # viking_fs文件操作
+        if name not in ("ls", "mkdir", "stat", "rm", "mv", "read", "write", "grep", "glob", "tree",
+                        "abstract", "overview", "relations", "link", "unlink",
+                        "write_file", "read_file", "read_file_bytes", "write_file_bytes", "append_file", "move_file",
+                        "delete_temp", "write_context", "get_relations", "get_relations_with_content",
+                        "find", "search",
+                        ):
+            return original_attr
+        
+        async def wrapped_async(*args, **kwargs):
+            request = self._build_request(name, args, kwargs)
+            start_time = time.time()
+            
+            collector = _AGFSCallCollector(self._fs.agfs)
+            self._fs.agfs = collector
+            
+            try:
+                result = await original_attr(*args, **kwargs)
+                latency_ms = (time.time() - start_time) * 1000
+                self._recorder.record_fs(
+                    operation=name,
+                    request=request,
+                    response=result,
+                    latency_ms=latency_ms,
+                    success=True,
+                    error=None,
+                    agfs_calls=collector.calls,
+                )
+                return result
+            except Exception as e:
+                latency_ms = (time.time() - start_time) * 1000
+                self._recorder.record_fs(
+                    operation=name,
+                    request=request,
+                    response=None,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error=str(e),
+                    agfs_calls=collector.calls,
+                )
+                raise
+            finally:
+                self._fs.agfs = self._original_agfs
+        
+        def wrapped_sync(*args, **kwargs):
+            request = self._build_request(name, args, kwargs)
+            start_time = time.time()
+            
+            try:
+                result = original_attr(*args, **kwargs)
+                latency_ms = (time.time() - start_time) * 1000
+                self._recorder.record_fs(
+                    operation=name,
+                    request=request,
+                    response=result,
+                    latency_ms=latency_ms,
+                    success=True,
+                    error=None,
+                    agfs_calls=[],
+                )
+                return result
+            except Exception as e:
+                latency_ms = (time.time() - start_time) * 1000
+                self._recorder.record_fs(
+                    operation=name,
+                    request=request,
+                    response=None,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error=str(e),
+                    agfs_calls=[],
+                )
+                raise
+        
+        import inspect
+        if inspect.iscoroutinefunction(original_attr) or name.startswith("_"):
+            return wrapped_async
+        
+        return wrapped_async
+
+    def _build_request(self, name: str, args: tuple, kwargs: dict) -> Dict[str, Any]:
+        """
+        Build request dict from method arguments.
+        
+        Args:
+            name: Method name
+            args: Positional arguments
+            kwargs: Keyword arguments
+            
+        Returns:
+            Request dictionary
+        """
+        request = {}
+        
+        param_names = []
+        try:
+            import inspect
+            original_attr = getattr(self._fs, name, None)
+            if original_attr and callable(original_attr):
+                sig = inspect.signature(original_attr)
+                param_names = list(sig.parameters.keys())
+        except Exception:
+            pass
+        
+        if param_names:
+            for i, arg in enumerate(args):
+                if i < len(param_names):
+                    param_name = param_names[i]
+                    if param_name != "self":
+                        request[param_name] = arg
+        
+        for key, value in kwargs.items():
+            request[key] = value
+        
+        return request
 
 
 class RecordingVikingDB:
@@ -242,8 +228,8 @@ class RecordingVikingDB:
     Wrapper for VikingDBInterface that records all operations.
 
     Usage:
-        from openviking.storage.recorder import init_recorder
-        from openviking.storage.recorder.wrapper import RecordingVikingDB
+        from openviking.eval.recorder import init_recorder
+        from openviking.eval.recorder.wrapper import RecordingVikingDB
 
         init_recorder(enabled=True)
         db = RecordingVikingDB(vector_store)
@@ -463,3 +449,4 @@ class RecordingVikingDB:
     def __getattr__(self, name: str) -> Any:
         """Pass through any other attributes to the wrapped db."""
         return getattr(self._db, name)
+

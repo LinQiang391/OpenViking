@@ -202,11 +202,12 @@ class OpenVikingService:
 
         config = get_openviking_config()
 
+        # Initialize VikingFS and VikingDB with recorder if enabled
+        enable_recorder = os.environ.get("OPENVIKING_ENABLE_RECORDER", "").lower() == "true"
+        
         # Create context collection
         await init_context_collection(self._vikingdb_manager)
-
-        # Initialize VikingFS
-        enable_recorder = os.environ.get("OPENVIKING_ENABLE_RECORDER", "").lower() == "true"
+        
         self._viking_fs = init_viking_fs(
             agfs_url=self._agfs_url or "http://localhost:8080",
             query_embedder=self._embedder,

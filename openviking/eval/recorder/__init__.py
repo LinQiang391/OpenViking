@@ -59,6 +59,21 @@ class VikingDBOperation(Enum):
 
 
 @dataclass
+class AGFSCallRecord:
+    """
+    Record of a single AGFS client call.
+    
+    Used when recording VikingFS operations that may involve multiple AGFS calls.
+    """
+    operation: str
+    request: Dict[str, Any]
+    response: Optional[Any] = None
+    latency_ms: float = 0.0
+    success: bool = True
+    error: Optional[str] = None
+
+
+@dataclass
 class IORecord:
     """
     Single IO operation record.
@@ -72,6 +87,7 @@ class IORecord:
         latency_ms: Latency in milliseconds
         success: Whether operation succeeded
         error: Error message if failed
+        agfs_calls: List of AGFS calls made during this operation (for VikingFS operations)
     """
     timestamp: str
     io_type: str
@@ -81,14 +97,52 @@ class IORecord:
     latency_ms: float = 0.0
     success: bool = True
     error: Optional[str] = None
+    agfs_calls: List[AGFSCallRecord] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return asdict(self)
+        
+        def serialize_any(obj: Any) -> Any:
+            """Recursively serialize any object."""
+            if obj is None:
+                return None
+            if isinstance(obj, bytes):
+                return {"__bytes__": obj.decode("utf-8", errors="replace")}
+            if isinstance(obj, dict):
+                return {k: serialize_any(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [serialize_any(item) for item in obj]
+            if isinstance(obj, (str, int, float, bool)):
+                return obj
+            if hasattr(obj, "__dict__"):
+                return serialize_any(obj.__dict__)
+            return str(obj)
+        
+        data = asdict(self)
+        data["response"] = serialize_any(data["response"])
+        
+        serialized_agfs_calls = []
+        for call in data["agfs_calls"]:
+            serialized_call = call.copy()
+            serialized_call["request"] = serialize_any(serialized_call["request"])
+            serialized_call["response"] = serialize_any(serialized_call["response"])
+            serialized_agfs_calls.append(serialized_call)
+        data["agfs_calls"] = serialized_agfs_calls
+        
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "IORecord":
         """Create from dictionary."""
+        data = data.copy()
+        if "agfs_calls" in data and data["agfs_calls"]:
+            agfs_calls = []
+            for call_data in data["agfs_calls"]:
+                if isinstance(call_data, dict):
+                    agfs_calls.append(AGFSCallRecord(**call_data))
+                else:
+                    agfs_calls.append(call_data)
+            data["agfs_calls"] = agfs_calls
         return cls(**data)
 
 
@@ -187,6 +241,7 @@ class IORecorder:
         latency_ms: float = 0.0,
         success: bool = True,
         error: Optional[str] = None,
+        agfs_calls: Optional[List[AGFSCallRecord]] = None,
     ) -> None:
         """
         Record a file system operation.
@@ -198,16 +253,18 @@ class IORecorder:
             latency_ms: Latency in milliseconds
             success: Whether operation succeeded
             error: Error message if failed
+            agfs_calls: List of AGFS calls made during this operation
         """
         record = IORecord(
             timestamp=datetime.now().isoformat(),
             io_type=IOType.FS.value,
             operation=operation,
-            request=request,
+            request=self._serialize_response(request),
             response=self._serialize_response(response),
             latency_ms=latency_ms,
             success=success,
             error=error,
+            agfs_calls=agfs_calls or [],
         )
         self._write_record(record)
 
@@ -219,27 +276,30 @@ class IORecorder:
         latency_ms: float = 0.0,
         success: bool = True,
         error: Optional[str] = None,
+        agfs_calls: Optional[List[AGFSCallRecord]] = None,
     ) -> None:
         """
         Record a VikingDB operation.
 
         Args:
-            operation: Operation name (insert, search, etc.)
+            operation: Operation name (upsert, search, filter, etc.)
             request: Request parameters
             response: Response data
             latency_ms: Latency in milliseconds
             success: Whether operation succeeded
             error: Error message if failed
+            agfs_calls: List of AGFS calls made during this operation
         """
         record = IORecord(
             timestamp=datetime.now().isoformat(),
             io_type=IOType.VIKINGDB.value,
             operation=operation,
-            request=request,
+            request=self._serialize_response(request),
             response=self._serialize_response(response),
             latency_ms=latency_ms,
             success=success,
             error=error,
+            agfs_calls=agfs_calls or [],
         )
         self._write_record(record)
 
@@ -306,6 +366,7 @@ class RecordContext:
         self.response = None
         self.error = None
         self.success = True
+        self.agfs_calls: List[AGFSCallRecord] = []
         self._start_time = None
 
     def __enter__(self):
@@ -327,6 +388,7 @@ class RecordContext:
                 latency_ms=latency_ms,
                 success=self.success,
                 error=self.error,
+                agfs_calls=self.agfs_calls,
             )
         else:
             self.recorder.record_vikingdb(
@@ -336,6 +398,7 @@ class RecordContext:
                 latency_ms=latency_ms,
                 success=self.success,
                 error=self.error,
+                agfs_calls=self.agfs_calls,
             )
 
         return False
@@ -343,6 +406,36 @@ class RecordContext:
     def set_response(self, response: Any) -> None:
         """Set the response data."""
         self.response = response
+        
+    def add_agfs_call(
+        self,
+        operation: str,
+        request: Dict[str, Any],
+        response: Any = None,
+        latency_ms: float = 0.0,
+        success: bool = True,
+        error: Optional[str] = None,
+    ) -> None:
+        """
+        Add an AGFS call to this operation record.
+        
+        Args:
+            operation: AGFS operation name
+            request: Request parameters
+            response: Response data
+            latency_ms: Latency in milliseconds
+            success: Whether operation succeeded
+            error: Error message if failed
+        """
+        call = AGFSCallRecord(
+            operation=operation,
+            request=request,
+            response=response,
+            latency_ms=latency_ms,
+            success=success,
+            error=error,
+        )
+        self.agfs_calls.append(call)
 
 
 def get_recorder() -> IORecorder:
@@ -370,7 +463,7 @@ def create_recording_agfs_client(agfs_client: Any, record_file: Optional[str] = 
         RecordingAGFSClient instance if recorder is enabled, otherwise the original client
 
     Usage:
-        from openviking.storage.recorder import init_recorder, create_recording_agfs_client
+        from openviking.eval.recorder import init_recorder, create_recording_agfs_client
         from pyagfs import AGFSClient
 
         # Initialize recorder
@@ -384,7 +477,7 @@ def create_recording_agfs_client(agfs_client: Any, record_file: Optional[str] = 
         viking_fs = VikingFS(...)
         viking_fs.agfs = recording_client
     """
-    from openviking.storage.recorder.recording_client import RecordingAGFSClient
+    from openviking.eval.recorder.recording_client import RecordingAGFSClient
 
     recorder = get_recorder()
 
@@ -393,3 +486,7 @@ def create_recording_agfs_client(agfs_client: Any, record_file: Optional[str] = 
 
     record_path = record_file or str(recorder.record_file)
     return RecordingAGFSClient(agfs_client, record_path)
+
+
+# Export RecordingVikingFS and RecordingVikingDB
+from openviking.eval.recorder.wrapper import RecordingVikingFS, RecordingVikingDB

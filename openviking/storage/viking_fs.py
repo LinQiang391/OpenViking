@@ -100,20 +100,21 @@ def _enable_viking_fs_recorder(viking_fs: "VikingFS") -> None:
     """
     Enable recorder for a VikingFS instance.
 
-    This wraps the AGFS client with recording capabilities.
+    This wraps the VikingFS instance with recording capabilities.
     Called automatically when enable_recorder=True in init_viking_fs.
 
     Args:
         viking_fs: VikingFS instance to enable recording for
     """
-    from openviking.storage.recorder import create_recording_agfs_client, get_recorder
+    from openviking.eval.recorder import RecordingVikingFS, get_recorder
 
     recorder = get_recorder()
     if not recorder.enabled:
-        from openviking.storage.recorder import init_recorder
+        from openviking.eval.recorder import init_recorder
         init_recorder(enabled=True)
 
-    viking_fs.agfs = create_recording_agfs_client(viking_fs.agfs)
+    global _instance
+    _instance = RecordingVikingFS(viking_fs)
     logger.info("[VikingFS] IO Recorder enabled")
 
 

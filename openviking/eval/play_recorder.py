@@ -19,42 +19,20 @@ import json
 import sys
 from pathlib import Path
 
-from openviking.storage.recorder.playback import (
+from openviking.eval.playback import (
     IOPlayback,
     PlaybackStats,
-    get_record_stats,
+)
+from openviking.eval.record_analysis import (
+    analyze_records,
+    print_analysis_stats,
 )
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-def print_stats(stats: dict, title: str = "Record Statistics") -> None:
-    """Print statistics in a formatted way."""
-    print(f"\n{'=' * 60}")
-    print(f"{title}")
-    print(f"{'=' * 60}")
 
-    print(f"\nFile: {stats.get('file', 'N/A')}")
-    print(f"Total Records: {stats.get('total_records', 0)}")
-    print(f"FS Operations: {stats.get('fs_count', 0)}")
-    print(f"VikingDB Operations: {stats.get('vikingdb_count', 0)}")
-    print(f"Total Latency: {stats.get('total_latency_ms', 0):.2f} ms")
-
-    if stats.get("time_range"):
-        time_range = stats["time_range"]
-        print(f"\nTime Range:")
-        print(f"  Start: {time_range.get('start', 'N/A')}")
-        print(f"  End: {time_range.get('end', 'N/A')}")
-
-    if stats.get("operations"):
-        print(f"\nOperations Breakdown:")
-        print(f"{'Operation':<30} {'Count':>10} {'Avg Latency (ms)':>18}")
-        print(f"{'-' * 60}")
-        for op, data in sorted(stats["operations"].items()):
-            count = data["count"]
-            avg_latency = data["total_latency_ms"] / count if count > 0 else 0
-            print(f"{op:<30} {count:>10} {avg_latency:>18.2f}")
 
 
 def print_playback_stats(stats: PlaybackStats) -> None:
@@ -78,6 +56,20 @@ def print_playback_stats(stats: PlaybackStats) -> None:
             print(f"  Speedup: {speedup:.2f}x (playback is faster)")
         else:
             print(f"  Slowdown: {1/speedup:.2f}x (playback is slower)")
+
+    if stats.total_viking_fs_operations > 0:
+        stats_dict = stats.to_dict()
+        viking_fs_stats = stats_dict.get("viking_fs_stats", {})
+        agfs_fs_stats = stats_dict.get("agfs_fs_stats", {})
+        
+        print(f"\nVikingFS Detailed Stats:")
+        print(f"  Total VikingFS Operations: {viking_fs_stats.get('total_operations', 0)}")
+        print(f"  VikingFS Success Rate: {viking_fs_stats.get('success_rate_percent', 0):.1f}%")
+        print(f"  Average AGFS Calls per VikingFS Operation: {viking_fs_stats.get('avg_agfs_calls_per_operation', 0):.2f}")
+        
+        print(f"\nAGFS FS Detailed Stats:")
+        print(f"  Total AGFS Calls: {agfs_fs_stats.get('total_calls', 0)}")
+        print(f"  AGFS Success Rate: {agfs_fs_stats.get('success_rate_percent', 0):.1f}%")
 
     if stats.fs_stats:
         print(f"\nFS Operations:")
@@ -108,8 +100,18 @@ async def main_async(args: argparse.Namespace) -> int:
         return 1
 
     if args.stats_only:
-        stats = get_record_stats(str(record_file))
-        print_stats(stats)
+        io_type = args.io_type
+        if args.fs and not args.vikingdb:
+            io_type = "fs"
+        elif args.vikingdb and not args.fs:
+            io_type = "vikingdb"
+        
+        stats = analyze_records(
+            record_file=str(record_file),
+            io_type=io_type,
+            operation=args.operation,
+        )
+        print_analysis_stats(stats)
         return 0
 
     enable_fs = args.fs

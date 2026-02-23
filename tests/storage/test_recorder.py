@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from openviking.storage.recorder import (
+from openviking.eval.recorder import (
     IORecorder,
     IORecord,
     IOType,
@@ -16,7 +16,7 @@ from openviking.storage.recorder import (
     get_recorder,
 )
 from openviking.eval.ragas import RagasConfig
-from openviking.storage.recorder.playback import (
+from openviking.eval.recorder.playback import (
     IOPlayback,
     PlaybackStats,
     load_records,

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from openviking.storage.recorder import (
+from openviking.eval.recorder import (
     IORecorder,
     IORecord,
     IOType,
@@ -17,8 +17,8 @@ from openviking.storage.recorder import (
     get_recorder,
     create_recording_agfs_client,
 )
-from openviking.storage.recorder.async_writer import AsyncRecordWriter
-from openviking.storage.recorder.recording_client import RecordingAGFSClient
+from openviking.eval.recorder.async_writer import AsyncRecordWriter
+from openviking.eval.recorder.recording_client import RecordingAGFSClient
 
 
 class MockAGFSClient:

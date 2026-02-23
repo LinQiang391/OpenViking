@@ -22,12 +22,17 @@ openviking/eval/
 ├── generator.py     # 数据集生成器
 ├── pipeline.py      # RAG 查询流水线
 ├── rag_eval.py      # CLI 评估工具
-└── datasets/        # 示例数据集
-
-openviking/storage/recorder/
-├── __init__.py      # IORecorder 录制器
 ├── playback.py      # Playback 回放器
-└── wrapper.py       # 存储层包装器
+├── record_analysis.py  # Record 分析器
+├── play_recorder.py # Playback CLI 工具
+├── analyze_records.py # Record 分析 CLI 工具
+├── recorder/        # IO 录制器模块
+│   ├── __init__.py  # IORecorder 录制器
+│   ├── wrapper.py   # 存储层包装器
+│   ├── async_writer.py # 异步写入器
+│   ├── recording_client.py # AGFS 客户端包装器
+│   └── playback.py  # 向后兼容的 playback 模块
+└── datasets/        # 示例数据集
 ```
 
 ### 核心类型
@@ -109,7 +114,15 @@ asyncio.run(main())
 python -m openviking.eval.rag_eval \
     --docs_dir ./docs \
     --question_file ./questions.jsonl \
+    --config ./.local/s3/ov-local.conf \
     --output ./results.json
+
+python -m openviking.eval.rag_eval \
+    --docs_dir ./docs \
+    --docs_dir ./README.md \
+    --question_file ./openviking/eval/datasets/local_doc_example_glm5.jsonl \
+    --config ./.local/s3/ov-local.conf \
+    --recorder
 
 # 启用 RAGAS 指标
 python -m openviking.eval.rag_eval \
@@ -146,7 +159,7 @@ python -m openviking.eval.rag_eval \
 IO Recorder 用于录制评估过程中的所有 IO 操作（FS、VikingDB），记录请求参数、响应结果、耗时等信息。
 
 ```python
-from openviking.storage.recorder import init_recorder, get_recorder
+from openviking.eval.recorder import init_recorder, get_recorder
 
 # 初始化录制器
 init_recorder(enabled=True)
@@ -162,24 +175,62 @@ print(f"FS operations: {stats['fs_count']}")
 print(f"VikingDB operations: {stats['vikingdb_count']}")
 ```
 
+### Record Analysis 分析器
+
+Record Analysis 用于分析录制的 IO 操作，提供全面的统计信息。
+
+```bash
+# 分析所有记录
+python -m openviking.eval.analyze_records \
+    --record_file ./records/io_recorder_20260214.jsonl
+
+# 只分析 FS 操作
+python -m openviking.eval.analyze_records \
+    --record_file ./records/io_recorder_20260223.jsonl \
+    --fs
+
+# 只分析 VikingDB 操作
+python -m openviking.eval.analyze_records \
+    --record_file ./records/io_recorder_20260214.jsonl \
+    --vikingdb
+
+# 过滤特定操作类型
+python -m openviking.eval.analyze_records \
+    --record_file ./records/io_recorder_20260214.jsonl \
+    --io-type fs \
+    --operation read
+
+# 保存结果到文件
+python -m openviking.eval.analyze_records \
+    --record_file ./records/io_recorder_20260214.jsonl \
+    --output analysis.json
+```
+
 ### Playback 回放器
 
 Playback 用于回放录制的 IO 操作，对比不同存储后端的性能差异。
 
 ```bash
-# 查看记录统计
-uv run play_recorder.py \
-    --record_file ./records/io_recorder_20260214.jsonl \
-    --stats-only
-
 # 使用远程配置回放
-uv run play_recorder.py \
+python -m openviking.eval.play_recorder \
+    --record_file ./records/io_recorder_20260223.jsonl \
+    --config_file ./.local/s3/ov-local.conf \
+    --output ./records/playback_results.json
+
+# 只测试 FS 操作
+python -m openviking.eval.play_recorder \
     --record_file ./records/io_recorder_20260214.jsonl \
-    --config_file ./ov-remote.conf \
-    --output ./playback_results.json
+    --config_file ./ov.conf \
+    --fs
+
+# 只测试 VikingDB 操作
+python -m openviking.eval.play_recorder \
+    --record_file ./records/io_recorder_20260214.jsonl \
+    --config_file ./ov.conf \
+    --vikingdb
 
 # 过滤特定操作类型
-uv run play_recorder.py \
+python -m openviking.eval.play_recorder \
     --record_file ./records/io_recorder_20260214.jsonl \
     --config_file ./ov.conf \
     --io-type fs \
@@ -189,8 +240,9 @@ uv run play_recorder.py \
 ### 存储层评估流程
 
 1. **录制阶段**：使用 `--recorder` 参数运行评估，记录所有 IO 操作
-2. **回放阶段**：使用不同的配置文件回放，对比性能差异
-3. **分析结果**：查看各操作的耗时对比，识别性能瓶颈
+2. **分析阶段**：使用 `analyze_records` 分析录制的记录
+3. **回放阶段**：使用不同的配置文件回放，对比性能差异
+4. **分析结果**：查看各操作的耗时对比，识别性能瓶颈
 
 ```bash
 # 步骤 1：使用本地存储录制
@@ -200,12 +252,16 @@ python -m openviking.eval.rag_eval \
     --recorder \
     --config ./ov-local.conf
 
-# 步骤 2：使用远程存储回放
-uv run play_recorder.py \
+# 步骤 2：分析录制的记录
+python -m openviking.eval.analyze_records \
+    --record_file ./records/io_recorder_20260215.jsonl
+
+# 步骤 3：使用远程存储回放
+python -m openviking.eval.play_recorder \
     --record_file ./records/io_recorder_20260215.jsonl \
     --config_file ./ov.conf
 
-# 步骤 3：对比分析
+# 步骤 4：对比分析
 # 输出会显示各操作的原始耗时 vs 回放耗时
 ```
 
@@ -265,8 +321,10 @@ python -m openviking.eval.rag_eval --docs_dir ./docs --question_file ./questions
 
 - CLI 工具：[rag_eval.py](./rag_eval.py)
 - RAGAS 集成：[ragas.py](./ragas.py)
-- IO 录制器：[storage/recorder/__init__.py](../storage/recorder/__init__.py)
-- 回放器：[storage/recorder/playback.py](../storage/recorder/playback.py)
-- 回放 CLI：[play_recorder.py](../../play_recorder.py)
+- IO 录制器：[recorder/__init__.py](./recorder/__init__.py)
+- 回放器：[playback.py](./playback.py)
+- 记录分析器：[record_analysis.py](./record_analysis.py)
+- 回放 CLI：[play_recorder.py](./play_recorder.py)
+- 分析 CLI：[analyze_records.py](./analyze_records.py)
 - 示例数据：[datasets/local_doc_example_glm5.jsonl](./datasets/local_doc_example_glm5.jsonl)
 - 测试文件：[tests/eval/](../../tests/eval/)、[tests/storage/test_recorder.py](../../tests/storage/test_recorder.py)

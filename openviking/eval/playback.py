@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from openviking.storage.recorder import IORecord, IOType
+from openviking.eval.recorder import IORecord, IOType
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -51,6 +51,12 @@ class PlaybackStats:
         total_playback_latency_ms: Total playback latency
         fs_stats: Statistics for FS operations
         vikingdb_stats: Statistics for VikingDB operations
+        viking_fs_success_count: VikingFS operation success count
+        viking_fs_error_count: VikingFS operation error count
+        agfs_fs_success_count: AGFS FS operation success count
+        agfs_fs_error_count: AGFS FS operation error count
+        total_agfs_calls: Total number of AGFS calls across all VikingFS operations
+        total_viking_fs_operations: Total number of VikingFS operations with AGFS calls
     """
 
     total_records: int = 0
@@ -60,6 +66,12 @@ class PlaybackStats:
     total_playback_latency_ms: float = 0.0
     fs_stats: Dict[str, Dict[str, Any]] = None
     vikingdb_stats: Dict[str, Dict[str, Any]] = None
+    viking_fs_success_count: int = 0
+    viking_fs_error_count: int = 0
+    agfs_fs_success_count: int = 0
+    agfs_fs_error_count: int = 0
+    total_agfs_calls: int = 0
+    total_viking_fs_operations: int = 0
 
     def __post_init__(self):
         if self.fs_stats is None:
@@ -69,6 +81,23 @@ class PlaybackStats:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
+        viking_fs_success_rate = (
+            self.viking_fs_success_count / self.total_viking_fs_operations * 100
+            if self.total_viking_fs_operations > 0
+            else 0
+        )
+        agfs_fs_total = self.agfs_fs_success_count + self.agfs_fs_error_count
+        agfs_fs_success_rate = (
+            self.agfs_fs_success_count / agfs_fs_total * 100
+            if agfs_fs_total > 0
+            else 0
+        )
+        avg_agfs_calls = (
+            self.total_agfs_calls / self.total_viking_fs_operations
+            if self.total_viking_fs_operations > 0
+            else 0
+        )
+        
         return {
             "total_records": self.total_records,
             "success_count": self.success_count,
@@ -80,9 +109,57 @@ class PlaybackStats:
                 if self.total_playback_latency_ms > 0
                 else 0
             ),
+            "viking_fs_stats": {
+                "success_count": self.viking_fs_success_count,
+                "error_count": self.viking_fs_error_count,
+                "success_rate_percent": viking_fs_success_rate,
+                "total_operations": self.total_viking_fs_operations,
+                "avg_agfs_calls_per_operation": avg_agfs_calls,
+            },
+            "agfs_fs_stats": {
+                "success_count": self.agfs_fs_success_count,
+                "error_count": self.agfs_fs_error_count,
+                "success_rate_percent": agfs_fs_success_rate,
+                "total_calls": agfs_fs_total,
+            },
             "fs_stats": self.fs_stats,
             "vikingdb_stats": self.vikingdb_stats,
         }
+
+
+class _AGFSCallCollector:
+    """
+    Helper class to collect AGFS calls during playback for comparison.
+    """
+
+    def __init__(self, agfs_client: Any):
+        self._agfs = agfs_client
+        self.calls: List[Dict[str, Any]] = []
+
+    def __getattr__(self, name: str):
+        original_attr = getattr(self._agfs, name)
+        if not callable(original_attr):
+            return original_attr
+
+        def wrapped(*args, **kwargs):
+            call_record = {
+                "operation": name,
+                "request": {"args": args, "kwargs": kwargs},
+                "success": True,
+                "error": None,
+            }
+            try:
+                response = original_attr(*args, **kwargs)
+                call_record["response"] = response
+                return response
+            except Exception as e:
+                call_record["success"] = False
+                call_record["error"] = str(e)
+                raise
+            finally:
+                self.calls.append(call_record)
+
+        return wrapped
 
 
 class IOPlayback:
@@ -104,6 +181,7 @@ class IOPlayback:
         fail_fast: bool = False,
         enable_fs: bool = True,
         enable_vikingdb: bool = True,
+        check_agfs_calls: bool = True,
     ):
         """
         Initialize IOPlayback.
@@ -114,24 +192,20 @@ class IOPlayback:
             fail_fast: Stop on first error
             enable_fs: Whether to play FS operations
             enable_vikingdb: Whether to play VikingDB operations
+            check_agfs_calls: Whether to check AGFS calls match recorded calls
         """
         self.config_file = config_file
         self.compare_response = compare_response
         self.fail_fast = fail_fast
         self.enable_fs = enable_fs
         self.enable_vikingdb = enable_vikingdb
+        self.check_agfs_calls = check_agfs_calls
         self._viking_fs = None
         self._vector_store = None
 
     def _path_to_uri(self, path: str) -> str:
         """Convert AGFS path to VikingFS URI."""
-        if path.startswith("viking://"):
-            return path
-        if path.startswith("/local/"):
-            return "viking://" + path[7:]
-        if path.startswith("/"):
-            return "viking://" + path[1:]
-        return f"viking://{path}"
+        return self._viking_fs._path_to_uri(path)
 
     def _init_backends(self) -> None:
         """Initialize backend clients from config."""
@@ -196,85 +270,55 @@ class IOPlayback:
         """Play a single FS operation."""
         result = PlaybackResult(record=record)
         start_time = time.time()
+        args0 = None
 
         try:
             operation = record.operation
             request = record.request
 
-            args = request.get("args", [])
-            kwargs = request.get("kwargs", {})
-
-            if operation == "read":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", ""))
-                uri = self._path_to_uri(path)
-                await self._viking_fs.read(
-                    uri=uri,
-                    offset=args[1] if len(args) > 1 else kwargs.get("offset", 0),
-                    size=args[2] if len(args) > 2 else kwargs.get("size", -1),
-                )
-            elif operation == "write":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", ""))
-                uri = self._path_to_uri(path)
-                data = args[1] if len(args) > 1 else kwargs.get("data", b"")
-                if isinstance(data, dict) and "__bytes__" in data:
-                    data = data["__bytes__"].encode("utf-8")
-                await self._viking_fs.write(
-                    uri=uri,
-                    data=data,
-                )
-            elif operation == "ls":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", "/"))
-                uri = self._path_to_uri(path)
-                await self._viking_fs.ls(uri=uri)
-            elif operation == "stat":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", ""))
-                uri = self._path_to_uri(path)
-                await self._viking_fs.stat(uri=uri)
-            elif operation == "mkdir":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", ""))
-                uri = self._path_to_uri(path)
-                await self._viking_fs.mkdir(
-                    uri=uri,
-                    mode=args[1] if len(args) > 1 else kwargs.get("mode", "755"),
-                )
-            elif operation == "rm":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", ""))
-                uri = self._path_to_uri(path)
-                await self._viking_fs.rm(
-                    uri=uri,
-                    recursive=args[1] if len(args) > 1 else kwargs.get("recursive", False),
-                )
-            elif operation == "mv":
-                old_path = args[0] if args else kwargs.get("old_path", kwargs.get("old_uri", ""))
-                new_path = (
-                    args[1] if len(args) > 1 else kwargs.get("new_path", kwargs.get("new_uri", ""))
-                )
-                await self._viking_fs.mv(
-                    old_uri=self._path_to_uri(old_path),
-                    new_uri=self._path_to_uri(new_path),
-                )
-            elif operation == "grep":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", ""))
-                uri = self._path_to_uri(path)
-                await self._viking_fs.grep(
-                    uri=uri,
-                    pattern=args[1] if len(args) > 1 else kwargs.get("pattern", ""),
-                )
-            elif operation == "tree":
-                path = args[0] if args else kwargs.get("path", kwargs.get("uri", "/"))
-                uri = self._path_to_uri(path)
-                await self._viking_fs.tree(uri=uri)
-            elif operation == "glob":
-                await self._viking_fs.glob(
-                    pattern=args[0] if args else kwargs.get("pattern", "*"),
-                )
+            if "args" in request or "kwargs" in request:
+                args = request.get("args", [])
+                kwargs = request.get("kwargs", {})
+                args0 = args[0] if args else kwargs.get("path", kwargs.get("uri", ""))
             else:
-                raise ValueError(f"Unknown FS operation: {operation}")
+                args = []
+                kwargs = request
+                args0 = kwargs.get("path", kwargs.get("uri", ""))
+
+            collector = None
+            original_agfs = None
+            if self.check_agfs_calls and hasattr(record, "agfs_calls") and record.agfs_calls:
+                collector = _AGFSCallCollector(self._viking_fs.agfs)
+                original_agfs = self._viking_fs.agfs
+                self._viking_fs.agfs = collector
+
+            def process_arg(arg: Any) -> Any:
+                if isinstance(arg, dict) and "__bytes__" in arg:
+                    return arg["__bytes__"].encode("utf-8")
+                if isinstance(arg, dict):
+                    return {k: process_arg(v) for k, v in arg.items()}
+                if isinstance(arg, list):
+                    return [process_arg(item) for item in arg]
+                return arg
+
+            processed_args = [process_arg(arg) for arg in args]
+            processed_kwargs = {k: process_arg(v) for k, v in kwargs.items()}
+
+            method = getattr(self._viking_fs, operation)
+            await method(*processed_args, **processed_kwargs)
+
+            if collector and original_agfs:
+                self._viking_fs.agfs = original_agfs
+                result.response_match = self._compare_agfs_calls(record.agfs_calls, collector.calls)
+                if not result.response_match:
+                    result.playback_error = "AGFS calls mismatch"
 
             result.playback_latency_ms = (time.time() - start_time) * 1000
             result.playback_success = True
 
         except Exception as e:
+            if original_agfs:
+                self._viking_fs.agfs = original_agfs
             result.playback_latency_ms = (time.time() - start_time) * 1000
             playback_error = str(e)
 
@@ -284,9 +328,54 @@ class IOPlayback:
             else:
                 result.playback_success = False
                 result.playback_error = playback_error
-                logger.error(f"[IOPlayback] FS {operation} failed: {e}")
+                logger.error(f"[IOPlayback] FS {operation} on {args0} failed: {e}")
 
         return result
+
+    def _compare_agfs_calls(self, recorded_calls: List[Any], actual_calls: List[Dict[str, Any]]) -> bool:
+        """
+        Compare recorded AGFS calls with actual AGFS calls.
+
+        Args:
+            recorded_calls: List of recorded AGFS calls (AGFSCallRecord or dict)
+            actual_calls: List of actual AGFS calls (dicts)
+
+        Returns:
+            True if calls match, False otherwise
+        """
+        if len(recorded_calls) != len(actual_calls):
+            logger.warning(
+                f"AGFS call count mismatch: recorded {len(recorded_calls)}, actual {len(actual_calls)}"
+            )
+            return False
+
+        for recorded_call, actual_call in zip(recorded_calls, actual_calls):
+            if isinstance(recorded_call, dict):
+                recorded_op = recorded_call.get("operation")
+                recorded_req = recorded_call.get("request")
+                recorded_success = recorded_call.get("success", True)
+            else:
+                recorded_op = recorded_call.operation
+                recorded_req = recorded_call.request
+                recorded_success = recorded_call.success
+
+            if recorded_op != actual_call["operation"]:
+                logger.warning(
+                    f"AGFS operation mismatch: recorded {recorded_op}, actual {actual_call['operation']}"
+                )
+                return False
+            if recorded_req != actual_call["request"]:
+                logger.warning(
+                    f"AGFS request mismatch for operation {recorded_op}"
+                )
+                return False
+            if recorded_success != actual_call["success"]:
+                logger.warning(
+                    f"AGFS success status mismatch for operation {recorded_op}"
+                )
+                return False
+
+        return True
 
     def _errors_match(self, playback_error: str, record_error: str) -> bool:
         """Check if playback error matches original record error."""
@@ -407,6 +496,7 @@ class IOPlayback:
         Returns:
             PlaybackStats with playback results
         """
+
         need_fs = self.enable_fs and (io_type is None or io_type == "fs")
         need_vikingdb = self.enable_vikingdb and (io_type is None or io_type == "vikingdb")
 
@@ -461,6 +551,20 @@ class IOPlayback:
                 stats.fs_stats[op_key]["count"] += 1
                 stats.fs_stats[op_key]["total_original_latency_ms"] += record.latency_ms
                 stats.fs_stats[op_key]["total_playback_latency_ms"] += result.playback_latency_ms
+                
+                if hasattr(record, "agfs_calls") and record.agfs_calls:
+                    stats.total_viking_fs_operations += 1
+                    if result.playback_success:
+                        stats.viking_fs_success_count += 1
+                    else:
+                        stats.viking_fs_error_count += 1
+                    
+                    stats.total_agfs_calls += len(record.agfs_calls)
+                    for call in record.agfs_calls:
+                        if call.success:
+                            stats.agfs_fs_success_count += 1
+                        else:
+                            stats.agfs_fs_error_count += 1
             else:
                 if op_key not in stats.vikingdb_stats:
                     stats.vikingdb_stats[op_key] = {
@@ -489,52 +593,3 @@ class IOPlayback:
     def play_sync(self, **kwargs) -> PlaybackStats:
         """Synchronous wrapper for play method."""
         return asyncio.run(self.play(**kwargs))
-
-
-def load_records(record_file: str) -> List[IORecord]:
-    """Load records from a JSONL file."""
-    records = []
-    with open(record_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                records.append(IORecord.from_dict(json.loads(line)))
-    return records
-
-
-def get_record_stats(record_file: str) -> Dict[str, Any]:
-    """Get statistics from a record file without playback."""
-    records = load_records(record_file)
-
-    stats = {
-        "file": record_file,
-        "total_records": len(records),
-        "fs_count": 0,
-        "vikingdb_count": 0,
-        "total_latency_ms": 0.0,
-        "operations": {},
-        "time_range": {
-            "start": None,
-            "end": None,
-        },
-    }
-
-    for record in records:
-        stats["total_latency_ms"] += record.latency_ms
-
-        if record.io_type == IOType.FS.value:
-            stats["fs_count"] += 1
-        else:
-            stats["vikingdb_count"] += 1
-
-        op_key = f"{record.io_type}.{record.operation}"
-        if op_key not in stats["operations"]:
-            stats["operations"][op_key] = {"count": 0, "total_latency_ms": 0.0}
-        stats["operations"][op_key]["count"] += 1
-        stats["operations"][op_key]["total_latency_ms"] += record.latency_ms
-
-        if stats["time_range"]["start"] is None:
-            stats["time_range"]["start"] = record.timestamp
-        stats["time_range"]["end"] = record.timestamp
-
-    return stats

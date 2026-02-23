@@ -10,8 +10,8 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from openviking.storage.recorder import IOType
-from openviking.storage.recorder.async_writer import AsyncRecordWriter
+from openviking.eval.recorder import IOType
+from openviking.eval.recorder.async_writer import AsyncRecordWriter
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -26,7 +26,7 @@ class RecordingAGFSClient:
 
     Usage:
         from pyagfs import AGFSClient
-        from openviking.storage.recorder.recording_client import RecordingAGFSClient
+        from openviking.eval.recorder.recording_client import RecordingAGFSClient
 
         base_client = AGFSClient(api_base_url="http://localhost:1833")
         recording_client = RecordingAGFSClient(base_client, "./records/io_recorder.jsonl")

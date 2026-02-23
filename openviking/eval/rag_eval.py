@@ -85,7 +85,7 @@ class RAGEvaluator:
         self._initialized = False
 
         if enable_recorder:
-            from openviking.storage.recorder import init_recorder
+            from openviking.eval.recorder import init_recorder
             init_recorder(enabled=True)
             logger.info("IO Recorder enabled")
 
@@ -376,7 +376,7 @@ async def main_async(args):
         await run_ragas_evaluation(eval_results)
 
     if args.recorder:
-        from openviking.storage.recorder import get_recorder
+        from openviking.eval.recorder import get_recorder
         from openviking.storage.viking_fs import get_viking_fs
 
         recorder = get_recorder()
