@@ -342,6 +342,17 @@ class AgentDefaults(BaseModel):
     max_tool_iterations: int = 50
     memory_window: int = 50
     gen_image_model: str = "openai/doubao-seedream-4-5-251128"
+    default_skills: list[str] = Field(default_factory=lambda: [
+        "opencode",
+        "github-proxy",
+        "github",
+        "memory",
+        "cron",
+        "weather",
+        "tmux",
+        "skill-creator",
+        "summarize",
+    ])
 
 
 class AgentsConfig(BaseModel):
