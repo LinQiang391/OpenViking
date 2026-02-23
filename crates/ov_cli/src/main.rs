@@ -740,6 +740,8 @@ async fn handle_admin(cmd: AdminCommands, ctx: CliContext) -> Result<()> {
             ).await
         }
     }
+}
+
 async fn handle_add_memory(content: String, ctx: CliContext) -> Result<()> {
     let client = ctx.get_client();
     commands::session::add_memory(&client, &content, ctx.output_format, ctx.compact).await
