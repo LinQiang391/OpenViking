@@ -6,7 +6,7 @@ Complete installation guide for OpenViking - the Context Database for AI Agents.
 
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
-- [Step 1: Install uv (Recommended)](#step-1-install-uv-recommended)
+- [Step 1: Install uv](#step-1-install-uv)
 - [Step 2: Install OpenViking Server](#step-2-install-openviking-server)
 - [Step 3: Install ov CLI (Required)](#step-3-install-ov-cli-required)
 - [Step 4: Install Skills](#step-4-install-skills)
@@ -84,9 +84,9 @@ Before installing OpenViking, ensure you have:
 
 ---
 
-## Step 1: Install uv (Recommended)
+## Step 1: Install uv
 
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. It's recommended for installing OpenViking.
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. **uv is the recommended and only supported way to install OpenViking** - it automatically manages virtual environments, ensuring clean, isolated installations without polluting your system Python.
 
 ### Install uv
 
@@ -111,22 +111,16 @@ Expected output: version number (e.g., `uv 0.5.x`)
 
 ## Step 2: Install OpenViking Server
 
-Install the OpenViking server and Python SDK:
+Install the OpenViking server and Python SDK using uv. **uv automatically creates and manages a virtual environment** - no manual `venv` or `source venv/bin/activate` needed.
 
-**Using uv (recommended):**
 ```bash
 uv pip install openviking
-```
-
-**Using pip:**
-```bash
-pip install openviking
 ```
 
 **Verify installation:**
 
 ```bash
-python -c "import openviking; print(openviking.__version__)"
+uv run python -c "import openviking; print(openviking.__version__)"
 ```
 
 Expected output: version number (e.g., `0.1.18`)
@@ -397,14 +391,14 @@ export OPENVIKING_CLI_CONFIG_FILE=/path/to/ovcli.conf
 Start the OpenViking server (required for skills and CLI):
 
 ```bash
-# Using the installed command
-openviking-server
+# Using uv (recommended) - automatically uses virtual environment
+uv run openviking-server
 
-# Or using Python module
-python -m openviking serve
+# Or using Python module with uv
+uv run python -m openviking serve
 
 # With custom config
-python -m openviking serve --config /path/to/ov.conf --port 1933
+uv run python -m openviking serve --config /path/to/ov.conf --port 1933
 ```
 
 Expected output:
@@ -418,7 +412,7 @@ The server can run **anywhere** - choose what fits your setup:
 
 | Deployment | Use Case | Setup |
 |------------|----------|-------|
-| **Local machine** | Personal development | `python -m openviking serve` |
+| **Local machine** | Personal development | `uv run openviking-server` |
 | **Cloud VM** | Shared team resource | Deploy to AWS/GCP/Azure/Volcengine ECS |
 | **Container** | Scalable deployment | Docker with `docker run` or Kubernetes |
 | **Dedicated server** | Production workloads | Bare metal or VM with persistent storage |
@@ -449,7 +443,7 @@ Each client uses the same `ovcli.conf` pointing to the shared server URL.
 ### 1. Verify Python Package
 
 ```bash
-python -c "
+uv run python -c "
 import openviking as ov
 print(f'OpenViking version: {ov.__version__}')
 print('Python package installed successfully!')
@@ -525,11 +519,8 @@ ov search "Apache license"
 
 **Solution:**
 ```bash
-# Using uv (recommended)
+# Using uv (the only supported method)
 uv pip install openviking
-
-# Or using pip
-pip install openviking
 ```
 
 #### 2. ov: command not found
@@ -557,8 +548,8 @@ cargo install --path crates/ov_cli --force
 # Check if server is running
 ps aux | grep openviking-server
 
-# Start server
-openviking-server
+# Start server with uv
+uv run openviking-server
 
 # Verify URL in ovcli.conf matches server host/port
 ```
@@ -602,7 +593,8 @@ openviking-server
 
 | Task | Command |
 |------|---------|
-| Start server | `openviking-server` |
+| Install package | `uv pip install openviking` |
+| Start server | `uv run openviking-server` |
 | Check health | `curl http://localhost:1933/health` |
 | Add memory | `ov add-memory "content"` |
 | Add resource | `ov add-resource <path/URL> --wait` |
@@ -617,7 +609,7 @@ openviking-server
 
 ## Summary Checklist
 
-- [ ] uv installed (recommended)
+- [ ] uv installed (required)
 - [ ] Python 3.10+ installed
 - [ ] `uv pip install openviking` completed successfully
 - [ ] `ov` CLI installed and in PATH (required)
@@ -625,7 +617,7 @@ openviking-server
 - [ ] `~/.openviking/ov.conf` created with model credentials
 - [ ] `~/.openviking/ovcli.conf` created with server URL
 - [ ] `OPENVIKING_CONFIG_DIR` or `OPENVIKING_CONFIG_FILE` environment variable set
-- [ ] Server started and running
+- [ ] Server started with `uv run openviking-server`
 - [ ] Health endpoint returns `{"status": "ok"}`
 - [ ] CLI can connect and execute commands
 - [ ] All three skills tested and working
