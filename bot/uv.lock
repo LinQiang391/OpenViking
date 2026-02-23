@@ -198,6 +198,19 @@ wheels = [
 ]
 
 [[package]]
+name = "beautifulsoup4"
+version = "4.14.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "soupsieve" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c3/b0/1c6a16426d389813b48d95e26898aff79abbde42ad353958ad95cc8c9b21/beautifulsoup4-4.14.3.tar.gz", hash = "sha256:6292b1c5186d356bba669ef9f7f051757099565ad9ada5dd630bd9de5fa7fb86", size = 627737, upload-time = "2025-11-30T15:08:26.084Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/39/47f9197bdd44df24d67ac8893641e16f386c984a0619ef2ee4c51fbbc019/beautifulsoup4-4.14.3-py3-none-any.whl", hash = "sha256:0918bfe44902e6ad8d57732ba310582e98da931428d231a5ecb9e7c703a735bb", size = 107721, upload-time = "2025-11-30T15:08:24.087Z" },
+]
+
+[[package]]
 name = "bidict"
 version = "0.23.1"
 source = { registry = "https://pypi.org/simple" }
@@ -797,6 +810,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/2c/48/71de9ed269fdae9c8057e5a4c0aa7402e8bb16f2c6e90b3aa53327b113f8/hpack-4.1.0.tar.gz", hash = "sha256:ec5eca154f7056aa06f196a557655c5b009b382873ac8d1e66e79e87535f1dca", size = 51276, upload-time = "2025-01-22T21:44:58.347Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/c6/80c95b1b2b94682a72cbdbfb85b81ae2daffa4291fbfa1b1464502ede10d/hpack-4.1.0-py3-none-any.whl", hash = "sha256:157ac792668d995c657d93111f46b4535ed114f0c9c8d672271bbec7eae1b496", size = 34357, upload-time = "2025-01-22T21:44:56.92Z" },
+]
+
+[[package]]
+name = "html2text"
+version = "2025.4.15"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/27/e158d86ba1e82967cc2f790b0cb02030d4a8bef58e0c79a8590e9678107f/html2text-2025.4.15.tar.gz", hash = "sha256:948a645f8f0bc3abe7fd587019a2197a12436cd73d0d4908af95bfc8da337588", size = 64316, upload-time = "2025-04-15T04:02:30.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/84/1a0f9555fd5f2b1c924ff932d99b40a0f8a6b12f6dd625e2a47f415b00ea/html2text-2025.4.15-py3-none-any.whl", hash = "sha256:00569167ffdab3d7767a4cdf589b7f57e777a5ed28d12907d8c58769ec734acc", size = 34656, upload-time = "2025-04-15T04:02:28.44Z" },
 ]
 
 [[package]]
@@ -1533,6 +1555,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6e/5a/f495777c02625bfa18212b6e3b73f1893094f2bf660976eb4bc6f43a1ca2/openai-2.20.0.tar.gz", hash = "sha256:2654a689208cd0bf1098bb9462e8d722af5cbe961e6bba54e6f19fb843d88db1", size = 642355, upload-time = "2026-02-10T19:02:54.145Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/a0/cf4297aa51bbc21e83ef0ac018947fa06aea8f2364aad7c96cbf148590e6/openai-2.20.0-py3-none-any.whl", hash = "sha256:38d989c4b1075cd1f76abc68364059d822327cf1a932531d429795f4fc18be99", size = 1098479, upload-time = "2026-02-10T19:02:52.157Z" },
+]
+
+[[package]]
+name = "opencode-ai"
+version = "0.1.0a36"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/d5/51f96d49dd41c5d9996c7f03e22a760085c3589a43dacb8fa77a77c4d1cb/opencode_ai-0.1.0a36.tar.gz", hash = "sha256:3cd89e86e4a333f52999fc0df337afc9be39298c755e1a241d77dd33d7d79050", size = 108133, upload-time = "2025-08-27T02:38:58.878Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/af/0379ba45fd2f4c14be3b62a78714b1b34705d0472cdd8d62df47a8fb1ffd/opencode_ai-0.1.0a36-py3-none-any.whl", hash = "sha256:73bce046ec3d841dadb31bed658a5049f25cf0c2e3ebda2e2d1ff37d792ea1b5", size = 110221, upload-time = "2025-08-27T02:38:57.501Z" },
 ]
 
 [[package]]
@@ -2494,6 +2533,15 @@ wheels = [
 ]
 
 [[package]]
+name = "soupsieve"
+version = "2.8.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/ae/2d9c981590ed9999a0d91755b47fc74f74de286b0f5cee14c9269041e6c4/soupsieve-2.8.3.tar.gz", hash = "sha256:3267f1eeea4251fb42728b6dfb746edc9acaffc4a45b27e19450b676586e8349", size = 118627, upload-time = "2026-01-20T04:27:02.457Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/2c/1462b1d0a634697ae9e55b3cecdcb64788e8b7d63f54d923fcd0bb140aed/soupsieve-2.8.3-py3-none-any.whl", hash = "sha256:ed64f2ba4eebeab06cc4962affce381647455978ffc1e36bb79a545b91f45a95", size = 37016, upload-time = "2026-01-20T04:27:01.012Z" },
+]
+
+[[package]]
 name = "starlette"
 version = "0.52.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2721,15 +2769,18 @@ version = "0.1.3.post7"
 source = { editable = "." }
 dependencies = [
     { name = "agent-sandbox" },
+    { name = "beautifulsoup4" },
     { name = "croniter" },
     { name = "ddgs" },
     { name = "dingtalk-stream" },
     { name = "fastapi" },
+    { name = "html2text" },
     { name = "httpx", extra = ["socks"] },
     { name = "lark-oapi" },
     { name = "litellm" },
     { name = "loguru" },
     { name = "msgpack" },
+    { name = "opencode-ai" },
     { name = "opensandbox" },
     { name = "opensandbox-server" },
     { name = "prompt-toolkit" },
@@ -2761,15 +2812,18 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-sandbox", specifier = ">=0.0.23" },
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "croniter", specifier = ">=2.0.0" },
     { name = "ddgs", specifier = ">=9.0.0" },
     { name = "dingtalk-stream", specifier = ">=0.4.0" },
     { name = "fastapi", specifier = ">=0.100.0" },
+    { name = "html2text", specifier = ">=2020.1.16" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.25.0" },
     { name = "lark-oapi", specifier = ">=1.0.0" },
     { name = "litellm", specifier = ">=1.0.0" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "msgpack", specifier = ">=1.0.8" },
+    { name = "opencode-ai", specifier = ">=0.1.0a0" },
     { name = "opensandbox", specifier = ">=0.1.0" },
     { name = "opensandbox-server", specifier = ">=0.1.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
