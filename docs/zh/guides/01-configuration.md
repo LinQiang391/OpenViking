@@ -120,7 +120,7 @@ OpenViking 使用 JSON 配置文件（`ov.conf`）进行设置。配置文件支
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `provider` | str | `"volcengine"`、`"openai"` 或 `"vikingdb"` |
+| `provider` | str | `"volcengine"`、`"openai"`、`"vikingdb"` 或 `"jina"` |
 | `api_key` | str | API Key |
 | `model` | str | 模型名称 |
 | `dimension` | int | 向量维度 |
@@ -140,6 +140,7 @@ OpenViking 使用 JSON 配置文件（`ov.conf`）进行设置。配置文件支
 - `openai`: OpenAI Embedding API
 - `volcengine`: 火山引擎 Embedding API
 - `vikingdb`: VikingDB Embedding API
+- `jina`: Jina AI Embedding API
 
 **vikingdb provider 配置示例:**
 
@@ -157,6 +158,43 @@ OpenViking 使用 JSON 配置文件（`ov.conf`）进行设置。配置文件支
   }
 }
 ```
+
+**jina provider 配置示例:**
+
+```json
+{
+  "embedding": {
+    "dense": {
+      "provider": "jina",
+      "api_key": "jina_xxx",
+      "model": "jina-embeddings-v5-text-small",
+      "dimension": 1024
+    }
+  }
+}
+```
+
+可用 Jina 模型:
+- `jina-embeddings-v5-text-small`: 677M 参数, 1024 维, 最大序列长度 32768 (默认)
+- `jina-embeddings-v5-text-nano`: 239M 参数, 768 维, 最大序列长度 8192
+
+**本地部署 (GGUF/MLX):** Jina 嵌入模型是开源的, 在 [Hugging Face](https://huggingface.co/jinaai) 上提供 GGUF 和 MLX 格式。可以使用任何 OpenAI 兼容的推理服务器 (如 llama.cpp、MLX、vLLM) 本地运行, 并将 `api_base` 指向本地端点:
+
+```json
+{
+  "embedding": {
+    "dense": {
+      "provider": "jina",
+      "api_key": "local",
+      "api_base": "http://localhost:8080/v1",
+      "model": "jina-embeddings-v5-text-nano",
+      "dimension": 768
+    }
+  }
+}
+```
+
+获取 API Key: https://jina.ai
 
 #### Sparse Embedding
 
@@ -398,7 +436,8 @@ HTTP 客户端（`SyncHTTPClient` / `AsyncHTTPClient`）和 CLI 工具连接远�
     "vectordb": {
       "backend": "local|remote",
       "path": "string",
-      "url": "string"
+      "url": "string",
+      "project": "string"
     }
   },
   "server": {
