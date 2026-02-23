@@ -41,6 +41,11 @@ class S3Config(BaseModel):
         description="Enable/Disable SSL (HTTPS) for S3 connections. Set to False for local testing without HTTPS.",
     )
 
+    use_path_style: bool = Field(
+        default=True,
+        description="true represent UsePathStyle for MinIO and some S3-compatible services; false represent VirtualHostStyle for TOS  and some S3-compatible services.",
+    )
+
     model_config = {"extra": "forbid"}
 
     def validate_config(self):
@@ -66,7 +71,10 @@ class S3Config(BaseModel):
 class AGFSConfig(BaseModel):
     """Configuration for AGFS (Agent Global File System)."""
 
-    path: str = Field(default="./data", description="AGFS data storage path")
+    path: Optional[str] = Field(
+        default=None,
+        description="[Deprecated in favor of `storage.workspace`] AGFS data storage path. This will be ignored if `storage.workspace` is set.",
+    )
 
     port: int = Field(default=1833, description="AGFS service port")
 
@@ -105,8 +113,7 @@ class AGFSConfig(BaseModel):
             )
 
         if self.backend == "local":
-            if not self.path:
-                raise ValueError("AGFS local backend requires 'path' to be set")
+            pass
 
         elif self.backend == "s3":
             # Validate S3 configuration
