@@ -6,9 +6,10 @@ Complete installation guide for OpenViking - the Context Database for AI Agents.
 
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
-- [Step 1: Install OpenViking Server](#step-1-install-openviking-server)
-- [Step 2: Install ov CLI (Required)](#step-2-install-ov-cli-required)
-- [Step 3: Install Skills](#step-3-install-skills)
+- [Step 1: Install uv (Recommended)](#step-1-install-uv-recommended)
+- [Step 2: Install OpenViking Server](#step-2-install-openviking-server)
+- [Step 3: Install ov CLI (Required)](#step-3-install-ov-cli-required)
+- [Step 4: Install Skills](#step-4-install-skills)
 - [Configuration](#configuration)
   - [Server Configuration (ov.conf)](#server-configuration-ovconf)
   - [CLI Configuration (ovcli.conf)](#cli-configuration-ovcliconf)
@@ -83,18 +84,43 @@ Before installing OpenViking, ensure you have:
 
 ---
 
-## Step 1: Install OpenViking Server
+## Step 1: Install uv (Recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. It's recommended for installing OpenViking.
+
+### Install uv
+
+**macOS/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Windows:**
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**Verify installation:**
+```bash
+uv --version
+```
+
+Expected output: version number (e.g., `uv 0.5.x`)
+
+---
+
+## Step 2: Install OpenViking Server
 
 Install the OpenViking server and Python SDK:
 
-```bash
-pip install openviking
-```
-
-Or with `uv` (faster):
-
+**Using uv (recommended):**
 ```bash
 uv pip install openviking
+```
+
+**Using pip:**
+```bash
+pip install openviking
 ```
 
 **Verify installation:**
@@ -103,11 +129,11 @@ uv pip install openviking
 python -c "import openviking; print(openviking.__version__)"
 ```
 
-Expected output: version number (e.g., `0.2.0`)
+Expected output: version number (e.g., `0.1.18`)
 
 ---
 
-## Step 2: Install ov CLI (Required)
+## Step 3: Install ov CLI (Required)
 
 The `ov` CLI is **required** for OpenViking. It provides:
 - Fast skill execution
@@ -142,11 +168,11 @@ cargo install --git https://github.com/volcengine/OpenViking ov_cli
 ov --version
 ```
 
-Expected output: version number (e.g., `ov 0.2.0`)
+Expected output: version number (e.g., `0.1.0`)
 
 ---
 
-## Step 3: Install Skills
+## Step 4: Install Skills
 
 Skills are agent capabilities that enable OpenViking's core functionality. Three skills are available:
 
@@ -162,16 +188,19 @@ Skills are agent capabilities that enable OpenViking's core functionality. Three
 - Extracts and stores valuable insights from conversations
 - Builds persistent user profile, preferences, and learned patterns
 - Triggered by saying "ovm" or when agents identify memorable content
+- **Usage:** During chat, provide the keyword `ovm` to trigger memory extraction. The skill concludes previous context and runs `ov add-memory` automatically.
 
 **adding-resource (ovr)**
 - Imports external content (files, URLs, directories) into OpenViking
 - Automatically processes with semantic analysis
 - Triggered by saying "ovr" or when agents encounter useful external content
+- **Usage:** During chat, provide the keyword `ovr` to trigger resource import. The skill processes the resource and runs `ov add-resource` automatically.
 
 **searching-context (ovs)**
 - Performs semantic search across all stored memories and resources
 - Combines vector similarity with directory-aware retrieval
 - Triggered by saying "ovs" or when agents need to recall information
+- **Usage:** During chat, provide the keyword `ovs` to trigger context search. The skill runs `ov search` automatically with the query context.
 
 ### Installing Skills
 
@@ -202,6 +231,21 @@ ov add-resource https://example.com/docs --wait
 
 # Searching context
 ov search "Python data processing"
+```
+
+**Chat-based skill triggers:**
+
+```
+User: I prefer using vim over IDE for coding
+User: ovm                    ← Triggers adding-memory skill
+                                (extracts and stores this preference)
+
+User: Please add this doc https://example.com/api
+User: ovr                    ← Triggers adding-resource skill
+                                (imports and processes the URL)
+
+User: ovs What was my editor preference?  ← Triggers searching-context skill
+                                           (searches for stored memories)
 ```
 
 **Note:** Skills require server mode to function properly. The server processes semantic operations significantly faster than embedded mode.
@@ -252,14 +296,14 @@ mkdir -p ~/.openviking
     "cors_origins": ["*"]
   },
   "storage": {
+    "workspace": "./data",
     "vectordb": {
       "name": "context",
       "backend": "local",
-      "path": "./data"
+      "project": "default"
     },
     "agfs": {
       "port": 1833,
-      "path": "./data",
       "backend": "local"
     }
   },
@@ -276,8 +320,8 @@ mkdir -p ~/.openviking
   "vlm": {
     "provider": "volcengine",
     "model": "doubao-seed-1-8-251228",
-    "api_key": "your-api-key",
-    "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+      "api_key": "your-api-key",
+      "api_base": "https://ark.cn-beijing.volces.com/api/v3",
     "temperature": 0.0,
     "max_retries": 2
   },
@@ -285,21 +329,32 @@ mkdir -p ~/.openviking
   "auto_generate_l1": true,
   "default_search_mode": "thinking",
   "default_search_limit": 3,
-  "log_level": "INFO"
+  "log": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "output": "stdout",
+    "rotation": true,
+    "rotation_days": 3
+  }
 }
 ```
 
-**Set environment variable:**
+**Configuration via environment variables:**
+
+Instead of setting `OPENVIKING_CONFIG_FILE` to point to a specific file, you can set the config directory. OpenViking will look for `ov.conf` in that directory:
 
 ```bash
-# Linux/macOS
+# Linux/macOS - Set config directory
+export OPENVIKING_CONFIG_DIR=~/.openviking
+
+# Or set specific config file
 export OPENVIKING_CONFIG_FILE=~/.openviking/ov.conf
 
 # Windows (PowerShell)
-$env:OPENVIKING_CONFIG_FILE = "$HOME/.openviking/ov.conf"
+$env:OPENVIKING_CONFIG_DIR = "$HOME/.openviking"
 
 # Windows (CMD)
-set "OPENVIKING_CONFIG_FILE=%USERPROFILE%\.openviking\ov.conf"
+set "OPENVIKING_CONFIG_DIR=%USERPROFILE%\.openviking"
 ```
 
 ---
@@ -470,9 +525,11 @@ ov search "Apache license"
 
 **Solution:**
 ```bash
-pip install openviking
-# or
+# Using uv (recommended)
 uv pip install openviking
+
+# Or using pip
+pip install openviking
 ```
 
 #### 2. ov: command not found
@@ -552,18 +609,22 @@ openviking-server
 | Search | `ov search "query"` |
 | List resources | `ov ls viking://resources` |
 | System status | `ov system health` |
+| Trigger memory | Say `ovm` in chat |
+| Trigger resource | Say `ovr` in chat |
+| Trigger search | Say `ovs <query>` in chat |
 
 ---
 
 ## Summary Checklist
 
+- [ ] uv installed (recommended)
 - [ ] Python 3.10+ installed
-- [ ] `pip install openviking` completed successfully
+- [ ] `uv pip install openviking` completed successfully
 - [ ] `ov` CLI installed and in PATH (required)
 - [ ] Skills copied to agent skill directory
 - [ ] `~/.openviking/ov.conf` created with model credentials
 - [ ] `~/.openviking/ovcli.conf` created with server URL
-- [ ] `OPENVIKING_CONFIG_FILE` environment variable set
+- [ ] `OPENVIKING_CONFIG_DIR` or `OPENVIKING_CONFIG_FILE` environment variable set
 - [ ] Server started and running
 - [ ] Health endpoint returns `{"status": "ok"}`
 - [ ] CLI can connect and execute commands
