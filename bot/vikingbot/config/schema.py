@@ -335,7 +335,7 @@ class ChannelsConfig(BaseModel):
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
 
-    workspace: str = "~/.vikingbot/workspace/shared"
+    workspace: str = "~/.vikingbot/workspace"
     model: str = "openai/doubao-seed-2-0-pro-260215"
     max_tokens: int = 8192
     temperature: float = 0.7
@@ -379,7 +379,7 @@ class HeartbeatConfig(BaseModel):
     """Heartbeat service configuration."""
 
     enabled: bool = True
-    interval_seconds: int = 5 * 60  # Default: 5 minutes
+    interval_seconds: int = 10 * 60  # Default: 5 minutes
 
 
 class GatewayConfig(BaseModel):
@@ -534,7 +534,7 @@ class Config(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
-    hooks: list[str] = Field([])
+    hooks: list[str] = Field(['vikingbot.hooks.builtins.openviking_hooks.hooks'])
 
     @property
     def channels_config(self) -> ChannelsConfig:
