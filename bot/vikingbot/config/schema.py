@@ -3,12 +3,13 @@
 from enum import Enum
 from pathlib import Path
 from typing import Union, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ChannelType(str, Enum):
     """Channel type enumeration."""
+
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
     DISCORD = "discord"
@@ -22,36 +23,33 @@ class ChannelType(str, Enum):
 
 class BaseChannelConfig(BaseModel):
     """Base channel configuration."""
+
     type: ChannelType
-    id: str | None = None  # Optional user-defined unique identifier
     enabled: bool = True
-    
-    @property
-    def unique_id(self) -> str:
-        """Get unique identifier for this channel."""
-        if self.id:
-            return self.id
-        return self._generate_default_id()
-    
-    def _generate_default_id(self) -> str:
-        """Generate default unique identifier - to be implemented by subclasses."""
-        raise NotImplementedError()
+
+
+    def channel_id(self) -> str:
+        raise 'default'
 
 
 # ========== Channel helper configs ==========
 
+
 class MochatMentionConfig(BaseModel):
     """Mochat mention behavior configuration."""
+
     require_in_groups: bool = False
 
 
 class MochatGroupRule(BaseModel):
     """Mochat per-group mention requirement."""
+
     require_mention: bool = False
 
 
 class SlackDMConfig(BaseModel):
     """Slack DM policy configuration."""
+
     enabled: bool = True
     policy: str = "open"  # "open" or "allowlist"
     allow_from: list[str] = Field(default_factory=list)  # Allowed Slack user IDs
@@ -59,59 +57,68 @@ class SlackDMConfig(BaseModel):
 
 # ========== Multi-channel support ==========
 
+
 class TelegramChannelConfig(BaseChannelConfig):
     """Telegram channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.TELEGRAM
     token: str = ""
     allow_from: list[str] = Field(default_factory=list)
     proxy: str | None = None
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # Use the bot ID from token (before colon)
         return self.token.split(":")[0] if ":" in self.token else self.token
 
 
 class FeishuChannelConfig(BaseChannelConfig):
     """Feishu/Lark channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.FEISHU
     app_id: str = ""
     app_secret: str = ""
     encrypt_key: str = ""
     verification_token: str = ""
     allow_from: list[str] = Field(default_factory=list)
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # Use app_id directly as the ID
         return self.app_id
+
+    def channel_key(self):
+        return f'{self.type.value}__{self.channel_id()}'
 
 
 class DiscordChannelConfig(BaseChannelConfig):
     """Discord channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.DISCORD
     token: str = ""
     allow_from: list[str] = Field(default_factory=list)
     gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"
     intents: int = 37377
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # Use first 20 chars of token as ID
         return self.token[:20]
 
 
 class WhatsAppChannelConfig(BaseChannelConfig):
     """WhatsApp channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.WHATSAPP
     bridge_url: str = "ws://localhost:3001"
     bridge_token: str = ""
     allow_from: list[str] = Field(default_factory=list)
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # WhatsApp typically only has one instance
         return "whatsapp"
 
 
 class MochatChannelConfig(BaseChannelConfig):
     """MoChat channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.MOCHAT
     base_url: str = "https://mochat.io"
     socket_url: str = ""
@@ -134,7 +141,7 @@ class MochatChannelConfig(BaseChannelConfig):
     groups: dict[str, MochatGroupRule] = Field(default_factory=dict)
     reply_delay_mode: str = "non-mention"
     reply_delay_ms: int = 120000
-    
+
     def _generate_default_id(self) -> str:
         # Use agent_user_id as the ID
         return self.agent_user_id if self.agent_user_id else "mochat"
@@ -142,18 +149,20 @@ class MochatChannelConfig(BaseChannelConfig):
 
 class DingTalkChannelConfig(BaseChannelConfig):
     """DingTalk channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.DINGTALK
     client_id: str = ""
     client_secret: str = ""
     allow_from: list[str] = Field(default_factory=list)
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # Use client_id directly as the ID
         return self.client_id
 
 
 class EmailChannelConfig(BaseChannelConfig):
     """Email channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.EMAIL
     consent_granted: bool = False
     imap_host: str = ""
@@ -175,14 +184,15 @@ class EmailChannelConfig(BaseChannelConfig):
     max_body_chars: int = 12000
     subject_prefix: str = "Re: "
     allow_from: list[str] = Field(default_factory=list)
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # Use from_address directly as the ID
         return self.from_address
 
 
 class SlackChannelConfig(BaseChannelConfig):
     """Slack channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.SLACK
     mode: str = "socket"
     webhook_path: str = "/slack/events"
@@ -192,32 +202,34 @@ class SlackChannelConfig(BaseChannelConfig):
     group_policy: str = "mention"
     group_allow_from: list[str] = Field(default_factory=list)
     dm: SlackDMConfig = Field(default_factory=SlackDMConfig)
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # Use first 20 chars of bot_token as ID
         return self.bot_token[:20] if self.bot_token else "slack"
 
 
 class QQChannelConfig(BaseChannelConfig):
     """QQ channel configuration (multi-channel support)."""
+
     type: ChannelType = ChannelType.QQ
     app_id: str = ""
     secret: str = ""
     allow_from: list[str] = Field(default_factory=list)
-    
-    def _generate_default_id(self) -> str:
+
+    def channel_id(self) -> str:
         # Use app_id directly as the ID
         return self.app_id
 
 
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels - array of channel configs."""
+
     channels: list[Any] = Field(default_factory=list)
-    
+
     def _parse_channel_config(self, config: dict[str, Any]) -> BaseChannelConfig:
         """Parse a single channel config dict into the appropriate type."""
         channel_type = config.get("type")
-        
+
         # Handle both snake_case and camelCase for feishu
         if "appId" in config and "app_id" not in config:
             config["app_id"] = config.pop("appId")
@@ -227,7 +239,7 @@ class ChannelsConfig(BaseModel):
             config["encrypt_key"] = config.pop("encryptKey")
         if "verificationToken" in config and "verification_token" not in config:
             config["verification_token"] = config.pop("verificationToken")
-        
+
         # Handle camelCase for other fields
         if "allowFrom" in config and "allow_from" not in config:
             config["allow_from"] = config.pop("allowFrom")
@@ -287,7 +299,7 @@ class ChannelsConfig(BaseModel):
             config["group_policy"] = config.pop("groupPolicy")
         if "groupAllowFrom" in config and "group_allow_from" not in config:
             config["group_allow_from"] = config.pop("groupAllowFrom")
-        
+
         if channel_type == ChannelType.TELEGRAM:
             return TelegramChannelConfig(**config)
         elif channel_type == ChannelType.FEISHU:
@@ -308,7 +320,7 @@ class ChannelsConfig(BaseModel):
             return QQChannelConfig(**config)
         else:
             return BaseChannelConfig(**config)
-    
+
     def get_all_channels(self) -> list[BaseChannelConfig]:
         """Get all channel configs."""
         result = []
@@ -322,7 +334,8 @@ class ChannelsConfig(BaseModel):
 
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
-    workspace: str = "~/.vikingbot/workspace/default"
+
+    workspace: str = "~/.vikingbot/workspace/shared"
     model: str = "openai/doubao-seed-2-0-pro-260215"
     max_tokens: int = 8192
     temperature: float = 0.7
@@ -333,11 +346,13 @@ class AgentDefaults(BaseModel):
 
 class AgentsConfig(BaseModel):
     """Agent configuration."""
+
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
 
 
 class ProviderConfig(BaseModel):
     """LLM provider configuration."""
+
     api_key: str = ""
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
@@ -345,6 +360,7 @@ class ProviderConfig(BaseModel):
 
 class ProvidersConfig(BaseModel):
     """Configuration for LLM providers."""
+
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -359,44 +375,57 @@ class ProvidersConfig(BaseModel):
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
 
 
+class HeartbeatConfig(BaseModel):
+    """Heartbeat service configuration."""
+
+    enabled: bool = True
+    interval_seconds: int = 5 * 60  # Default: 5 minutes
+
+
 class GatewayConfig(BaseModel):
     """Gateway/server configuration."""
+
     host: str = "0.0.0.0"
     port: int = 18790
 
 
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
+
     api_key: str = ""  # Brave Search API key
     max_results: int = 5
 
 
 class WebToolsConfig(BaseModel):
     """Web tools configuration."""
+
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
 class ExecToolConfig(BaseModel):
     """Shell exec tool configuration."""
+
     timeout: int = 60
 
 
 class ToolsConfig(BaseModel):
     """Tools configuration."""
+
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
 
 
 class SandboxNetworkConfig(BaseModel):
     """Sandbox network configuration.
-    
+
     SRT uses allow-only pattern: all network access is denied by default.
     You must explicitly allow domains.
-    
+
     - allowed_domains: List of allowed domains (supports wildcards like "*.example.com")
     - denied_domains: List of denied domains (checked first, takes precedence over allowed_domains)
     - allow_local_binding: Allow binding to local ports
     """
+
     allowed_domains: list[str] = Field(default_factory=list)
     denied_domains: list[str] = Field(default_factory=list)
     allow_local_binding: bool = False
@@ -404,6 +433,7 @@ class SandboxNetworkConfig(BaseModel):
 
 class SandboxFilesystemConfig(BaseModel):
     """Sandbox filesystem configuration."""
+
     deny_read: list[str] = Field(default_factory=list)
     allow_write: list[str] = Field(default_factory=list)
     deny_write: list[str] = Field(default_factory=list)
@@ -411,35 +441,41 @@ class SandboxFilesystemConfig(BaseModel):
 
 class SandboxRuntimeConfig(BaseModel):
     """Sandbox runtime configuration."""
+
     cleanup_on_exit: bool = True
     timeout: int = 300
 
 
 class DirectBackendConfig(BaseModel):
     """Direct backend configuration."""
+
     restrict_to_workspace: bool = False  # If true, restrict file access to workspace directory
 
 
 class SrtBackendConfig(BaseModel):
     """SRT backend configuration."""
+
     settings_path: str = "~/.vikingbot/srt-settings.json"
     node_path: str = "node"
 
 
 class DockerBackendConfig(BaseModel):
     """Docker backend configuration."""
+
     image: str = "python:3.11-slim"
     network_mode: str = "bridge"
 
 
 class OpenSandboxNetworkConfig(BaseModel):
     """OpenSandbox network configuration."""
+
     allowed_domains: list[str] = Field(default_factory=list)
     denied_domains: list[str] = Field(default_factory=list)
 
 
 class OpenSandboxRuntimeConfig(BaseModel):
     """OpenSandbox runtime configuration."""
+
     timeout: int = 300
     cpu: str = "500m"
     memory: str = "1Gi"
@@ -447,11 +483,12 @@ class OpenSandboxRuntimeConfig(BaseModel):
 
 class OpenSandboxBackendConfig(BaseModel):
     """OpenSandbox backend configuration.
-    
+
     Auto-detects runtime environment:
     - Local: uses configured server_url (default http://localhost:18792)
     - VKE: auto-detects KUBERNETES_SERVICE_HOST, uses http://opensandbox-server:8080
     """
+
     server_url: str = "http://localhost:18792"
     api_key: str = ""
     default_image: str = "opensandbox/code-interpreter:v1.0.1"
@@ -461,11 +498,13 @@ class OpenSandboxBackendConfig(BaseModel):
 
 class AioSandboxBackendConfig(BaseModel):
     """AIO Sandbox backend configuration."""
+
     base_url: str = "http://localhost:18794"
 
 
 class SandboxBackendsConfig(BaseModel):
     """Sandbox backends configuration."""
+
     srt: SrtBackendConfig = Field(default_factory=SrtBackendConfig)
     docker: DockerBackendConfig = Field(default_factory=DockerBackendConfig)
     opensandbox: OpenSandboxBackendConfig = Field(default_factory=OpenSandboxBackendConfig)
@@ -475,6 +514,7 @@ class SandboxBackendsConfig(BaseModel):
 
 class SandboxConfig(BaseModel):
     """Sandbox configuration."""
+
     backend: str = "direct"
     mode: str = "shared"
     network: SandboxNetworkConfig = Field(default_factory=SandboxNetworkConfig)
@@ -483,30 +523,37 @@ class SandboxConfig(BaseModel):
     backends: SandboxBackendsConfig = Field(default_factory=SandboxBackendsConfig)
 
 
+
 class Config(BaseSettings):
     """Root configuration for vikingbot."""
+
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: list[Any] = Field(default_factory=list)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-    
+    heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
+    hooks: list[str] = Field([])
+
     @property
     def channels_config(self) -> ChannelsConfig:
         """Get channels config wrapper."""
         config = ChannelsConfig()
         config.channels = self.channels
         return config
-    
+
     @property
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
-    
-    def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
+
+    def _match_provider(
+        self, model: str | None = None
+    ) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from vikingbot.providers.registry import PROVIDERS
+
         model_lower = (model or self.agents.defaults.model).lower()
 
         # Match by keyword (order follows PROVIDERS registry)
@@ -536,10 +583,11 @@ class Config(BaseSettings):
         """Get API key for the given model. Falls back to first available key."""
         p = self.get_provider(model)
         return p.api_key if p else None
-    
+
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for known gateways."""
         from vikingbot.providers.registry import find_by_name
+
         p, name = self._match_provider(model)
         if p and p.api_base:
             return p.api_base
@@ -551,8 +599,31 @@ class Config(BaseSettings):
             if spec and spec.is_gateway and spec.default_api_base:
                 return spec.default_api_base
         return None
-    
-    model_config = SettingsConfigDict(
-        env_prefix="NANOBOT_",
-        env_nested_delimiter="__"
-    )
+
+    model_config = SettingsConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
+
+
+
+class SessionKey(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    type: str
+    channel_id: str
+    chat_id: str
+
+    def __hash__(self):
+        return hash((self.type, self.channel_id, self.chat_id))
+
+    def safe_name(self):
+        return f'{self.type}__{self.channel_id}__{self.chat_id}'
+
+    def channel_key(self):
+        return f'{self.type}__{self.channel_id}'
+
+    @staticmethod
+    def from_safe_name(safe_name: str):
+        file_name_split = safe_name.split('__')
+        return SessionKey(
+            type=file_name_split[0],
+            channel_id=file_name_split[1],
+            chat_id=file_name_split[2]
+        )

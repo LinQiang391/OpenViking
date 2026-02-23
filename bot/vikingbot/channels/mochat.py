@@ -251,7 +251,7 @@ class MochatChannel(BaseChannel):
     async def start(self) -> None:
         """Start Mochat channel workers and websocket connection."""
         if not self.config.claw_token:
-            logger.error("Mochat claw_token not configured")
+            logger.exception("Mochat claw_token not configured")
             return
 
         self._running = True
@@ -308,7 +308,7 @@ class MochatChannel(BaseChannel):
         if not content:
             return
 
-        target = resolve_mochat_target(msg.chat_id)
+        target = resolve_mochat_target(msg.session_key.chat_id)
         if not target.id:
             logger.warning("Mochat outbound target is empty")
             return
@@ -322,7 +322,7 @@ class MochatChannel(BaseChannel):
                 await self._api_send("/api/claw/sessions/send", "sessionId", target.id,
                                      content, msg.reply_to)
         except Exception as e:
-            logger.error(f"Failed to send Mochat message: {e}")
+            logger.exception(f"Failed to send Mochat message: {e}")
 
     # ---- config / init helpers ---------------------------------------------
 
@@ -380,7 +380,7 @@ class MochatChannel(BaseChannel):
 
         @client.event
         async def connect_error(data: Any) -> None:
-            logger.error(f"Mochat websocket connect error: {data}")
+            logger.exception(f"Mochat websocket connect error: {data}")
 
         @client.on("claw.session.events")
         async def on_session_events(payload: dict[str, Any]) -> None:
@@ -407,7 +407,7 @@ class MochatChannel(BaseChannel):
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to connect Mochat websocket: {e}")
+            logger.exception(f"Failed to connect Mochat websocket: {e}")
             try:
                 await client.disconnect()
             except Exception:
@@ -444,7 +444,7 @@ class MochatChannel(BaseChannel):
             "limit": self.config.watch_limit,
         })
         if not ack.get("result"):
-            logger.error(f"Mochat subscribeSessions failed: {ack.get('message', 'unknown error')}")
+            logger.exception(f"Mochat subscribeSessions failed: {ack.get('message', 'unknown error')}")
             return False
 
         data = ack.get("data")
@@ -466,7 +466,7 @@ class MochatChannel(BaseChannel):
             return True
         ack = await self._socket_call("com.claw.im.subscribePanels", {"panelIds": panel_ids})
         if not ack.get("result"):
-            logger.error(f"Mochat subscribePanels failed: {ack.get('message', 'unknown error')}")
+            logger.exception(f"Mochat subscribePanels failed: {ack.get('message', 'unknown error')}")
             return False
         return True
 

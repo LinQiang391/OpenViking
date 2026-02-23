@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from vikingbot.config.schema import SessionKey
+
 
 @dataclass
 class CronSchedule:
@@ -25,8 +27,7 @@ class CronPayload:
     message: str = ""
     # Deliver response to channel
     deliver: bool = False
-    channel: str | None = None  # e.g. "whatsapp"
-    to: str | None = None  # e.g. phone number
+    session_key_str: str | None = None  # e.g. "whatsapp"
 
 
 @dataclass

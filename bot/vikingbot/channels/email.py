@@ -94,7 +94,7 @@ class EmailChannel(BaseChannel):
                         metadata=item.get("metadata", {}),
                     )
             except Exception as e:
-                logger.error(f"Email polling error: {e}")
+                logger.exception(f"Email polling error: {e}")
 
             await asyncio.sleep(poll_seconds)
 
@@ -117,7 +117,7 @@ class EmailChannel(BaseChannel):
             logger.warning("Email channel SMTP host not configured")
             return
 
-        to_addr = msg.chat_id.strip()
+        to_addr = msg.session_key.chat_id.strip()
         if not to_addr:
             logger.warning("Email channel missing recipient address")
             return
@@ -143,7 +143,7 @@ class EmailChannel(BaseChannel):
         try:
             await asyncio.to_thread(self._smtp_send, email_msg)
         except Exception as e:
-            logger.error(f"Error sending email to {to_addr}: {e}")
+            logger.exception(f"Error sending email to {to_addr}: {e}")
             raise
 
     def _validate_config(self) -> bool:
@@ -162,7 +162,7 @@ class EmailChannel(BaseChannel):
             missing.append("smtp_password")
 
         if missing:
-            logger.error(f"Email channel not configured, missing: {', '.join(missing)}")
+            logger.exception(f"Email channel not configured, missing: {', '.join(missing)}")
             return False
         return True
 

@@ -12,14 +12,8 @@ class CronTool(Tool):
     
     def __init__(self, cron_service: CronService):
         self._cron = cron_service
-        self._channel = ""
-        self._chat_id = ""
-    
-    def set_context(self, channel: str, chat_id: str) -> None:
-        """Set the current session context for delivery."""
-        self._channel = channel
-        self._chat_id = chat_id
-    
+
+
     @property
     def name(self) -> str:
         return "cron"
@@ -37,6 +31,10 @@ class CronTool(Tool):
                     "type": "string",
                     "enum": ["add", "list", "remove"],
                     "description": "Action to perform"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Job name (for add)"
                 },
                 "message": {
                     "type": "string",
@@ -65,6 +63,7 @@ class CronTool(Tool):
     async def execute(
         self,
         action: str,
+        name: str= "",
         message: str = "",
         every_seconds: int | None = None,
         cron_expr: str | None = None,
@@ -73,18 +72,17 @@ class CronTool(Tool):
         **kwargs: Any
     ) -> str:
         if action == "add":
-            return self._add_job(message, every_seconds, cron_expr, at)
+            return self._add_job(name, message, every_seconds, cron_expr, at)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
         return f"Unknown action: {action}"
     
-    def _add_job(self, message: str, every_seconds: int | None, cron_expr: str | None, at: str | None) -> str:
+    def _add_job(self, name: str, message: str, every_seconds: int | None, cron_expr: str | None, at: str | None) -> str:
         if not message:
             return "Error: message is required for add"
-        if not self._channel or not self._chat_id:
-            return "Error: no session context (channel/chat_id)"
+
         
         # Build schedule
         delete_after = False
@@ -102,12 +100,11 @@ class CronTool(Tool):
             return "Error: either every_seconds, cron_expr, or at is required"
         
         job = self._cron.add_job(
-            name=message[:30],
+            name=name,
             schedule=schedule,
             message=message,
             deliver=True,
-            channel=self._channel,
-            to=self._chat_id,
+            session_key=self._session_key,
             delete_after_run=delete_after,
         )
         return f"Created job '{job.name}' (id: {job.id})"

@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from vikingbot.agent.tools.base import Tool
+from vikingbot.config.schema import SessionKey
 
-if TYPE_CHECKING:
-    from vikingbot.sandbox.manager import SandboxManager
+
+from vikingbot.sandbox.manager import SandboxManager
 
 
 class ExecTool(Tool):
@@ -39,9 +40,9 @@ class ExecTool(Tool):
         ]
         self.allow_patterns = allow_patterns or []
         self.sandbox_manager = sandbox_manager
-        self._session_key: str | None = None
+        self._session_key: SessionKey | None = None
 
-    def set_session_key(self, session_key: str) -> None:
+    def set_session_key(self, session_key: SessionKey) -> None:
         self._session_key = session_key
     
     @property

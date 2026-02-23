@@ -4,8 +4,8 @@ from typing import Any, TYPE_CHECKING
 
 from vikingbot.agent.tools.base import Tool
 
-if TYPE_CHECKING:
-    from vikingbot.agent.subagent import SubagentManager
+
+from vikingbot.agent.subagent import SubagentManager
 
 
 class SpawnTool(Tool):
@@ -18,14 +18,8 @@ class SpawnTool(Tool):
     
     def __init__(self, manager: "SubagentManager"):
         self._manager = manager
-        self._origin_channel = "cli"
-        self._origin_chat_id = "direct"
     
-    def set_context(self, channel: str, chat_id: str) -> None:
-        """Set the origin context for subagent announcements."""
-        self._origin_channel = channel
-        self._origin_chat_id = chat_id
-    
+
     @property
     def name(self) -> str:
         return "spawn"
@@ -60,6 +54,5 @@ class SpawnTool(Tool):
         return await self._manager.spawn(
             task=task,
             label=label,
-            origin_channel=self._origin_channel,
-            origin_chat_id=self._origin_chat_id,
+            session_key=self._session_key,
         )

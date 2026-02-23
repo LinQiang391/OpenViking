@@ -31,10 +31,10 @@ class SlackChannel(BaseChannel):
     async def start(self) -> None:
         """Start the Slack Socket Mode client."""
         if not self.config.bot_token or not self.config.app_token:
-            logger.error("Slack bot/app token not configured")
+            logger.exception("Slack bot/app token not configured")
             return
         if self.config.mode != "socket":
-            logger.error(f"Unsupported Slack mode: {self.config.mode}")
+            logger.exception(f"Unsupported Slack mode: {self.config.mode}")
             return
 
         self._running = True
@@ -83,12 +83,12 @@ class SlackChannel(BaseChannel):
             # Only reply in thread for channel/group messages; DMs don't use threads
             use_thread = thread_ts and channel_type != "im"
             await self._web_client.chat_postMessage(
-                channel=msg.chat_id,
+                channel=msg.session_key.chat_id,
                 text=msg.content or "",
                 thread_ts=thread_ts if use_thread else None,
             )
         except Exception as e:
-            logger.error(f"Error sending Slack message: {e}")
+            logger.exception(f"Error sending Slack message: {e}")
 
     async def _on_socket_request(
         self,

@@ -78,7 +78,7 @@ class NanobotDingTalkHandler(CallbackHandler):
             return AckMessage.STATUS_OK, "OK"
 
         except Exception as e:
-            logger.error(f"Error processing DingTalk message: {e}")
+            logger.exception(f"Error processing DingTalk message: {e}")
             # Return OK to avoid retry loop from DingTalk server
             return AckMessage.STATUS_OK, "Error"
 
@@ -113,13 +113,13 @@ class DingTalkChannel(BaseChannel):
         """Start the DingTalk bot with Stream Mode."""
         try:
             if not DINGTALK_AVAILABLE:
-                logger.error(
+                logger.exception(
                     "DingTalk Stream SDK not installed. Run: pip install dingtalk-stream"
                 )
                 return
 
             if not self.config.client_id or not self.config.client_secret:
-                logger.error("DingTalk client_id and client_secret not configured")
+                logger.exception("DingTalk client_id and client_secret not configured")
                 return
 
             self._running = True
@@ -186,7 +186,7 @@ class DingTalkChannel(BaseChannel):
             self._token_expiry = time.time() + int(res_data.get("expireIn", 7200)) - 60
             return self._access_token
         except Exception as e:
-            logger.error(f"Failed to get DingTalk access token: {e}")
+            logger.exception(f"Failed to get DingTalk access token: {e}")
             return None
 
     async def send(self, msg: OutboundMessage) -> None:
@@ -203,7 +203,7 @@ class DingTalkChannel(BaseChannel):
 
         data = {
             "robotCode": self.config.client_id,
-            "userIds": [msg.chat_id],  # chat_id is the user's staffId
+            "userIds": [msg.session_key.chat_id],  # chat_id is the user's staffId
             "msgKey": "sampleMarkdown",
             "msgParam": json.dumps({
                 "text": msg.content,
@@ -218,11 +218,11 @@ class DingTalkChannel(BaseChannel):
         try:
             resp = await self._http.post(url, json=data, headers=headers)
             if resp.status_code != 200:
-                logger.error(f"DingTalk send failed: {resp.text}")
+                logger.exception(f"DingTalk send failed: {resp.text}")
             else:
-                logger.debug(f"DingTalk message sent to {msg.chat_id}")
+                logger.debug(f"DingTalk message sent to {msg.session_key.chat_id}")
         except Exception as e:
-            logger.error(f"Error sending DingTalk message: {e}")
+            logger.exception(f"Error sending DingTalk message: {e}")
 
     async def _on_message(self, content: str, sender_id: str, sender_name: str) -> None:
         """Handle incoming message (called by NanobotDingTalkHandler).
@@ -242,4 +242,4 @@ class DingTalkChannel(BaseChannel):
                 },
             )
         except Exception as e:
-            logger.error(f"Error publishing DingTalk message: {e}")
+            logger.exception(f"Error publishing DingTalk message: {e}")

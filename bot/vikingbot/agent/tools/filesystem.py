@@ -3,9 +3,10 @@
 from typing import TYPE_CHECKING, Any
 
 from vikingbot.agent.tools.base import Tool
+from vikingbot.config.schema import SessionKey
 
-if TYPE_CHECKING:
-    from vikingbot.sandbox.manager import SandboxManager
+
+from vikingbot.sandbox.manager import SandboxManager
 
 
 class ReadFileTool(Tool):
@@ -16,10 +17,9 @@ class ReadFileTool(Tool):
         sandbox_manager: "SandboxManager | None" = None,
     ):
         self._sandbox_manager = sandbox_manager
-        self._session_key: str | None = None
+        self._session_key: SessionKey | None = None
 
-    def set_session_key(self, session_key: str) -> None:
-        self._session_key = session_key
+
 
     @property
     def name(self) -> str:
@@ -63,9 +63,9 @@ class WriteFileTool(Tool):
         sandbox_manager: "SandboxManager | None" = None,
     ):
         self._sandbox_manager = sandbox_manager
-        self._session_key: str | None = None
+        self._session_key: SessionKey | None = None
 
-    def set_session_key(self, session_key: str) -> None:
+    def set_session_key(self, session_key: SessionKey) -> None:
         self._session_key = session_key
 
     @property
@@ -112,9 +112,9 @@ class EditFileTool(Tool):
         sandbox_manager: "SandboxManager | None" = None,
     ):
         self._sandbox_manager = sandbox_manager
-        self._session_key: str | None = None
+        self._session_key: SessionKey | None = None
 
-    def set_session_key(self, session_key: str) -> None:
+    def set_session_key(self, session_key: SessionKey) -> None:
         self._session_key = session_key
 
     @property
@@ -178,9 +178,9 @@ class ListDirTool(Tool):
         sandbox_manager: "SandboxManager | None" = None,
     ):
         self._sandbox_manager = sandbox_manager
-        self._session_key: str | None = None
+        self._session_key: SessionKey | None = None
 
-    def set_session_key(self, session_key: str) -> None:
+    def set_session_key(self, session_key: SessionKey) -> None:
         self._session_key = session_key
 
     @property

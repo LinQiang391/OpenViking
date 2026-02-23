@@ -36,7 +36,7 @@ class DiscordChannel(BaseChannel):
     async def start(self) -> None:
         """Start the Discord gateway connection."""
         if not self.config.token:
-            logger.error("Discord bot token not configured")
+            logger.exception("Discord bot token not configured")
             return
 
         self._running = True
@@ -78,7 +78,7 @@ class DiscordChannel(BaseChannel):
             logger.warning("Discord HTTP client not initialized")
             return
 
-        url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
+        url = f"{DISCORD_API_BASE}/channels/{msg.session_key.chat_id}/messages"
         payload: dict[str, Any] = {"content": msg.content}
 
         if msg.reply_to:
@@ -101,11 +101,11 @@ class DiscordChannel(BaseChannel):
                     return
                 except Exception as e:
                     if attempt == 2:
-                        logger.error(f"Error sending Discord message: {e}")
+                        logger.exception(f"Error sending Discord message: {e}")
                     else:
                         await asyncio.sleep(1)
         finally:
-            await self._stop_typing(msg.chat_id)
+            await self._stop_typing(msg.session_key.chat_id)
 
     async def _gateway_loop(self) -> None:
         """Main gateway loop: identify, heartbeat, dispatch events."""

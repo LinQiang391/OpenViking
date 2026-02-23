@@ -10,22 +10,10 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
 
-
-class ThinkingStepType(Enum):
-    """思考步骤类型（简化版本，避免循环依赖）"""
-    REASONING = "reasoning"
-    TOOL_CALL = "tool_call"
-    TOOL_RESULT = "tool_result"
-    ITERATION = "iteration"
+from vikingbot.config.schema import SessionKey
+from vikingbot.hooks.manager import hook_manager
 
 
-@dataclass
-class ThinkingStep:
-    """单个思考步骤（简化版本，避免循环依赖）"""
-    step_type: ThinkingStepType
-    content: str
-    timestamp: datetime = field(default_factory=datetime.now)
-    metadata: dict = field(default_factory=dict)
 
 from vikingbot.bus.events import InboundMessage, OutboundMessage
 from vikingbot.bus.queue import MessageBus
@@ -43,9 +31,31 @@ from vikingbot.agent.tools.cron import CronTool
 from vikingbot.agent.memory import MemoryStore
 from vikingbot.agent.subagent import SubagentManager
 from vikingbot.session.manager import SessionManager
+from vikingbot.hooks import HookContext
+from vikingbot.config.schema import Config
 
-if TYPE_CHECKING:
-    from vikingbot.sandbox.manager import SandboxManager
+
+from vikingbot.sandbox.manager import SandboxManager
+
+
+
+
+class ThinkingStepType(Enum):
+    """思考步骤类型（简化版本，避免循环依赖）"""
+    REASONING = "reasoning"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    ITERATION = "iteration"
+
+
+@dataclass
+class ThinkingStep:
+    """单个思考步骤（简化版本，避免循环依赖）"""
+    step_type: ThinkingStepType
+    content: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: dict = field(default_factory=dict)
+
 
 class AgentLoop:
     """
@@ -75,6 +85,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         sandbox_manager: "SandboxManager | None" = None,
         thinking_callback=None,
+        config: Config = None,
     ):
         from vikingbot.config.schema import ExecToolConfig
         from vikingbot.cron.service import CronService
@@ -90,8 +101,11 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.sandbox_manager = sandbox_manager
+        self.config = config
 
         self.context = ContextBuilder(workspace, sandbox_manager=sandbox_manager)
+
+        self._register_builtin_hooks()
         self.sessions = session_manager or SessionManager(workspace, sandbox_manager=sandbox_manager)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -108,6 +122,10 @@ class AgentLoop:
         self._running = False
         self.thinking_callback = thinking_callback
         self._register_default_tools()
+
+    def _register_builtin_hooks(self):
+        """Register built-in hooks."""
+        hook_manager.register_path(self.config.hooks)
 
     def _register_default_tools(self) -> None:
         """Register default set of tools."""
@@ -178,11 +196,10 @@ class AgentLoop:
                     if response:
                         await self.bus.publish_outbound(response)
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}")
+                    logger.exception(f"Error processing message: {e}")
                     # Send error response
                     await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
+                        session_key=msg.session_key,
                         content=f"Sorry, I encountered an error: {str(e)}"
                     ))
             except asyncio.TimeoutError:
@@ -193,7 +210,7 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
 
-    async def _process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
+    async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
         """
         Process a single inbound message.
 
@@ -206,15 +223,15 @@ class AgentLoop:
         """
         # Handle system messages (subagent announces)
         # The chat_id contains the original "channel:chat_id" to route back to
-        if msg.channel == "system":
+        if msg.session_key.type == "system":
             return await self._process_system_message(msg)
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-        logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
+        logger.info(f"Processing message from {msg.session_key}:{msg.sender_id}: {preview}")
 
         # Get or create session
-        key = session_key or msg.session_key
-        session = self.sessions.get_or_create(key)
+        session_key = msg.session_key
+        session = self.sessions.get_or_create(session_key)
 
         # Handle slash commands
         cmd = msg.content.strip().lower()
@@ -222,51 +239,36 @@ class AgentLoop:
             await self._consolidate_memory(session, archive_all=True)
             session.clear()
             self.sessions.save(session)
-            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+            return OutboundMessage(session_key=msg.session_key,
                                   content="🐈 New session started. Memory consolidated.")
         if cmd == "/help":
-            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+            return OutboundMessage(session_key=msg.session_key,
                                   content="🐈 vikingbot commands:\n/new — Start a new conversation\n/help — Show available commands")
 
         # Consolidate memory before processing if session is too large
         if len(session.messages) > self.memory_window:
             await self._consolidate_memory(session)
 
-        # Update tool contexts
-        message_tool = self.tools.get("message")
-        if isinstance(message_tool, MessageTool):
-            message_tool.set_context(msg.channel, msg.chat_id)
 
-        spawn_tool = self.tools.get("spawn")
-        if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(msg.channel, msg.chat_id)
-
-        cron_tool = self.tools.get("cron")
-        if isinstance(cron_tool, CronTool):
-            cron_tool.set_context(msg.channel, msg.chat_id)
-
-        # Set session key for sandbox tools
-        session_key_for_tools = session_key or msg.session_key
-        for tool_name in ["read_file", "write_file", "edit_file", "list_dir", "exec"]:
+        for tool_name in ["read_file", "write_file", "edit_file", "list_dir", "exec", "message", "spawn" , "cron"]:
             tool = self.tools.get(tool_name)
             if tool and hasattr(tool, "set_session_key"):
-                tool.set_session_key(session_key_for_tools)
+                tool.set_session_key(msg.session_key)
 
         if self.sandbox_manager:
-            message_workspace = self.sandbox_manager.get_workspace_path(key)
+            message_workspace = self.sandbox_manager.get_workspace_path(session_key)
         else:
             message_workspace = self.workspace
-        
+
         from vikingbot.agent.context import ContextBuilder
         message_context = ContextBuilder(message_workspace, sandbox_manager=self.sandbox_manager)
-        
+
         # Build initial messages (use get_history for LLM-formatted messages)
-        messages = message_context.build_messages(
+        messages = await message_context.build_messages(
             history=session.get_history(),
             current_message=msg.content,
             media=msg.media if msg.media else None,
-            channel=msg.channel,
-            chat_id=msg.chat_id,
+            session_key=msg.session_key
         )
 
         # Agent loop
@@ -350,8 +352,7 @@ class AgentLoop:
                     if tool_call.name == "generate_image" and result and not result.startswith("Error"):
                         # Send image directly as a separate message
                         image_msg = OutboundMessage(
-                            channel=msg.channel,
-                            chat_id=msg.chat_id,
+                            session_key=msg.session_key,
                             content=result,
                             metadata=msg.metadata or {},
                         )
@@ -381,87 +382,77 @@ class AgentLoop:
                 # No tool calls, we're done
                 final_content = response.content
                 break
-        
+
         if final_content is None:
             if iteration >= self.max_iterations:
                 final_content = f"Reached {self.max_iterations} iterations without completion."
             else:
                 final_content = "I've completed processing but have no response to give."
-        
+
         # Log response preview
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
-        
+        logger.info(f"Response to {msg.session_key}: {preview}")
+
+
+        # Trigger hooks for user and assistant messages
+        session_key_str = msg.session_key.safe_name()
+
         # Save to session (include tool names so consolidation sees what happened)
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content,
                             tools_used=tools_used if tools_used else None)
         self.sessions.save(session)
-        
+
         return OutboundMessage(
-            channel=msg.channel,
-            chat_id=msg.chat_id,
+            session_key=msg.session_key,
             content=final_content,
             metadata=msg.metadata or {},  # Pass through for channel-specific needs (e.g. Slack thread_ts)
         )
-    
+
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
         """
         Process a system message (e.g., subagent announce).
-        
+
         The chat_id field contains "original_channel:original_chat_id" to route
         the response back to the correct destination.
         """
         logger.info(f"Processing system message from {msg.sender_id}")
-        
-        # Parse origin from chat_id (format: "channel:chat_id")
-        if ":" in msg.chat_id:
-            parts = msg.chat_id.split(":", 1)
-            origin_channel = parts[0]
-            origin_chat_id = parts[1]
-        else:
-            # Fallback
-            origin_channel = "cli"
-            origin_chat_id = msg.chat_id
-        
-        # Use the origin session for context
-        session_key = f"{origin_channel}:{origin_chat_id}"
-        session = self.sessions.get_or_create(session_key)
-        
+
+        session = self.sessions.get_or_create(msg.session_key)
+
         # Update tool contexts
         message_tool = self.tools.get("message")
         if isinstance(message_tool, MessageTool):
-            message_tool.set_context(origin_channel, origin_chat_id)
-        
+            message_tool.set_session_key(session_key=msg.session_key)
+
         spawn_tool = self.tools.get("spawn")
         if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(origin_channel, origin_chat_id)
-        
+            message_tool.set_session_key(session_key=msg.session_key)
+
         cron_tool = self.tools.get("cron")
         if isinstance(cron_tool, CronTool):
-            cron_tool.set_context(origin_channel, origin_chat_id)
-        
+            message_tool.set_session_key(session_key=msg.session_key)
+
         # Build messages with the announce content
-        messages = self.context.build_messages(
+        messages = await self.context.build_messages(
             history=session.get_history(),
             current_message=msg.content,
-            channel=origin_channel,
-            chat_id=origin_chat_id,
+            session_key=msg.session_key
         )
-        
+
         # Agent loop (limited for announce handling)
         iteration = 0
         final_content = None
-        
+
         while iteration < self.max_iterations:
             iteration += 1
-            
+
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
-            
+
             if response.has_tool_calls:
                 tool_call_dicts = [
                     {
@@ -478,7 +469,7 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts,
                     reasoning_content=response.reasoning_content,
                 )
-                
+
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
@@ -491,31 +482,38 @@ class AgentLoop:
             else:
                 final_content = response.content
                 break
-        
+
         if final_content is None:
             final_content = "Background task completed."
-        
+
         # Save to session (mark as system message in history)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
         self.sessions.save(session)
-        
+
         return OutboundMessage(
-            channel=origin_channel,
-            chat_id=origin_chat_id,
+            session_key=msg.session_key,
             content=final_content
         )
-    
+
     async def _consolidate_memory(self, session, archive_all: bool = False) -> None:
         """Consolidate old messages into MEMORY.md + HISTORY.md, then trim session."""
         if not session.messages:
             return
-        
+
+        await hook_manager.execute_hooks(
+            context=HookContext(
+                event_type="message.compact",
+                session_id=session.key.safe_name()
+            ),
+            session=session
+        )
+
         if self.sandbox_manager:
             memory_workspace = self.sandbox_manager.get_workspace_path(session.key)
         else:
             memory_workspace = self.workspace
-        
+
         memory = MemoryStore(memory_workspace)
         if archive_all:
             old_messages = session.messages
@@ -574,33 +572,32 @@ Respond with ONLY valid JSON, no markdown fences."""
             self.sessions.save(session)
             logger.info(f"Memory consolidation done, session trimmed to {len(session.messages)} messages")
         except Exception as e:
-            logger.error(f"Memory consolidation failed: {e}")
+            logger.exception(f"Memory consolidation failed: {e}")
 
     async def process_direct(
         self,
         content: str,
-        session_key: str = "cli:direct",
-        channel: str = "cli",
-        chat_id: str = "direct",
+        session_key: SessionKey = SessionKey(
+            type="cli",
+            channel_id="default",
+            chat_id="direct"
+        )
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
-        
+
         Args:
             content: The message content.
             session_key: Session identifier (overrides channel:chat_id for session lookup).
-            channel: Source channel (for tool context routing).
-            chat_id: Source chat ID (for tool context routing).
-        
+
         Returns:
             The agent's response.
         """
         msg = InboundMessage(
-            channel=channel,
+            session_key=session_key,
             sender_id="user",
-            chat_id=chat_id,
             content=content
         )
-        
-        response = await self._process_message(msg, session_key=session_key)
+
+        response = await self._process_message(msg)
         return response.content if response else ""

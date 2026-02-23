@@ -10,17 +10,17 @@ from loguru import logger
 from vikingbot.sandbox.base import SandboxBackend, SandboxNotStartedError
 from vikingbot.sandbox.backends import register_backend
 
-if TYPE_CHECKING:
-    from vikingbot.config.schema import SandboxConfig
+
+from vikingbot.config.schema import SandboxConfig, SessionKey
 
 
 @register_backend("srt")
 class SrtBackend(SandboxBackend):
     """SRT backend using @anthropic-ai/sandbox-runtime."""
 
-    def __init__(self, config, session_key: str, workspace: Path):
+    def __init__(self, config, session_key: SessionKey, workspace: Path):
         # SRT has built-in isolation, restrict_to_workspace is not needed
-        super().__init__(restrict_to_workspace=True)
+        super().__init__()
         self.config = config
         self.session_key = session_key
         self._workspace = workspace
@@ -38,7 +38,7 @@ class SrtBackend(SandboxBackend):
         """Generate SRT configuration file."""
         srt_config = self._load_config()
 
-        settings_path = Path.home() / ".vikingbot" / "sandboxes" / f"{self.session_key.replace(':', '_')}-srt-settings.json"
+        settings_path = Path.home() / ".vikingbot" / "sandboxes" / f"{self.session_key.safe_name()}-srt-settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(settings_path, "w") as f:

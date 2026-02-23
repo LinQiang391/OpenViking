@@ -8,8 +8,8 @@ from typing import Any
 class SandboxBackend(ABC):
     """Abstract base class for sandbox backends."""
 
-    def __init__(self, restrict_to_workspace: bool = True):
-        self._restrict_to_workspace = restrict_to_workspace
+    def __init__(self):
+        pass
 
     @abstractmethod
     async def start(self) -> None:
@@ -41,10 +41,6 @@ class SandboxBackend(ABC):
         """
         return "/"
 
-    @property
-    def restrict_to_workspace(self) -> bool:
-        """Whether file access is restricted to the workspace directory."""
-        return self._restrict_to_workspace
 
     def _check_path_restriction(self, path: Path) -> None:
         """Check if path is within workspace (if restricted).
@@ -55,8 +51,6 @@ class SandboxBackend(ABC):
         Raises:
             PermissionError: If path outside workspace and restriction is enabled
         """
-        if not self._restrict_to_workspace:
-            return
         
         workspace = self.workspace.resolve()
         resolved = path.resolve()

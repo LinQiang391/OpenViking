@@ -9,6 +9,7 @@ from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
+from vikingbot.config.schema import SessionKey
 from vikingbot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
 
@@ -78,8 +79,7 @@ class CronService:
                             kind=j["payload"].get("kind", "agent_turn"),
                             message=j["payload"].get("message", ""),
                             deliver=j["payload"].get("deliver", False),
-                            channel=j["payload"].get("channel"),
-                            to=j["payload"].get("to"),
+                            session_key_str=j["payload"].get("session_key_str")
                         ),
                         state=CronJobState(
                             next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -125,8 +125,7 @@ class CronService:
                         "kind": j.payload.kind,
                         "message": j.payload.message,
                         "deliver": j.payload.deliver,
-                        "channel": j.payload.channel,
-                        "to": j.payload.to,
+                        "session_key_str": j.payload.session_key_str,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -230,7 +229,7 @@ class CronService:
         except Exception as e:
             job.state.last_status = "error"
             job.state.last_error = str(e)
-            logger.error(f"Cron: job '{job.name}' failed: {e}")
+            logger.exception(f"Cron: job '{job.name}' failed: {e}")
         
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
@@ -259,9 +258,9 @@ class CronService:
         name: str,
         schedule: CronSchedule,
         message: str,
+        session_key: SessionKey,
         deliver: bool = False,
-        channel: str | None = None,
-        to: str | None = None,
+
         delete_after_run: bool = False,
     ) -> CronJob:
         """Add a new job."""
@@ -277,8 +276,7 @@ class CronService:
                 kind="agent_turn",
                 message=message,
                 deliver=deliver,
-                channel=channel,
-                to=to,
+                session_key_str=session_key.model_dump_json(),
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,

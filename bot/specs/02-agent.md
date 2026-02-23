@@ -61,9 +61,11 @@ class AgentLoop:
     async def process_direct(
         self,
         content: str,
-        session_key: str = "cli:direct",
-        channel: str = "cli",
-        chat_id: str = "direct",
+        session_key: SessionKey = SessionKey(
+            type="cli",
+            channel_id="default",
+            chat_id="direct"
+        ),
     ) -> str
 ```
 
@@ -94,17 +96,16 @@ class AgentLoop:
 
 ```python
 class ContextBuilder:
-    def __init__(self, workspace: Path)
+    def __init__(self, workspace: Path, sandbox_manager: SandboxManager | None = None)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str
-    def build_messages(
+    async def build_system_prompt(self, session_key: SessionKey, skill_names: list[str] | None = None) -> str
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
         skill_names: list[str] | None = None,
         media: list[str] | None = None,
-        channel: str | None = None,
-        chat_id: str | None = None,
+        session_key: SessionKey | None = None,
     ) -> list[dict[str, Any]]
     def add_tool_result(
         self,
@@ -217,9 +218,8 @@ class SubagentManager:
     async def spawn(
         self,
         task: str,
+        session_key: SessionKey,
         label: str | None = None,
-        origin_channel: str = "cli",
-        origin_chat_id: str = "direct",
     ) -> str
 ```
 
@@ -228,6 +228,37 @@ class SubagentManager:
 - 限制的迭代次数（15 次）
 - 专注的系统提示词
 - 结果通过系统消息返回给原始会话
+
+### 6. Tool (工具基类)
+
+**文件**: `vikingbot/agent/tools/base.py`
+
+**职责**:
+- 定义工具的统一接口
+- 提供参数验证
+- 支持会话键设置
+
+**接口**:
+
+```python
+class Tool(ABC):
+    def set_session_key(self, session_key: SessionKey) -> None
+    
+    @property
+    @abstractmethod
+    def name(self) -> str
+    
+    @property
+    @abstractmethod
+    def description(self) -> str
+    
+    @property
+    @abstractmethod
+    def properties(self) -> dict[str, Any]
+    
+    @abstractmethod
+    async def execute(self, **kwargs: Any) -> str
+```
 
 ## 设计模式
 
@@ -256,8 +287,8 @@ AgentLoop 依赖以下组件：
 
 ```python
 class AgentDefaults(BaseModel):
-    workspace: str = "~/.vikingbot/workspace"
-    model: str = "anthropic/claude-opus-4-5"
+    workspace: str = "~/.vikingbot/workspace/shared"
+    model: str = "openai/doubao-seed-2-0-pro-260215"
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 50

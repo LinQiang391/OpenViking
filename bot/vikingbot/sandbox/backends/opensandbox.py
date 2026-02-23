@@ -15,9 +15,8 @@ from loguru import logger
 from vikingbot.sandbox.base import SandboxBackend, SandboxNotStartedError
 from vikingbot.sandbox.backends import register_backend
 
-if TYPE_CHECKING:
-    from vikingbot.config.schema import SandboxConfig
 
+from vikingbot.config.schema import SandboxConfig, SessionKey
 
 # Global to track the opensandbox-server process
 _OSB_SERVER_PROCESS: "subprocess.Popen | None" = None
@@ -121,9 +120,9 @@ atexit.register(cleanup_opensandbox_server)
 @register_backend("opensandbox")
 class OpenSandboxBackend(SandboxBackend):
 
-    def __init__(self, config: "SandboxConfig", session_key: str, workspace: Path):
+    def __init__(self, config: "SandboxConfig", session_key: SessionKey, workspace: Path):
         # OpenSandbox has built-in isolation, restrict_to_workspace is not needed
-        super().__init__(restrict_to_workspace=True)
+        super().__init__()
         self.config = config
         self.session_key = session_key
         self._workspace = workspace

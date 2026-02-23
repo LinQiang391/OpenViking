@@ -5,7 +5,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from typing import Optional
 
 from vikingbot.config.loader import load_config, save_config
-from vikingbot.config.schema import Config, ProvidersConfig, AgentsConfig, ChannelsConfig, ToolsConfig, SandboxConfig
+from vikingbot.config.schema import Config, ProvidersConfig, AgentsConfig, ChannelsConfig, ToolsConfig, SandboxConfig, \
+    SessionKey
 from vikingbot.session.manager import SessionManager
 from vikingbot.utils.helpers import get_workspace_path
 
@@ -183,7 +184,7 @@ def render_config_agents():
             
             <div class="mb-3">
                 <label class="block mb-1.5 font-medium text-gray-700">Workspace</label>
-                <input type="text" class="w-full px-3 py-2 border border-gray-300 rounded bg-white text-gray-800" placeholder="~/.vikingbot/workspace/default" value="{agents.workspace if agents else ''}">
+                <input type="text" class="w-full px-3 py-2 border border-gray-300 rounded bg-white text-gray-800" placeholder="~/.vikingbot/workspace/shared" value="{agents.workspace if agents else ''}">
                 <p class="text-xs text-gray-500 mt-1">Workspace directory path</p>
             </div>
             
@@ -477,7 +478,7 @@ def render_sessions():
     return HTMLResponse(content=html)
 
 
-def render_session_detail(session_key: str):
+def render_session_detail(session_key: SessionKey):
     """Render session detail"""
     from vikingbot.utils.helpers import safe_filename
     from pathlib import Path
@@ -487,7 +488,7 @@ def render_session_detail(session_key: str):
     
     try:
         sessions_dir = Path.home() / ".vikingbot" / "sessions"
-        safe_key = safe_filename(session_key.replace(":", "_"))
+
         session_path = sessions_dir / f"{safe_key}.jsonl"
         
         messages_html = ''
@@ -539,7 +540,7 @@ def render_workspace():
     session_manager = SessionManager(config.workspace_path)
     sessions = session_manager.list_sessions()
     
-    workspace_options = '<option value="default">Default Workspace</option>'
+    workspace_options = '<option value="shared">Shared Workspace</option>'
     for s in sessions:
         session_key = s['key']
         workspace_options += f'<option value="session-{session_key}">Session: {session_key}</option>'
@@ -558,7 +559,7 @@ def render_workspace():
                     <div id="file-tree" class="text-gray-500">
                         File browser - use JSON config for full workspace access
                         <div class="mt-3 p-3 bg-gray-50 rounded border border-gray-200">
-                            <div class="text-xs text-gray-500">Default Workspace:</div>
+                            <div class="text-xs text-gray-500">Shared Workspace:</div>
                             <div class="text-sm text-gray-700 break-all mt-1">{str(workspace_path)}</div>
                         </div>
                     </div>
@@ -666,7 +667,7 @@ async def get_sessions_partial():
 
 @router.get("/partials/sessions/{session_key}")
 async def get_session_detail_partial(session_key: str):
-    return render_session_detail(session_key)
+    return render_session_detail(SessionKey.from_safe_name(session_key))
 
 
 @router.get("/partials/workspace")

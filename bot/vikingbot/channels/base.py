@@ -8,6 +8,7 @@ from loguru import logger
 
 from vikingbot.bus.events import InboundMessage, OutboundMessage
 from vikingbot.bus.queue import MessageBus
+from vikingbot.config.schema import SessionKey, BaseChannelConfig
 
 
 class BaseChannel(ABC):
@@ -20,7 +21,7 @@ class BaseChannel(ABC):
     
     name: str = "base"
     
-    def __init__(self, config: Any, bus: MessageBus, channel_id: str | None = None, workspace_path: Path | None = None):
+    def __init__(self, config: BaseChannelConfig, bus: MessageBus, workspace_path: Path | None = None):
         """
         Initialize the channel.
         
@@ -33,22 +34,10 @@ class BaseChannel(ABC):
         self.config = config
         self.bus = bus
         self._running = False
-        self.channel_id = channel_id or getattr(config, "unique_id", self.name)
+        self.channel_type = config.type
+        self.channel_id = config.channel_id()
         self.workspace_path = workspace_path
-        
-        # 如果有 channel_id，动态设置 name 为 {type}:{id} 格式
-        if self.channel_id and self.channel_id != self.name:
-            # 从 config 获取 type，或者从 self.name 获取
-            channel_type = getattr(config, "type", self.name)
-            # 确保是字符串
-            if hasattr(channel_type, "value"):
-                channel_type = channel_type.value
-            elif not isinstance(channel_type, str):
-                channel_type = str(channel_type)
-            # 确保不是 "ChannelType.FEISHU" 这种格式
-            if "." in channel_type and "ChannelType" in channel_type:
-                channel_type = channel_type.split(".")[-1].lower()
-            self.name = f"{channel_type}:{self.channel_id}"
+
     
     @abstractmethod
     async def start(self) -> None:
@@ -130,9 +119,12 @@ class BaseChannel(ABC):
             return
         
         msg = InboundMessage(
-            channel=self.name,
+            session_key=SessionKey(
+                type=str(self.channel_type.value),
+                channel_id=self.channel_id,
+                chat_id=chat_id
+            ),
             sender_id=str(sender_id),
-            chat_id=str(chat_id),
             content=content,
             media=media or [],
             metadata=metadata or {}

@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 from vikingbot.sandbox.base import SandboxBackend, SandboxDisabledError, UnsupportedBackendError
 from vikingbot.sandbox.backends import get_backend
 
-if TYPE_CHECKING:
-    from vikingbot.config.schema import SandboxConfig
+
+from vikingbot.config.schema import SandboxConfig, SessionKey
 
 
 class SandboxManager:
@@ -19,42 +19,29 @@ class SandboxManager:
         self.workspace = sandbox_parent_path
         self.source_workspace = source_workspace_path
         self._sandboxes: dict[str, SandboxBackend] = {}
-        self._shared_sandbox: SandboxBackend | None = None
-
         backend_cls = get_backend(config.backend)
-        
         if not backend_cls:
             raise UnsupportedBackendError(f"Unknown sandbox backend: {config.backend}")
         self._backend_cls = backend_cls
-        self._is_direct_mode = config.backend == "direct"
 
-    async def get_sandbox(self, session_key: str) -> SandboxBackend:
-        """Get sandbox instance based on configuration mode."""
 
-        if self.config.mode == "per-session":
-            return await self._get_or_create_session_sandbox(session_key)
-        elif self.config.mode == "shared":
-            return await self._get_or_create_shared_sandbox()
-        else:
-            raise SandboxDisabledError()
+    async def get_sandbox(self, session_key: SessionKey) -> SandboxBackend:
+        return await self._get_or_create_sandbox(session_key)
 
-    async def _get_or_create_session_sandbox(self, session_key: str) -> SandboxBackend:
+
+    async def _get_or_create_sandbox(self, session_key: SessionKey) -> SandboxBackend:
         """Get or create session-specific sandbox."""
-        if session_key not in self._sandboxes:
-            sandbox = await self._create_sandbox(session_key)
-            self._sandboxes[session_key] = sandbox
-        return self._sandboxes[session_key]
+        sandbox_key = self.to_sandbox_key(session_key)
+        if sandbox_key not in self._sandboxes:
+            sandbox = await self._create_sandbox(sandbox_key)
+            self._sandboxes[sandbox_key] = sandbox
+        return self._sandboxes[sandbox_key]
 
-    async def _get_or_create_shared_sandbox(self) -> SandboxBackend:
-        """Get or create shared sandbox."""
-        if self._shared_sandbox is None:
-            self._shared_sandbox = await self._create_sandbox("shared")
-        return self._shared_sandbox
 
-    async def _create_sandbox(self, session_key: str) -> SandboxBackend:
+    async def _create_sandbox(self, sandbox_key: str) -> SandboxBackend:
         """Create new sandbox instance."""
-        workspace = self.workspace / session_key.replace(":", "_")
-        instance = self._backend_cls(self.config, session_key, workspace)
+        workspace = self.workspace / sandbox_key
+        instance = self._backend_cls(self.config, sandbox_key, workspace)
         try:
             await instance.start()
         except Exception as e:
@@ -100,11 +87,12 @@ class SandboxManager:
             dst_skills = sandbox_workspace / "skills"
             shutil.copytree(BUILTIN_SKILLS_DIR, dst_skills, dirs_exist_ok=True)
 
-    async def cleanup_session(self, session_key: str) -> None:
+    async def cleanup_session(self, session_key: SessionKey) -> None:
         """Clean up sandbox for a session."""
-        if session_key in self._sandboxes:
-            await self._sandboxes[session_key].stop()
-            del self._sandboxes[session_key]
+        sandbox_key = self.to_sandbox_key(session_key)
+        if sandbox_key in self._sandboxes:
+            await self._sandboxes[sandbox_key].stop()
+            del self._sandboxes[sandbox_key]
 
     async def cleanup_all(self) -> None:
         """Clean up all sandboxes."""
@@ -112,21 +100,16 @@ class SandboxManager:
             await sandbox.stop()
         self._sandboxes.clear()
 
-        if self._shared_sandbox:
-            await self._shared_sandbox.stop()
-            self._shared_sandbox = None
 
-    def get_workspace_path(self, session_key: str) -> Path:
+    def get_workspace_path(self, session_key: SessionKey) -> Path:
+        return self.workspace / self.to_sandbox_key(session_key)
+
+    def to_sandbox_key(self, session_key: SessionKey):
         if self.config.mode == "shared":
-            return self.workspace / "shared"
+            return "shared"
         else:
-            return self.workspace / session_key.replace(":", "_")
+            return session_key.safe_name()
 
-    def get_sandbox_cwd(self) -> str:
-        """Get the sandbox working directory path for system prompt."""
-        if self._is_direct_mode:
-            # Direct mode uses the actual workspace path
-            return str(self.source_workspace)
-        # For actual sandbox backends, return the generic "/"
-        # The actual cwd depends on the specific backend instance
-        return "/"
+    async def get_sandbox_cwd(self, session_key: SessionKey) -> str:
+        sandbox: SandboxBackend = await self._get_or_create_sandbox(session_key)
+        return sandbox.sandbox_cwd

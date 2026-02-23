@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from vikingbot.config.loader import load_config
-from vikingbot.utils.helpers import get_sandbox_parent_path
 
 router = APIRouter()
 
@@ -28,39 +27,30 @@ def is_safe_path(base: Path, target: Path) -> bool:
 
 
 def get_workspace_base(workspace_id: Optional[str] = None) -> Path:
-    if workspace_id and workspace_id != "default":
-        sandbox_parent = get_sandbox_parent_path()
-        return sandbox_parent / workspace_id.replace(":", "_")
-    else:
-        config = load_config()
-        return config.workspace_path
+    config = load_config()
+    workspace =  config.workspace_path
+    if workspace_id:
+        workspace = workspace / workspace_id
+    return workspace
+
 
 
 @router.get("/workspaces")
 async def list_workspaces():
     try:
         config = load_config()
-        sandbox_parent = get_sandbox_parent_path()
         
         workspaces = []
-        
-        workspaces.append({
-            "id": "default",
-            "name": "Default Workspace",
-            "path": str(config.workspace_path),
-            "is_default": True
-        })
-        
-        if sandbox_parent.exists():
-            for item in sandbox_parent.iterdir():
-                if item.is_dir() and item.name != "default":
-                    workspaces.append({
-                        "id": item.name.replace("_", ":"),
-                        "name": f"Session: {item.name.replace('_', ':')}",
-                        "path": str(item),
-                        "is_default": False
-                    })
-        
+
+        workspace = get_workspace_base(None)
+
+        for item in workspace.iterdir():
+            workspaces.append({
+                "id": item.name,
+                "name": item.name,
+                "path": str(item),
+                "is_default": False
+            })
         return {
             "success": True,
             "data": workspaces
@@ -111,7 +101,7 @@ async def list_files(
             "success": True,
             "data": {
                 "path": relative_path,
-                "workspace_id": workspace_id or "default",
+                "workspace_id": workspace_id or "shared",
                 "files": files
             }
         }
@@ -154,7 +144,7 @@ async def read_file(
             "success": True,
             "data": {
                 "path": relative_path,
-                "workspace_id": workspace_id or "default",
+                "workspace_id": workspace_id or "shared",
                 "content": content,
                 "size": stat.st_size,
                 "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat()

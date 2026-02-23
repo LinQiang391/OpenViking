@@ -3,6 +3,8 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
+from vikingbot.config.schema import SessionKey
+
 
 class Tool(ABC):
     """
@@ -11,7 +13,8 @@ class Tool(ABC):
     Tools are capabilities that the agent can use to interact with
     the environment, such as reading files, executing commands, etc.
     """
-    
+
+
     _TYPE_MAP = {
         "string": str,
         "integer": int,
@@ -20,7 +23,10 @@ class Tool(ABC):
         "array": list,
         "object": dict,
     }
-    
+
+    def set_session_key(self, session_key: SessionKey) -> None:
+        self._session_key = session_key
+
     @property
     @abstractmethod
     def name(self) -> str:

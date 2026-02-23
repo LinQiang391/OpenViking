@@ -26,8 +26,8 @@ def list_backends() -> list[str]:
 
 
 # Import backends to register them (avoid circular import)
-if not TYPE_CHECKING:
-    from vikingbot.sandbox.backends import srt
-    from vikingbot.sandbox.backends import opensandbox
-    from vikingbot.sandbox.backends import direct
-    from vikingbot.sandbox.backends import aiosandbox
+
+from vikingbot.sandbox.backends import srt
+from vikingbot.sandbox.backends import opensandbox
+from vikingbot.sandbox.backends import direct
+from vikingbot.sandbox.backends import aiosandbox

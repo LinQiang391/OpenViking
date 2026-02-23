@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from vikingbot.utils.helpers import ensure_dir, safe_filename
+from vikingbot.config.schema import SessionKey
+from vikingbot.utils.helpers import ensure_dir
 
-if TYPE_CHECKING:
-    from vikingbot.sandbox.manager import SandboxManager
+
+from vikingbot.sandbox.manager import SandboxManager
 
 
 @dataclass
@@ -24,7 +25,7 @@ class Session:
     Stores messages in JSONL format for easy reading and persistence.
     """
     
-    key: str  # channel:chat_id
+    key: SessionKey  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
@@ -77,15 +78,13 @@ class SessionManager:
     ):
         self.workspace = workspace
         self.sessions_dir = ensure_dir(Path.home() / ".vikingbot" / "sessions")
-        self._cache: dict[str, Session] = {}
+        self._cache: dict[SessionKey, Session] = {}
         self.sandbox_manager = sandbox_manager
     
-    def _get_session_path(self, key: str) -> Path:
-        """Get the file path for a session."""
-        safe_key = safe_filename(key.replace(":", "_"))
-        return self.sessions_dir / f"{safe_key}.jsonl"
+    def _get_session_path(self, session_key: SessionKey) -> Path:
+        return self.sessions_dir / f"{session_key.safe_name()}.jsonl"
     
-    def get_or_create(self, key: str) -> Session:
+    def get_or_create(self, key: SessionKey) -> Session:
         """
         Get an existing session or create a new one.
 
@@ -120,7 +119,7 @@ class SessionManager:
 
         return session
 
-    async def _init_sandbox(self, key: str) -> None:
+    async def _init_sandbox(self, key: SessionKey) -> None:
         """Initialize sandbox for a session."""
         if self.sandbox_manager is None:
             return
@@ -129,9 +128,9 @@ class SessionManager:
         except Exception as e:
             logger.warning(f"Failed to initialize sandbox for {key}: {e}")
     
-    def _load(self, key: str) -> Session | None:
+    def _load(self, session_key: SessionKey) -> Session | None:
         """Load a session from disk."""
-        path = self._get_session_path(key)
+        path = self._get_session_path(session_key)
         
         if not path.exists():
             return None
@@ -140,6 +139,7 @@ class SessionManager:
             messages = []
             metadata = {}
             created_at = None
+            session_key_from_metadata = None
             
             with open(path) as f:
                 for line in f:
@@ -152,17 +152,20 @@ class SessionManager:
                     if data.get("_type") == "metadata":
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
+                        session_key_from_metadata = SessionKey.from_safe_name(data.get("session_key"))
                     else:
                         messages.append(data)
             
+            effective_key = session_key_from_metadata if session_key_from_metadata else session_key
+            
             return Session(
-                key=key,
+                key=effective_key,
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata
             )
         except Exception as e:
-            logger.warning(f"Failed to load session {key}: {e}")
+            logger.warning(f"Failed to load session {session_key}: {e}")
             return None
     
     def save(self, session: Session) -> None:
@@ -173,6 +176,7 @@ class SessionManager:
             # Write metadata first
             metadata_line = {
                 "_type": "metadata",
+                "session_key": session.key.safe_name(),
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "metadata": session.metadata
@@ -185,7 +189,7 @@ class SessionManager:
         
         self._cache[session.key] = session
     
-    def delete(self, key: str) -> bool:
+    def delete(self, key: SessionKey) -> bool:
         """
         Delete a session.
 
@@ -220,14 +224,14 @@ class SessionManager:
         
         for path in self.sessions_dir.glob("*.jsonl"):
             try:
-                # Read just the metadata line
                 with open(path) as f:
                     first_line = f.readline().strip()
                     if first_line:
                         data = json.loads(first_line)
                         if data.get("_type") == "metadata":
+                            session_key = SessionKey.from_safe_name(data.get("session_key"))
                             sessions.append({
-                                "key": path.stem.replace("_", ":"),
+                                "key": session_key,
                                 "created_at": data.get("created_at"),
                                 "updated_at": data.get("updated_at"),
                                 "path": str(path)

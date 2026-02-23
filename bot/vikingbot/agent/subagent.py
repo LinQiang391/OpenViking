@@ -10,6 +10,7 @@ from loguru import logger
 
 from vikingbot.bus.events import InboundMessage
 from vikingbot.bus.queue import MessageBus
+from vikingbot.config.schema import SessionKey
 from vikingbot.providers.base import LLMProvider
 from vikingbot.agent.tools.registry import ToolRegistry
 from vikingbot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
@@ -17,8 +18,8 @@ from vikingbot.agent.tools.shell import ExecTool
 from vikingbot.agent.tools.web import WebFetchTool
 from vikingbot.agent.tools.websearch import WebSearchTool
 
-if TYPE_CHECKING:
-    from vikingbot.sandbox.manager import SandboxManager
+
+from vikingbot.sandbox.manager import SandboxManager
 
 
 class SubagentManager:
@@ -55,9 +56,9 @@ class SubagentManager:
     async def spawn(
         self,
         task: str,
+        session_key: SessionKey,
         label: str | None = None,
-        origin_channel: str = "cli",
-        origin_chat_id: str = "direct",
+
     ) -> str:
         """
         Spawn a subagent to execute a task in the background.
@@ -73,15 +74,11 @@ class SubagentManager:
         """
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
-        
-        origin = {
-            "channel": origin_channel,
-            "chat_id": origin_chat_id,
-        }
+
         
         # Create background task
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            self._run_subagent(task_id, task, display_label, session_key)
         )
         self._running_tasks[task_id] = bg_task
         
@@ -96,7 +93,7 @@ class SubagentManager:
         task_id: str,
         task: str,
         label: str,
-        origin: dict[str, str],
+        session_key: SessionKey
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info(f"Subagent [{task_id}] starting task: {label}")
@@ -179,12 +176,12 @@ class SubagentManager:
                 final_result = "Task completed but no final response was generated."
             
             logger.info(f"Subagent [{task_id}] completed successfully")
-            await self._announce_result(task_id, label, task, final_result, origin, "ok")
+            await self._announce_result(task_id, label, task, final_result, session_key, "ok")
             
         except Exception as e:
             error_msg = f"Error: {str(e)}"
-            logger.error(f"Subagent [{task_id}] failed: {e}")
-            await self._announce_result(task_id, label, task, error_msg, origin, "error")
+            logger.exception(f"Subagent [{task_id}] failed: {e}")
+            await self._announce_result(task_id, label, task, error_msg, session_key, "error")
     
     async def _announce_result(
         self,
@@ -192,7 +189,7 @@ class SubagentManager:
         label: str,
         task: str,
         result: str,
-        origin: dict[str, str],
+        session_key: SessionKey,
         status: str,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus."""
@@ -209,14 +206,13 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         
         # Inject as system message to trigger main agent
         msg = InboundMessage(
-            channel="system",
             sender_id="subagent",
-            chat_id=f"{origin['channel']}:{origin['chat_id']}",
+            session_key=session_key,
             content=announce_content,
         )
         
         await self.bus.publish_inbound(msg)
-        logger.debug(f"Subagent [{task_id}] announced result to {origin['channel']}:{origin['chat_id']}")
+        logger.debug(f"Subagent [{task_id}] announced result to {session_key}")
     
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""

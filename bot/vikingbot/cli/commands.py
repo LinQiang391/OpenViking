@@ -1,6 +1,7 @@
 """CLI commands for vikingbot."""
 
 import asyncio
+import json
 import os
 import signal
 from pathlib import Path
@@ -19,6 +20,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from vikingbot import __version__, __logo__
+from vikingbot.config.schema import SessionKey
 
 app = typer.Typer(
     name="vikingbot",
@@ -48,6 +50,7 @@ def _flush_pending_tty_input() -> None:
 
     try:
         import termios
+
         termios.tcflush(fd, termios.TCIFLUSH)
         return
     except Exception:
@@ -70,6 +73,7 @@ def _restore_terminal() -> None:
         return
     try:
         import termios
+
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _SAVED_TERM_ATTRS)
     except Exception:
         pass
@@ -82,6 +86,7 @@ def _init_prompt_session() -> None:
     # Save terminal state so we can restore it on exit
     try:
         import termios
+
         _SAVED_TERM_ATTRS = termios.tcgetattr(sys.stdin.fileno())
     except Exception:
         pass
@@ -92,7 +97,7 @@ def _init_prompt_session() -> None:
     _PROMPT_SESSION = PromptSession(
         history=FileHistory(str(history_file)),
         enable_open_in_editor=False,
-        multiline=False,   # Enter submits (single line mode)
+        multiline=False,  # Enter submits (single line mode)
     )
 
 
@@ -130,7 +135,6 @@ async def _read_interactive_input_async() -> str:
         raise KeyboardInterrupt from exc
 
 
-
 def version_callback(value: bool):
     if value:
         console.print(f"{__logo__} vikingbot v{__version__}")
@@ -139,9 +143,7 @@ def version_callback(value: bool):
 
 @app.callback()
 def main(
-    version: bool = typer.Option(
-        None, "--version", "-v", callback=version_callback, is_eager=True
-    ),
+    version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True),
 ):
     """vikingbot - Personal AI Assistant."""
     pass
@@ -156,19 +158,13 @@ def _run_onboard_logic():
     from vikingbot.config.loader import get_config_path, save_config
     from vikingbot.config.schema import Config
     from vikingbot.utils.helpers import get_workspace_path
-    
+
     config_path = get_config_path()
-    
+
     # Create default config with channel examples
     config = Config()
     config.channels = [
-        {
-            "type": "telegram",
-            "enabled": False,
-            "token": "",
-            "allowFrom": [],
-            "proxy": None
-        },
+        {"type": "telegram", "enabled": False, "token": "", "allowFrom": [], "proxy": None},
         {
             "type": "feishu",
             "enabled": False,
@@ -176,7 +172,7 @@ def _run_onboard_logic():
             "appSecret": "",
             "encryptKey": "",
             "verificationToken": "",
-            "allowFrom": []
+            "allowFrom": [],
         },
         {
             "type": "discord",
@@ -184,14 +180,14 @@ def _run_onboard_logic():
             "token": "",
             "allowFrom": [],
             "gatewayUrl": "wss://gateway.discord.gg/?v=10&encoding=json",
-            "intents": 37377
+            "intents": 37377,
         },
         {
             "type": "whatsapp",
             "enabled": False,
             "bridgeUrl": "ws://localhost:3001",
             "bridgeToken": "",
-            "allowFrom": []
+            "allowFrom": [],
         },
         {
             "type": "mochat",
@@ -213,20 +209,12 @@ def _run_onboard_logic():
             "sessions": [],
             "panels": [],
             "allowFrom": [],
-            "mention": {
-                "requireInGroups": False
-            },
+            "mention": {"requireInGroups": False},
             "groups": {},
             "replyDelayMode": "non-mention",
-            "replyDelayMs": 120000
+            "replyDelayMs": 120000,
         },
-        {
-            "type": "dingtalk",
-            "enabled": False,
-            "clientId": "",
-            "clientSecret": "",
-            "allowFrom": []
-        },
+        {"type": "dingtalk", "enabled": False, "clientId": "", "clientSecret": "", "allowFrom": []},
         {
             "type": "email",
             "enabled": False,
@@ -249,7 +237,7 @@ def _run_onboard_logic():
             "markSeen": True,
             "maxBodyChars": 12000,
             "subjectPrefix": "Re: ",
-            "allowFrom": []
+            "allowFrom": [],
         },
         {
             "type": "slack",
@@ -261,50 +249,43 @@ def _run_onboard_logic():
             "userTokenReadOnly": True,
             "groupPolicy": "mention",
             "groupAllowFrom": [],
-            "dm": {
-                "enabled": True,
-                "policy": "open",
-                "allowFrom": []
-            }
+            "dm": {"enabled": True, "policy": "open", "allowFrom": []},
         },
-        {
-            "type": "qq",
-            "enabled": False,
-            "appId": "",
-            "secret": "",
-            "allowFrom": []
-        }
+        {"type": "qq", "enabled": False, "appId": "", "secret": "", "allowFrom": []},
     ]
-    
+
     save_config(config)
     console.print(f"[green]✓[/green] Created config at {config_path}")
-    
+
     # Workspace directory and templates will be created/ copied when first used
     workspace = get_workspace_path(ensure_exists=False)
     console.print(f"[green]✓[/green] Workspace path: {workspace}")
-    console.print(f"  [dim]Workspace will be created and templates copied from source when first used[/dim]")
+    console.print(
+        f"  [dim]Workspace will be created and templates copied from source when first used[/dim]"
+    )
+
 
 @app.command()
 def onboard():
     """Initialize vikingbot configuration and workspace."""
     from vikingbot.config.loader import get_config_path
-    
+
     config_path = get_config_path()
-    
+
     if config_path.exists():
         console.print(f"Config already exists at {config_path}, skipping initialization")
         raise typer.Exit()
-    
+
     _run_onboard_logic()
-    
+
     console.print(f"\n{__logo__} vikingbot is ready!")
     console.print("\nNext steps:")
     console.print("  1. Add your API key to [cyan]~/.vikingbot/config.json[/cyan]")
     console.print("     Get one at: https://openrouter.ai/keys")
-    console.print("  2. Chat: [cyan]vikingbot agent -m \"Hello!\"[/cyan]")
-    console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/vikingbot#-chat-apps[/dim]")
-
-
+    console.print('  2. Chat: [cyan]vikingbot agent -m "Hello!"[/cyan]')
+    console.print(
+        "\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/vikingbot#-chat-apps[/dim]"
+    )
 
 
 def _create_workspace_templates(workspace: Path):
@@ -348,13 +329,13 @@ Information about the user goes here.
 - Language: (your preferred language)
 """,
     }
-    
+
     for filename, content in templates.items():
         file_path = workspace / filename
         if not file_path.exists():
             file_path.write_text(content)
             console.print(f"  [dim]Created {filename}[/dim]")
-    
+
     # Create memory directory and MEMORY.md
     memory_dir = workspace / "memory"
     memory_dir.mkdir(exist_ok=True)
@@ -377,7 +358,7 @@ This file stores important information that should persist across sessions.
 (Things to remember)
 """)
         console.print("  [dim]Created memory/MEMORY.md[/dim]")
-    
+
     history_file = memory_dir / "HISTORY.md"
     if not history_file.exists():
         history_file.write_text("")
@@ -391,26 +372,28 @@ This file stores important information that should persist across sessions.
 def copy_workspace_templates_from_source(target_workspace: Path):
     """
     Copy workspace templates from source directory to target workspace.
-    
+
     This is called when workspace is first used and no templates exist yet.
     """
     import shutil
     from pathlib import Path
-    
+
     # Get source workspace path (relative to this file)
     source_dir = Path(__file__).parent.parent.parent / "workspace"
-    
+
     if not source_dir.exists():
-        console.print(f"[yellow]Warning: Source workspace directory not found at {source_dir}[/yellow]")
+        console.print(
+            f"[yellow]Warning: Source workspace directory not found at {source_dir}[/yellow]"
+        )
         return
-    
+
     console.print(f"[dim]Copying workspace templates from {source_dir} to {target_workspace}[/dim]")
-    
+
     # Copy all files and directories from source workspace
     for item in source_dir.iterdir():
         src = source_dir / item.name
         dst = target_workspace / item.name
-        
+
         if src.is_dir():
             if src.name == "memory":
                 # Ensure memory directory exists
@@ -434,16 +417,17 @@ def copy_workspace_templates_from_source(target_workspace: Path):
 def _make_provider(config):
     """Create LiteLLMProvider from config. Allows starting without API key."""
     from vikingbot.providers.litellm_provider import LiteLLMProvider
+
     p = config.get_provider()
     model = config.agents.defaults.model
     api_key = p.api_key if p else None
     api_base = config.get_api_base()
     provider_name = config.get_provider_name()
-    
+
     if not (api_key) and not model.startswith("bedrock/"):
         console.print("[yellow]Warning: No API key configured.[/yellow]")
         console.print("You can configure providers later in the Console UI.")
-    
+
     return LiteLLMProvider(
         api_key=api_key,
         api_base=api_base,
@@ -462,7 +446,9 @@ def _make_provider(config):
 def gateway(
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
     console_port: int = typer.Option(18791, "--console-port", help="Console web UI port"),
-    enable_console: bool = typer.Option(True, "--console/--no-console", help="Enable console web UI"),
+    enable_console: bool = typer.Option(
+        True, "--console/--no-console", help="Enable console web UI"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the vikingbot gateway."""
@@ -474,39 +460,44 @@ def gateway(
     from vikingbot.cron.service import CronService
     from vikingbot.cron.types import CronJob
     from vikingbot.heartbeat.service import HeartbeatService
-    
+
     if verbose:
         import logging
+
         logging.basicConfig(level=logging.DEBUG)
-    
+
     console.print(f"{__logo__} Starting vikingbot gateway on port {port}...")
-    
+
     config_path = get_config_path()
     if not config_path.exists():
         console.print("Config not found, creating default config...")
         from vikingbot.config.schema import Config
         from vikingbot.config.loader import save_config
+
         config = Config()
         save_config(config)
         console.print(f"[green]✓[/green] Created default config at {config_path}")
-    
+
     config = load_config()
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
-    
+
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
 
     # Create sandbox manager
     from vikingbot.sandbox.manager import SandboxManager
-    from vikingbot.utils.helpers import get_sandbox_parent_path, get_source_workspace_path
-    sandbox_parent_path = get_sandbox_parent_path()
+    from vikingbot.utils.helpers import get_source_workspace_path
+
+    sandbox_parent_path = config.workspace_path
     source_workspace_path = get_source_workspace_path()
     sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
-    console.print(f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})")
-    
+    console.print(
+        f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})"
+    )
+
     # Create agent with cron service
     agent = AgentLoop(
         bus=bus,
@@ -522,70 +513,84 @@ def gateway(
         cron_service=cron,
         session_manager=session_manager,
         sandbox_manager=sandbox_manager,
+        config=config,
     )
-    
+
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
+        session_key = SessionKey(**json.loads(job.payload.session_key_str))
         response = await agent.process_direct(
             job.payload.message,
-            session_key=f"cron:{job.id}",
-            channel=job.payload.channel or "cli",
-            chat_id=job.payload.to or "direct",
+            session_key=session_key,
         )
-        if job.payload.deliver and job.payload.to:
+        if job.payload.deliver:
             from vikingbot.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=response or ""
-            ))
+
+            await bus.publish_outbound(
+                OutboundMessage(
+                    session_key=session_key,
+                    content=response or "",
+                )
+            )
         return response
+
     cron.on_job = on_cron_job
-    
+
     # Create heartbeat service
-    async def on_heartbeat(prompt: str) -> str:
-        """Execute heartbeat through the agent."""
-        return await agent.process_direct(prompt, session_key="heartbeat")
-    
+    async def on_heartbeat(prompt: str, session_key: SessionKey | None = None) -> str:
+
+
+        return await agent.process_direct(
+            prompt, 
+            session_key=session_key,
+        )
+
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
-        interval_s=30 * 60,  # 30 minutes
-        enabled=True
+        interval_s=config.heartbeat.interval_seconds,
+        enabled=config.heartbeat.enabled,
+        sandbox_mode=config.sandbox.mode,
+        session_manager=session_manager,
     )
-    
+
     # Create channel manager
     channels = ChannelManager(config, bus)
-    
+
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
-    
+
     cron_status = cron.status()
     if cron_status["jobs"] > 0:
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
-    
-    console.print(f"[green]✓[/green] Heartbeat: every 30m")
-    
+
+    console.print(
+        f"[green]✓[/green] Heartbeat: every {config.heartbeat.interval_seconds}s"
+        if config.heartbeat.enabled
+        else "[yellow]✗[/yellow] Heartbeat: disabled"
+    )
+
     if enable_console:
         console.print(f"[green]✓[/green] Console: http://localhost:{console_port}")
-    
+
     async def run():
         tasks = []
-        
+
         try:
             await cron.start()
             await heartbeat.start()
-            
+
             tasks.append(agent.run())
             tasks.append(channels.start_all())
-            
+
             if enable_console:
                 from vikingbot.console.server import start_console_server
+
                 tasks.append(start_console_server(port=console_port))
-            
+
             await asyncio.gather(*tasks)
         except KeyboardInterrupt:
             console.print("\nShutting down...")
@@ -594,10 +599,8 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
-    
+
     asyncio.run(run())
-
-
 
 
 # ============================================================================
@@ -609,17 +612,21 @@ def gateway(
 def agent(
     message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
     session_id: str = typer.Option("cli:direct", "--session", "-s", help="Session ID"),
-    markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
-    logs: bool = typer.Option(False, "--logs/--no-logs", help="Show vikingbot runtime logs during chat"),
+    markdown: bool = typer.Option(
+        True, "--markdown/--no-markdown", help="Render assistant output as Markdown"
+    ),
+    logs: bool = typer.Option(
+        False, "--logs/--no-logs", help="Show vikingbot runtime logs during chat"
+    ),
 ):
     """Interact with the agent directly."""
     from vikingbot.config.loader import load_config
     from vikingbot.bus.queue import MessageBus
     from vikingbot.agent.loop import AgentLoop
     from loguru import logger
-    
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
 
@@ -627,7 +634,7 @@ def agent(
         logger.enable("vikingbot")
     else:
         logger.disable("vikingbot")
-    
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -637,12 +644,14 @@ def agent(
         memory_window=config.agents.defaults.memory_window,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
+        config=config,
     )
-    
+
     # Show spinner when logs are off (no output to miss); skip when logs are on
     def _thinking_ctx():
         if logs:
             from contextlib import nullcontext
+
             return nullcontext()
         # Animated spinner is safe to use with prompt_toolkit input handling
         return console.status("[dim]vikingbot is thinking...[/dim]", spinner="dots")
@@ -653,12 +662,14 @@ def agent(
             with _thinking_ctx():
                 response = await agent_loop.process_direct(message, session_key=session_id)
             _print_agent_response(response, render_markdown=markdown)
-        
+
         asyncio.run(run_once())
     else:
         # Interactive mode
         _init_prompt_session()
-        console.print(f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
+        console.print(
+            f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n"
+        )
 
         def _exit_on_sigint(signum, frame):
             _restore_terminal()
@@ -666,7 +677,7 @@ def agent(
             os._exit(0)
 
         signal.signal(signal.SIGINT, _exit_on_sigint)
-        
+
         async def run_interactive():
             while True:
                 try:
@@ -680,9 +691,11 @@ def agent(
                         _restore_terminal()
                         console.print("\nGoodbye!")
                         break
-                    
+
                     with _thinking_ctx():
-                        response = await agent_loop.process_direct(user_input, session_key=session_id)
+                        response = await agent_loop.process_direct(
+                            user_input, session_key=session_id
+                        )
                     _print_agent_response(response, render_markdown=markdown)
                 except KeyboardInterrupt:
                     _restore_terminal()
@@ -692,7 +705,7 @@ def agent(
                     _restore_terminal()
                     console.print("\nGoodbye!")
                     break
-        
+
         asyncio.run(run_interactive())
 
 
@@ -723,8 +736,8 @@ def channels_status():
 
     for channel in all_channels:
         channel_type = str(channel.type)
-        channel_id = channel.unique_id
-        
+        channel_id = channel.channel_id()
+
         config_info = ""
         if channel.type == ChannelType.WHATSAPP:
             config_info = channel.bridge_url
@@ -738,12 +751,9 @@ def channels_status():
             config_info = f"token: {channel.token[:10]}..." if channel.token else ""
         elif channel.type == ChannelType.SLACK:
             config_info = "socket" if channel.app_token and channel.bot_token else ""
-        
+
         table.add_row(
-            channel_type,
-            channel_id,
-            "✓" if channel.enabled else "✗",
-            config_info or "[dim]—[/dim]"
+            channel_type, channel_id, "✓" if channel.enabled else "✗", config_info or "[dim]—[/dim]"
         )
 
     if not all_channels:
@@ -756,57 +766,57 @@ def _get_bridge_dir() -> Path:
     """Get the bridge directory, setting it up if needed."""
     import shutil
     import subprocess
-    
+
     # User's bridge location
     user_bridge = Path.home() / ".vikingbot" / "bridge"
-    
+
     # Check if already built
     if (user_bridge / "dist" / "index.js").exists():
         return user_bridge
-    
+
     # Check for npm
     if not shutil.which("npm"):
         console.print("[red]npm not found. Please install Node.js >= 18.[/red]")
         raise typer.Exit(1)
-    
+
     # Find source bridge: first check package data, then source dir
     pkg_bridge = Path(__file__).parent.parent / "bridge"  # vikingbot/bridge (installed)
     src_bridge = Path(__file__).parent.parent.parent / "bridge"  # repo root/bridge (dev)
-    
+
     source = None
     if (pkg_bridge / "package.json").exists():
         source = pkg_bridge
     elif (src_bridge / "package.json").exists():
         source = src_bridge
-    
+
     if not source:
         console.print("[red]Bridge source not found.[/red]")
         console.print("Try reinstalling: pip install --force-reinstall vikingbot")
         raise typer.Exit(1)
-    
+
     console.print(f"{__logo__} Setting up bridge...")
-    
+
     # Copy to user directory
     user_bridge.parent.mkdir(parents=True, exist_ok=True)
     if user_bridge.exists():
         shutil.rmtree(user_bridge)
     shutil.copytree(source, user_bridge, ignore=shutil.ignore_patterns("node_modules", "dist"))
-    
+
     # Install and build
     try:
         console.print("  Installing dependencies...")
         subprocess.run(["npm", "install"], cwd=user_bridge, check=True, capture_output=True)
-        
+
         console.print("  Building...")
         subprocess.run(["npm", "run", "build"], cwd=user_bridge, check=True, capture_output=True)
-        
+
         console.print("[green]✓[/green] Bridge ready\n")
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Build failed: {e}[/red]")
         if e.stderr:
             console.print(f"[dim]{e.stderr.decode()[:500]}[/dim]")
         raise typer.Exit(1)
-    
+
     return user_bridge
 
 
@@ -816,23 +826,23 @@ def channels_login():
     import subprocess
     from vikingbot.config.loader import load_config
     from vikingbot.config.schema import ChannelType
-    
+
     config = load_config()
     bridge_dir = _get_bridge_dir()
-    
+
     console.print(f"{__logo__} Starting bridge...")
     console.print("Scan the QR code to connect.\n")
-    
+
     env = {**os.environ}
-    
+
     # Find WhatsApp channel config
     channels_config = config.channels_config
     all_channels = channels_config.get_all_channels()
     whatsapp_channel = next((c for c in all_channels if c.type == ChannelType.WHATSAPP), None)
-    
+
     if whatsapp_channel and whatsapp_channel.bridge_token:
         env["BRIDGE_TOKEN"] = whatsapp_channel.bridge_token
-    
+
     try:
         subprocess.run(["npm", "start"], cwd=bridge_dir, check=True, env=env)
     except subprocess.CalledProcessError as e:
@@ -856,24 +866,25 @@ def cron_list(
     """List scheduled jobs."""
     from vikingbot.config.loader import get_data_dir
     from vikingbot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     jobs = service.list_jobs(include_disabled=all)
-    
+
     if not jobs:
         console.print("No scheduled jobs.")
         return
-    
+
     table = Table(title="Scheduled Jobs")
     table.add_column("ID", style="cyan")
     table.add_column("Name")
     table.add_column("Schedule")
     table.add_column("Status")
     table.add_column("Next Run")
-    
+
     import time
+
     for job in jobs:
         # Format schedule
         if job.schedule.kind == "every":
@@ -882,17 +893,19 @@ def cron_list(
             sched = job.schedule.expr or ""
         else:
             sched = "one-time"
-        
+
         # Format next run
         next_run = ""
         if job.state.next_run_at_ms:
-            next_time = time.strftime("%Y-%m-%d %H:%M", time.localtime(job.state.next_run_at_ms / 1000))
+            next_time = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(job.state.next_run_at_ms / 1000)
+            )
             next_run = next_time
-        
+
         status = "[green]enabled[/green]" if job.enabled else "[dim]disabled[/dim]"
-        
+
         table.add_row(job.id, job.name, sched, status, next_run)
-    
+
     console.print(table)
 
 
@@ -904,14 +917,12 @@ def cron_add(
     cron_expr: str = typer.Option(None, "--cron", "-c", help="Cron expression (e.g. '0 9 * * *')"),
     at: str = typer.Option(None, "--at", help="Run once at time (ISO format)"),
     deliver: bool = typer.Option(False, "--deliver", "-d", help="Deliver response to channel"),
-    to: str = typer.Option(None, "--to", help="Recipient for delivery"),
-    channel: str = typer.Option(None, "--channel", help="Channel for delivery (e.g. 'telegram', 'whatsapp')"),
 ):
     """Add a scheduled job."""
     from vikingbot.config.loader import get_data_dir
     from vikingbot.cron.service import CronService
     from vikingbot.cron.types import CronSchedule
-    
+
     # Determine schedule type
     if every:
         schedule = CronSchedule(kind="every", every_ms=every * 1000)
@@ -919,24 +930,26 @@ def cron_add(
         schedule = CronSchedule(kind="cron", expr=cron_expr)
     elif at:
         import datetime
+
         dt = datetime.datetime.fromisoformat(at)
         schedule = CronSchedule(kind="at", at_ms=int(dt.timestamp() * 1000))
     else:
         console.print("[red]Error: Must specify --every, --cron, or --at[/red]")
         raise typer.Exit(1)
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
+    session_key = SessionKey.from_safe_name()
+
     job = service.add_job(
         name=name,
         schedule=schedule,
         message=message,
         deliver=deliver,
-        to=to,
-        channel=channel,
+        session_key=sess,
     )
-    
+
     console.print(f"[green]✓[/green] Added job '{job.name}' ({job.id})")
 
 
@@ -947,10 +960,10 @@ def cron_remove(
     """Remove a scheduled job."""
     from vikingbot.config.loader import get_data_dir
     from vikingbot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     if service.remove_job(job_id):
         console.print(f"[green]✓[/green] Removed job {job_id}")
     else:
@@ -965,10 +978,10 @@ def cron_enable(
     """Enable or disable a job."""
     from vikingbot.config.loader import get_data_dir
     from vikingbot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     job = service.enable_job(job_id, enabled=not disable)
     if job:
         status = "disabled" if disable else "enabled"
@@ -985,13 +998,13 @@ def cron_run(
     """Manually run a job."""
     from vikingbot.config.loader import get_data_dir
     from vikingbot.cron.service import CronService
-    
+
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    
+
     async def run():
         return await service.run_job(job_id, force=force)
-    
+
     if asyncio.run(run()):
         console.print(f"[green]✓[/green] Job executed")
     else:
@@ -1014,14 +1027,18 @@ def status():
 
     console.print(f"{__logo__} vikingbot Status\n")
 
-    console.print(f"Config: {config_path} {'[green]✓[/green]' if config_path.exists() else '[red]✗[/red]'}")
-    console.print(f"Workspace: {workspace} {'[green]✓[/green]' if workspace.exists() else '[red]✗[/red]'}")
+    console.print(
+        f"Config: {config_path} {'[green]✓[/green]' if config_path.exists() else '[red]✗[/red]'}"
+    )
+    console.print(
+        f"Workspace: {workspace} {'[green]✓[/green]' if workspace.exists() else '[red]✗[/red]'}"
+    )
 
     if config_path.exists():
         from vikingbot.providers.registry import PROVIDERS
 
         console.print(f"Model: {config.agents.defaults.model}")
-        
+
         # Check API keys from registry
         for spec in PROVIDERS:
             p = getattr(config.providers, spec.name, None)
@@ -1035,13 +1052,17 @@ def status():
                     console.print(f"{spec.label}: [dim]not set[/dim]")
             else:
                 has_key = bool(p.api_key)
-                console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
+                console.print(
+                    f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}"
+                )
 
 
 @app.command()
 def tui(
     console_port: int = typer.Option(18791, "--console-port", help="Console web UI port"),
-    enable_console: bool = typer.Option(True, "--console/--no-console", help="Enable console web UI"),
+    enable_console: bool = typer.Option(
+        True, "--console/--no-console", help="Enable console web UI"
+    ),
 ):
     """Launch vikingbot TUI interface interface."""
     from vikingbot.config.loader import load_config
@@ -1051,25 +1072,28 @@ def tui(
     from vikingbot.tui.app import run_tui
     import asyncio
     from loguru import logger
-    
+
     # 禁用日志输出，避免影响 TUI 界面
     logger.disable("vikingbot")
-    
+
     config = load_config()
     bus = MessageBus()
-    
+
     provider = _make_provider(config)
-    
+
     # Create sandbox manager
     from vikingbot.sandbox.manager import SandboxManager
-    from vikingbot.utils.helpers import get_sandbox_parent_path, get_source_workspace_path
-    sandbox_parent_path = get_sandbox_parent_path()
+    from vikingbot.utils.helpers import get_source_workspace_path
+
+    sandbox_parent_path = config.workspace_path
     source_workspace_path = get_source_workspace_path()
     sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
-    console.print(f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})")
-    
+    console.print(
+        f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})"
+    )
+
     session_manager = SessionManager(config.workspace_path)
-    
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -1082,19 +1106,20 @@ def tui(
         session_manager=session_manager,
         sandbox_manager=sandbox_manager,
     )
-    
+
     if enable_console:
         console.print(f"[green]✓[/green] Console: http://localhost:{console_port}")
-    
+
     async def run_with_console():
         tasks = [run_tui(agent_loop, bus, config)]
-        
+
         if enable_console:
             from vikingbot.console.server import start_console_server
+
             tasks.append(start_console_server(port=console_port))
-        
+
         await asyncio.gather(*tasks)
-    
+
     asyncio.run(run_with_console())
 
 

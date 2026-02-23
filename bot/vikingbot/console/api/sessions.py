@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
 from vikingbot.config.loader import load_config
+from vikingbot.config.schema import SessionKey
 from vikingbot.session.manager import SessionManager
 
 router = APIRouter()
@@ -36,11 +37,12 @@ async def list_sessions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/sessions/{session_key:path}")
-async def get_session(session_key: str):
+@router.get("/sessions/{session_key_file_name:path}")
+async def get_session(session_key_file_name: str):
     try:
         config = load_config()
         session_manager = SessionManager(config.workspace_path)
+        session_key = SessionKey.from_safe_name(session_key_file_name)
         session = session_manager._load(session_key)
         
         if not session:
@@ -62,11 +64,12 @@ async def get_session(session_key: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/sessions/{session_key:path}")
-async def delete_session(session_key: str):
+@router.delete("/sessions/{session_key_safe_name:path}")
+async def delete_session(session_key_safe_name: str):
     try:
         config = load_config()
         session_manager = SessionManager(config.workspace_path)
+        session_key = SessionKey.from_safe_name(session_key_safe_name)
         deleted = session_manager.delete(session_key)
         
         if not deleted:

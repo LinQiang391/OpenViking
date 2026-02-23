@@ -110,7 +110,7 @@ class TelegramChannel(BaseChannel):
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
         if not self.config.token:
-            logger.error("Telegram bot token not configured")
+            logger.exception("Telegram bot token not configured")
             return
         
         self._running = True
@@ -185,11 +185,11 @@ class TelegramChannel(BaseChannel):
             return
         
         # Stop typing indicator for this chat
-        self._stop_typing(msg.chat_id)
+        self._stop_typing(msg.session_key.chat_id)
         
         try:
             # chat_id should be the Telegram chat ID (integer)
-            chat_id = int(msg.chat_id)
+            chat_id = int(msg.session_key.chat_id)
             # Convert markdown to Telegram HTML
             html_content = _markdown_to_telegram_html(msg.content)
             await self._app.bot.send_message(
@@ -198,17 +198,17 @@ class TelegramChannel(BaseChannel):
                 parse_mode="HTML"
             )
         except ValueError:
-            logger.error(f"Invalid chat_id: {msg.chat_id}")
+            logger.exception(f"Invalid chat_id: {msg.session_key.chat_id}")
         except Exception as e:
             # Fallback to plain text if HTML parsing fails
             logger.warning(f"HTML parse failed, falling back to plain text: {e}")
             try:
                 await self._app.bot.send_message(
-                    chat_id=int(msg.chat_id),
+                    chat_id=int(msg.session_key.chat_id),
                     text=msg.content
                 )
             except Exception as e2:
-                logger.error(f"Error sending Telegram message: {e2}")
+                logger.exception(f"Error sending Telegram message: {e2}")
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
@@ -311,7 +311,7 @@ class TelegramChannel(BaseChannel):
                     
                 logger.debug(f"Downloaded {media_type} to {file_path}")
             except Exception as e:
-                logger.error(f"Failed to download media: {e}")
+                logger.exception(f"Failed to download media: {e}")
                 content_parts.append(f"[{media_type}: download failed]")
         
         content = "\n".join(content_parts) if content_parts else "[empty message]"
@@ -363,7 +363,7 @@ class TelegramChannel(BaseChannel):
     
     async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Log polling / handler errors instead of silently swallowing them."""
-        logger.error(f"Telegram error: {context.error}")
+        logger.exception(f"Telegram error: {context.error}")
 
     def _get_extension(self, media_type: str, mime_type: str | None) -> str:
         """Get file extension based on media type."""

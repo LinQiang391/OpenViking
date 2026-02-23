@@ -38,7 +38,7 @@ vikingbot/channels/
 class BaseChannel(ABC):
     name: str = "base"
     
-    def __init__(self, config: Any, bus: MessageBus)
+    def __init__(self, config: BaseChannelConfig, bus: MessageBus, workspace_path: Path | None = None)
     
     @abstractmethod
     async def start(self) -> None:
@@ -110,13 +110,81 @@ class ChannelManager:
 3. 启动所有通道
 4. 路由出站消息到对应通道
 
+### 3. SessionKey (会话键)
+
+**文件**: `vikingbot/config/schema.py`
+
+**职责**:
+- 唯一标识一个会话
+- 替代原来的 channel/chat_id 字符串
+
+**接口**:
+
+```python
+class SessionKey(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    type: str
+    channel_id: str
+    chat_id: str
+
+    def __hash__(self):
+        return hash((self.type, self.channel_id, self.chat_id))
+
+    def safe_name(self):
+        return f'{self.type}__{self.channel_id}__{self.chat_id}'
+
+    def channel_key(self):
+        return f'{self.type}__{self.channel_id}'
+
+    @staticmethod
+    def from_safe_name(safe_name: str):
+        file_name_split = safe_name.split('__')
+        return SessionKey(
+            type=file_name_split[0],
+            channel_id=file_name_split[1],
+            chat_id=file_name_split[2]
+        )
+```
+
+### 4. 消息事件
+
+**文件**: `vikingbot/bus/events.py`
+
+**InboundMessage**:
+
+```python
+@dataclass
+class InboundMessage:
+    """Message received from a chat channel."""
+    
+    sender_id: str  # User identifier
+    content: str  # Message text
+    session_key: SessionKey
+    timestamp: datetime = field(default_factory=datetime.now)
+    media: list[str] = field(default_factory=list)  # Media URLs
+    metadata: dict[str, Any] = field(default_factory=dict)  # Channel-specific data
+```
+
+**OutboundMessage**:
+
+```python
+@dataclass
+class OutboundMessage:
+    """Message to send to a chat channel."""
+    
+    session_key: SessionKey
+    content: str
+    reply_to: str | None = None
+    media: list[str] = field(default_factory=list)
+```
+
 ## 支持的通道
 
 ### Telegram
 
 **文件**: `vikingbot/channels/telegram.py`
 
-**配置类**: `TelegramConfig`
+**配置类**: `TelegramChannelConfig`
 
 **特性**:
 - Bot API 集成
@@ -126,18 +194,22 @@ class ChannelManager:
 
 **配置**:
 ```python
-class TelegramConfig(BaseModel):
-    enabled: bool = False
+class TelegramChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.TELEGRAM
     token: str = ""  # Bot token from @BotFather
     allow_from: list[str] = Field(default_factory=list)
     proxy: str | None = None  # HTTP/SOCKS5 proxy URL
+
+    def channel_id(self) -> str:
+        # Use the bot ID from token (before colon)
+        return self.token.split(":")[0] if ":" in self.token else self.token
 ```
 
 ### Discord
 
 **文件**: `vikingbot/channels/discord.py`
 
-**配置类**: `DiscordConfig`
+**配置类**: `DiscordChannelConfig`
 
 **特性**:
 - Bot API 集成
@@ -147,19 +219,23 @@ class TelegramConfig(BaseModel):
 
 **配置**:
 ```python
-class DiscordConfig(BaseModel):
-    enabled: bool = False
+class DiscordChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.DISCORD
     token: str = ""  # Bot token
     allow_from: list[str] = Field(default_factory=list)
     gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"
     intents: int = 37377  # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
+
+    def channel_id(self) -> str:
+        # Use first 20 chars of token as ID
+        return self.token[:20]
 ```
 
 ### WhatsApp
 
 **文件**: `vikingbot/channels/whatsapp.py`
 
-**配置类**: `WhatsAppConfig`
+**配置类**: `WhatsAppChannelConfig`
 
 **特性**:
 - 通过 Node.js bridge 连接
@@ -168,18 +244,22 @@ class DiscordConfig(BaseModel):
 
 **配置**:
 ```python
-class WhatsAppConfig(BaseModel):
-    enabled: bool = False
+class WhatsAppChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.WHATSAPP
     bridge_url: str = "ws://localhost:3001"
     bridge_token: str = ""  # Shared token for bridge auth
     allow_from: list[str] = Field(default_factory=list)
+
+    def channel_id(self) -> str:
+        # WhatsApp typically only has one instance
+        return "whatsapp"
 ```
 
 ### Feishu (飞书)
 
 **文件**: `vikingbot/channels/feishu.py`
 
-**配置类**: `FeishuConfig`
+**配置类**: `FeishuChannelConfig`
 
 **特性**:
 - WebSocket 长连接（无需公网 IP）
@@ -188,20 +268,27 @@ class WhatsAppConfig(BaseModel):
 
 **配置**:
 ```python
-class FeishuConfig(BaseModel):
-    enabled: bool = False
+class FeishuChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.FEISHU
     app_id: str = ""  # App ID from Feishu Open Platform
     app_secret: str = ""  # App Secret
     encrypt_key: str = ""  # Encrypt Key (optional for Long Connection)
     verification_token: str = ""  # Verification Token (optional)
     allow_from: list[str] = Field(default_factory=list)
+
+    def channel_id(self) -> str:
+        # Use app_id directly as the ID
+        return self.app_id
+
+    def channel_key(self):
+        return f'{self.type.value}__{self.channel_id()}'
 ```
 
 ### MoChat
 
 **文件**: `vikingbot/channels/mochat.py`
 
-**配置类**: `MochatConfig`
+**配置类**: `MochatChannelConfig`
 
 **特性**:
 - Socket.IO WebSocket 集成
@@ -217,8 +304,8 @@ class MochatMentionConfig(BaseModel):
 class MochatGroupRule(BaseModel):
     require_mention: bool = False
 
-class MochatConfig(BaseModel):
-    enabled: bool = False
+class MochatChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.MOCHAT
     base_url: str = "https://mochat.io"
     socket_url: str = ""
     socket_path: str = "/socket.io"
@@ -236,7 +323,6 @@ class MochatConfig(BaseModel):
     sessions: list[str] = Field(default_factory=list)
     panels: list[str] = Field(default_factory=list)
     allow_from: list[str] = Field(default_factory=list)
-)
     mention: MochatMentionConfig = Field(default_factory=MochatMentionConfig)
     groups: dict[str, MochatGroupRule] = Field(default_factory=dict)
     reply_delay_mode: str = "non-mention"  # off | non-mention
@@ -247,7 +333,7 @@ class MochatConfig(BaseModel):
 
 **文件**: `vikingbot/channels/dingtalk.py`
 
-**配置类**: `DingTalkConfig`
+**配置类**: `DingTalkChannelConfig`
 
 **特性**:
 - Stream 模式（无需公网 IP）
@@ -255,18 +341,22 @@ class MochatConfig(BaseModel):
 
 **配置**:
 ```python
-class DingTalkConfig(BaseModel):
-    enabled: bool = False
+class DingTalkChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.DINGTALK
     client_id: str = ""  # AppKey
     client_secret: str = ""  # AppSecret
     allow_from: list[str] = Field(default_factory=list)
+
+    def channel_id(self) -> str:
+        # Use client_id directly as the ID
+        return self.client_id
 ```
 
 ### Slack
 
 **文件**: `vikingbot/channels/slack.py`
 
-**配置类**: `SlackConfig`
+**配置类**: `SlackChannelConfig`
 
 **特性**:
 - Socket 模式（无需公网 URL）
@@ -280,8 +370,8 @@ class SlackDMConfig(BaseModel):
     policy: str = "open"  # "open" or "allowlist"
     allow_from: list[str] = Field(default_factory=list)
 
-class SlackConfig(BaseModel):
-    enabled: bool = False
+class SlackChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.SLACK
     mode: str = "socket"  # "socket" supported
     webhook_path: str = "/slack/events"
     bot_token: str = ""  # xoxb-...
@@ -290,13 +380,17 @@ class SlackConfig(BaseModel):
     group_policy: str = "mention"  # "mention", "open", "allowlist"
     group_allow_from: list[str] = Field(default_factory=list)
     dm: SlackDMConfig = Field(default_factory=SlackDMConfig)
+
+    def channel_id(self) -> str:
+        # Use first 20 chars of bot_token as ID
+        return self.bot_token[:20] if self.bot_token else "slack"
 ```
 
 ### Email
 
 **文件**: `vikingbot/channels/email.py`
 
-**配置类**: `EmailConfig`
+**配置类**: `EmailChannelConfig`
 
 **特性**:
 - IMAP 轮询接收
@@ -305,8 +399,8 @@ class SlackConfig(BaseModel):
 
 **配置**:
 ```python
-class EmailConfig(BaseModel):
-    enabled: bool = False
+class EmailChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.EMAIL
     consent_granted: bool = False  # Explicit owner permission
     
     # IMAP (receive)
@@ -333,13 +427,17 @@ class EmailConfig(BaseModel):
     max_body_chars: int = 12000
     subject_prefix: str = "Re: "
     allow_from: list[str] = Field(default_factory=list)
+
+    def channel_id(self) -> str:
+        # Use from_address directly as the ID
+        return self.from_address
 ```
 
 ### QQ
 
 **文件**: `vikingbot/channels/qq.py`
 
-**配置类**: `QQConfig`
+**配置类**: `QQChannelConfig`
 
 **特性**:
 - botpy SDK WebSocket 集成
@@ -348,11 +446,15 @@ class EmailConfig(BaseModel):
 
 **配置**:
 ```python
-class QQConfig(BaseModel):
-    enabled: bool = False
+class QQChannelConfig(BaseChannelConfig):
+    type: ChannelType = ChannelType.QQ
     app_id: str = ""  # 机器人 ID (AppID) from q.qq.com
     secret: str = ""  # 机器人密钥 (AppSecret) from q.qq.com
     allow_from: list[str] = Field(default_factory=list)
+
+    def channel_id(self) -> str:
+        # Use app_id directly as the ID
+        return self.app_id
 ```
 
 ## 消息流
@@ -361,12 +463,12 @@ class QQConfig(BaseModel):
 
 1. 通道接收消息
 2. 检查权限（`is_allowed()`）
-3. 创建 `InboundMessage`
+3. 创建 `InboundMessage`（包含 `SessionKey`）
 4. 发布到消息总线（`bus.publish_inbound()`）
 
 ### 出站消息流
 
-1. Agent 生成 `OutboundMessage`
+1. Agent 生成 `OutboundMessage`（包含 `SessionKey`）
 2. 发布到消息总线（`bus.publish_outbound()`）
 3. ChannelManager 路由到对应通道
 4. 通道调用 `send()` 发送消息
@@ -387,19 +489,32 @@ class QQConfig(BaseModel):
 
 ## 配置
 
+### BaseChannelConfig
+
+```python
+class BaseChannelConfig(BaseModel):
+    """Base channel configuration."""
+    type: ChannelType
+    enabled: bool = True
+
+    def channel_id(self) -> str:
+        raise 'default'
+```
+
 ### ChannelsConfig
 
 ```python
 class ChannelsConfig(BaseModel):
-    whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
-    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
-    discord: DiscordConfig = Field(default_factory=DiscordConfig)
-    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
-    mochat: MochatConfig = Field(default_factory=MochatConfig)
-    dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
-    email: EmailConfig = Field(default_factory=EmailConfig)
-    slack: SlackConfig = Field(default_factory=SlackConfig)
-    qq: QQConfig = Field(default_factory=QQConfig)
+    """Configuration for chat channels - array of channel configs."""
+    channels: list[Any] = Field(default_factory=list)
+    
+    def _parse_channel_config(self, config: dict[str, Any]) -> BaseChannelConfig:
+        """Parse a single channel config dict into the appropriate type."""
+        ...
+    
+    def get_all_channels(self) -> list[BaseChannelConfig]:
+        """Get all channel configs."""
+        ...
 ```
 
 ## 扩展点
@@ -505,18 +620,10 @@ class ChannelType(str, Enum):
 class BaseChannelConfig(BaseModel):
     """基础 channel 配置"""
     type: ChannelType
-    id: str | None = None  # 可选，用户自定义唯一标识
     enabled: bool = True
     
-    @property
-    def unique_id(self) -> str:
-        """获取唯一标识"""
-        if self.id:
-            return self.id
-        return self._generate_default_id()
-    
-    def _generate_default_id(self) -> str:
-        """生成默认唯一标识，子类实现"""
+    def channel_id(self) -> str:
+        """获取 channel ID，子类实现"""
         raise NotImplementedError()
 ```
 
@@ -531,9 +638,9 @@ class TelegramChannelConfig(BaseChannelConfig):
     allow_from: list[str] = Field(default_factory=list)
     proxy: str | None = None
     
-    def _generate_default_id(self) -> str:
+    def channel_id(self) -> str:
         bot_id = self.token.split(":")[0] if ":" in self.token else self.token
-        return f"telegram-{bot_id}"
+        return bot_id
 ```
 
 ##### FeishuChannelConfig
@@ -547,8 +654,8 @@ class FeishuChannelConfig(BaseChannelConfig):
     verification_token: str = ""
     allow_from: list[str] = Field(default_factory=list)
     
-    def _generate_default_id(self) -> str:
-        return f"feishu-{self.app_id}"
+    def channel_id(self) -> str:
+        return self.app_id
 ```
 
 #### 4. ChannelsConfig 更新
@@ -557,7 +664,7 @@ class FeishuChannelConfig(BaseChannelConfig):
 class ChannelsConfig(BaseModel):
     """新的 channels 配置"""
     
-    # 新配置：数组形式
+    # 配置：数组形式
     channels: list[Union[
         TelegramChannelConfig,
         FeishuChannelConfig,
@@ -570,35 +677,13 @@ class ChannelsConfig(BaseModel):
         QQChannelConfig,
     ]] = Field(default_factory=list)
     
-    # 旧配置：保留向后兼容
-    whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
-    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
-    discord: DiscordConfig = Field(default_factory=DiscordConfig)
-    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
-    mochat: MochatConfig = Field(default_factory=MochatConfig)
-    dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
-    email: EmailConfig = Field(default_factory=EmailConfig)
-    slack: SlackConfig = Field(default_factory=SlackConfig)
-    qq: QQConfig = Field(default_factory=QQConfig)
-    
     def get_all_channels(self) -> list[BaseChannelConfig]:
-        """获取所有 channels（新老格式合并）"""
-        result = list(self.channels)
+        """获取所有 channels"""
+        result = []
         
-        # 旧格式迁移
-        if self.telegram.enabled:
-            result.append(TelegramChannelConfig(
-                type=ChannelType.TELEGRAM,
-                id="telegram",
-                **self.telegram.model_dump()
-            ))
-        if self.feishu.enabled:
-            result.append(FeishuChannelConfig(
-                type=ChannelType.FEISHU,
-                id="feishu",
-                **self.feishu.model_dump()
-            ))
-        # ... 其他旧格式 ...
+        # 解析并返回所有 channel 配置
+        for config in self.channels:
+            result.append(self._parse_channel_config(config))
         
         return result
 ```
@@ -612,43 +697,22 @@ class ChannelsConfig(BaseModel):
   "channels": [
     {
       "type": "feishu",
-      "id": "feishu-hr",
       "enabled": true,
       "app_id": "cli_xxx",
       "app_secret": "xxx"
     },
     {
       "type": "feishu",
-      "id": "feishu-it",
       "enabled": true,
       "app_id": "cli_yyy",
       "app_secret": "yyy"
     },
     {
       "type": "telegram",
-      "id": "telegram-main",
       "enabled": true,
       "token": "xxx"
     }
   ]
-}
-```
-
-#### 旧格式（向后兼容）
-
-```json
-{
-  "channels": {
-    "feishu": {
-      "enabled": true,
-      "app_id": "cli_xxx",
-      "app_secret": "xxx"
-    },
-    "telegram": {
-      "enabled": true,
-      "token": "xxx"
-    }
-  }
 }
 ```
 
@@ -658,30 +722,28 @@ class ChannelsConfig(BaseModel):
 
 ```python
 def _init_channels(self) -> None:
-    self.channels: dict[str, BaseChannel] = {}  # key = channel.unique_id
+    self.channels: dict[str, BaseChannel] = {}  # key = channel.channel_id()
     
-    all_channel_configs = self.config.channels.get_all_channels()
+    all_channel_configs = self.config.channels_config.get_all_channels()
     
     for channel_config in all_channel_configs:
         if not channel_config.enabled:
             continue
             
-        channel_id = channel_config.unique_id
+        channel_id = channel_config.channel_id()
         
         # 根据 type 初始化对应的 channel
         if channel_config.type == ChannelType.FEISHU:
             from vikingbot.channels.feishu import FeishuChannel
             self.channels[channel_id] = FeishuChannel(
                 channel_config, 
-                self.bus,
-                channel_id=channel_id
+                self.bus
             )
         elif channel_config.type == ChannelType.TELEGRAM:
             from vikingbot.channels.telegram import TelegramChannel
             self.channels[channel_id] = TelegramChannel(
                 channel_config, 
                 self.bus,
-                channel_id=channel_id,
                 groq_api_key=self.config.providers.groq.api_key,
             )
         # ... 其他类型 ...
@@ -695,24 +757,31 @@ def _init_channels(self) -> None:
 
 ```python
 class BaseChannel:
-    def __init__(self, config, bus, channel_id: str):
+    def __init__(self, config: BaseChannelConfig, bus: MessageBus, workspace_path: Path | None = None):
         self.config = config
         self.bus = bus
-        self.channel_id = channel_id  # 新增：唯一标识
+        self._running = False
+        self.channel_type = config.type
+        self.channel_id = config.channel_id()
+        self.workspace_path = workspace_path
 ```
 
-#### Session Key 构建
+#### SessionKey 构建
 
-在各 channel 实现中，构建 session key 时使用 `{type}:{id}:{chat_id}` 格式：
+在各 channel 实现中，构建 SessionKey：
 
 ```python
 # 在各 channel 实现中
-session_key = f"{self.config.type}:{self.channel_id}:{chat_id}"
+session_key = SessionKey(
+    type=str(self.channel_type.value),
+    channel_id=self.channel_id,
+    chat_id=chat_id
+)
 ```
 
 ### Session Manager
 
-无需大改，session key 现在是 `{type}:{id}:{chat_id}`，自动就隔离了。
+Session Manager 现在使用 SessionKey 对象作为键，自动实现会话隔离。
 
 ### 目录结构变化
 
@@ -726,16 +795,19 @@ session_key = f"{self.config.type}:{self.channel_id}:{chat_id}"
 **之后**：
 ```
 ~/.vikingbot/sessions/
-├── feishu:hr:ou_xxx.jsonl
-├── feishu:it:ou_yyy.jsonl
-└── telegram:main:12345.jsonl
+├── feishu__cli_xxx__ou_xxx.jsonl
+├── feishu__cli_yyy__ou_yyy.jsonl
+└── telegram__bot123__12345.jsonl
 ```
 
 ### 修改文件清单
 
 | 文件 | 修改内容 |
 |------|----------|
-| `config/schema.py` | 新增 ChannelType、BaseChannelConfig 及各 channel 配置类，更新 ChannelsConfig |
-| `channels/manager.py` | 初始化逻辑改为遍历数组，key 用 unique_id |
-| `channels/base.py` | BaseChannel 添加 channel_id 参数 |
-| `channels/*.py`（各 channel） | 接收 channel_id 参数，构建 session key 时使用 |
+| `config/schema.py` | 新增 SessionKey、ChannelType、BaseChannelConfig 及各 channel 配置类，更新 ChannelsConfig |
+| `channels/manager.py` | 初始化逻辑改为遍历数组，key 用 channel_id() |
+| `channels/base.py` | BaseChannel 使用 BaseChannelConfig，添加 channel_id 和 channel_type |
+| `channels/*.py`（各 channel） | 使用 SessionKey，通过 channel_id() 获取唯一标识 |
+| `bus/events.py` | InboundMessage 和 OutboundMessage 使用 SessionKey |
+| `session/manager.py` | 使用 SessionKey 作为会话键 |
+| `agent/tools/base.py` | Tool 基类添加 set_session_key 方法 |

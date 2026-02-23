@@ -10,17 +10,16 @@ from loguru import logger
 from vikingbot.sandbox.base import SandboxBackend
 from vikingbot.sandbox.backends import register_backend
 
-if TYPE_CHECKING:
-    from vikingbot.config.schema import SandboxConfig
+
+from vikingbot.config.schema import SandboxConfig, SessionKey
 
 
 @register_backend("direct")
 class DirectBackend(SandboxBackend):
     """Direct backend that executes commands directly on the host."""
 
-    def __init__(self, config: "SandboxConfig", session_key: str, workspace: Path):
-        restrict_to_workspace = getattr(config.backends.direct, "restrict_to_workspace", False)
-        super().__init__(restrict_to_workspace=restrict_to_workspace)
+    def __init__(self, config: "SandboxConfig", session_key: SessionKey, workspace: Path):
+        super().__init__()
         self.config = config
         self.session_key = session_key
         self._workspace = workspace

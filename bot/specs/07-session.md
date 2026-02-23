@@ -28,7 +28,7 @@ vikingbot/session/
 ```python
 @dataclass
 class Session:
-    key: str  # channel:chat_id
+    key: SessionKey  # 会话键对象
     messages: list[dict[str, Any]]  # 消息列表
     created_at: datetime  # 会话创建时间
     updated_at: datetime  # 会话更新时间
@@ -50,7 +50,7 @@ class Session:
         """
         pass
     
-    def get_history(self, max_messages: int = = 50) -> list[dict[str, Any]]:
+    def get_history(self, max_messages: int = 50) -> list[dict[str, Any]]:
         """
         获取消息历史（LLM 格式）
         
@@ -92,21 +92,22 @@ class Session:
 
 ```python
 class SessionManager:
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, sandbox_manager: SandboxManager | None = None):
         """
         初始化会话管理器
         
         Args:
             workspace: 工作空间路径
+            sandbox_manager: 沙箱管理器（可选）
         """
         pass
     
-    def get_or_create(self, key: str) -> Session:
+    def get_or_create(self, key: SessionKey) -> Session:
         """
         获取现有会话或创建新会话
         
         Args:
-            key: 会话键（通常是 channel:chat_id）
+            key: 会话键（SessionKey 对象）
             
         Returns:
             会话对象
@@ -122,7 +123,7 @@ class SessionManager:
         """
         pass
     
-    def delete(self, key: str) -> bool:
+    def delete(self, key: SessionKey) -> bool:
         """
         删除会话
         
@@ -151,7 +152,7 @@ class SessionManager:
 会话以 JSONL 格式存储，每行一个（JSON 对象）：
 
 ```jsonl
-{"_type": "metadata", "created_at": "2026-02-13T12:00:00", "updated_at": "2026-02-13T12:30:00", "metadata": {}}
+{"_type": "metadata", "session_key": "type__channel_id__chat_id", "created_at": "2026-02-13T12:00:00", "updated_at": "2026-02-13T12:30:00", "metadata": {}}
 {"role": "user", "content": "Hello!", "timestamp": "2026-02-13T12:00:00"}
 {"role": "assistant", "content": "Hi there!", "timestamp": "2026-02-13T12:00:01"}
 {"role": "user", "content": "What's the weather?", "timestamp": "2026-02-13T12:01:00", "tools_used": ["web_search"]}
@@ -162,27 +163,53 @@ class SessionManager:
 - 易于追加（append-only）
 - 支持流式读取
 - 可以快速读取元数据行
+- SessionKey 信息存储在元数据中，支持从文件名恢复
 
 ### 文件位置
 
 ```
 ~/.vikingbot/sessions/
-├── telegram_123456.jsonl
-├── discord_789012.jsonl
-├── cli_direct.jsonl
+├── type__channel_id__chat_id.jsonl
+├── telegram__bot123__12345.jsonl
+├── feishu__cli_xxx__ou_yyy.jsonl
 └── ...
 ```
 
-## 会话键生成
+## 会话键 (SessionKey)
 
-**规则**:
-- 格式: `{channel}:{chat_id}`
-- 示例: `telegram:123456`, `discord:789012`, `cli:direct`
+**数据结构**:
+
+```python
+class SessionKey(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    type: str
+    channel_id: str
+    chat_id: str
+
+    def __hash__(self):
+        return hash((self.type, self.channel_id, self.chat_id))
+
+    def safe_name(self):
+        return f'{self.type}__{self.channel_id}__{self.chat_id}'
+
+    def channel_key(self):
+        return f'{self.type}__{self.channel_id}'
+
+    @staticmethod
+    def from_safe_name(safe_name: str):
+        file_name_split = safe_name.split('__')
+        return SessionKey(
+            type=file_name_split[0],
+            channel_id=file_name_split[1],
+            chat_id=file_name_split[2]
+        )
+```
 
 **用途**:
 - 唯一标识每个会话
-- 用于文件名（替换 `:` 为 `_`）
-- 用于会话查找
+- 用于文件名（使用 `safe_name()` 方法）
+- 用于会话查找和缓存
+- 支持从文件恢复 SessionKey 对象
 
 ## 会话生命周期
 
@@ -222,7 +249,7 @@ session_manager.delete(session_key)
 ### 缓存模式
 
 - 内存缓存避免重复读取文件
-- 使用字典存储活跃会话
+- 使用字典存储活跃会话（以 SessionKey 为键）
 - 修改时更新缓存
 
 ### 单例模式
@@ -233,7 +260,7 @@ session_manager.delete(session_key)
 ### 持久化策略
 
 - JSONL 格式便于追加
-- 元数据单独存储在第一行
+- 元数据单独存储在第一行（包含 SessionKey）
 - 消息逐行存储
 
 ## 配置
@@ -245,12 +272,11 @@ session_manager.delete(session_key)
 self.sessions_dir = ensure_dir(Path.home() / ".vikingbot" / "sessions")
 ```
 
-### 文件名安全
+### 文件名生成
 
 ```python
-# 使用 safe_filename() 处理会话键
-safe_key = safe_filename(key.replace(":", "_"))
-return self.sessions_dir / f"{safe_key}.jsonl"
+# 使用 SessionKey.safe_name() 方法
+return self.sessions_dir / f"{session_key.safe_name()}.jsonl"
 ```
 
 ## 扩展点
@@ -273,6 +299,7 @@ return self.sessions_dir / f"{safe_key}.jsonl"
 
 - 活跃会话缓存在内存中
 - 避免频繁的磁盘 I/O
+- 使用 SessionKey 的 hash 进行高效查找
 
 ### 延迟保存
 
@@ -283,6 +310,7 @@ return self.sessions_dir / f"{safe_key}.jsonl"
 
 - JSONL 格式支持高效追加
 - 避免读取整个文件
+- 元数据行包含 SessionKey，支持快速恢复
 
 ## 安全考虑
 
@@ -293,13 +321,15 @@ return self.sessions_dir / f"{safe_key}.jsonl"
 
 ### 路径安全
 
-- 使用 `safe_filename()` 处理会话键
+- 使用 `SessionKey.safe_name()` 处理文件名
 - 防止路径遍历攻击
+- 文件名使用双下划线分隔，避免特殊字符
 
 ### 数据验证
 
-- 使用 Pydantic 验证消息结构
+- 使用 Pydantic 验证 SessionKey 和消息结构
 - 防止无效数据损坏存储
+- 从文件加载时验证 SessionKey 格式
 
 ## 错误处理
 
@@ -307,13 +337,16 @@ return self.sessions_dir / f"{safe_key}.jsonl"
 
 - JSON 解析失败时返回空会话
 - 记录警告但不中断系统
+- 尝试从元数据恢复 SessionKey
 
 ### 保存失败
 
 - 文件写入失败时记录错误
 - 不中断主流程
+- 保持内存缓存有效
 
 ### 删除失败
 
 - 文件删除失败时返回 False
 - 记录错误
+- 从缓存中移除

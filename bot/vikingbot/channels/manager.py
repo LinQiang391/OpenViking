@@ -43,8 +43,6 @@ class ChannelManager:
             if not channel_config.enabled:
                 continue
             
-            channel_id = channel_config.unique_id
-            
             try:
                 channel = None
                 if channel_config.type == ChannelType.TELEGRAM:
@@ -52,9 +50,7 @@ class ChannelManager:
                     channel = TelegramChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         groq_api_key=self.config.providers.groq.api_key,
-                        workspace_path=workspace_path,
                     )
                 
                 elif channel_config.type == ChannelType.FEISHU:
@@ -62,7 +58,6 @@ class ChannelManager:
                     channel = FeishuChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
@@ -71,7 +66,6 @@ class ChannelManager:
                     channel = DiscordChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
@@ -80,7 +74,6 @@ class ChannelManager:
                     channel = WhatsAppChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
@@ -89,7 +82,6 @@ class ChannelManager:
                     channel = MochatChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
@@ -98,7 +90,6 @@ class ChannelManager:
                     channel = DingTalkChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
@@ -107,7 +98,6 @@ class ChannelManager:
                     channel = EmailChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
@@ -116,7 +106,6 @@ class ChannelManager:
                     channel = SlackChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
@@ -125,12 +114,11 @@ class ChannelManager:
                     channel = QQChannel(
                         channel_config,
                         self.bus,
-                        channel_id=channel_id,
                         workspace_path=workspace_path,
                     )
                 
                 if channel:
-                    self.channels[channel.name] = channel
+                    self.channels[channel.config.channel_key()] = channel
                     logger.info(f"Channel enabled: {channel.name}")
             
             except ImportError as e:
@@ -141,7 +129,7 @@ class ChannelManager:
         try:
             await channel.start()
         except Exception as e:
-            logger.error(f"Failed to start channel {name}: {e}")
+            logger.exception(f"Failed to start channel {name}: {e}")
 
     async def start_all(self) -> None:
         """Start all channels and the outbound dispatcher."""
@@ -179,7 +167,7 @@ class ChannelManager:
                 await channel.stop()
                 logger.info(f"Stopped {name} channel")
             except Exception as e:
-                logger.error(f"Error stopping {name}: {e}")
+                logger.exception(f"Error stopping {name}: {e}")
     
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
@@ -193,24 +181,14 @@ class ChannelManager:
                 )
                 
                 # Try exact match first
-                channel = self.channels.get(msg.channel)
-                
-                # If no exact match, try matching by channel type (e.g., "feishu" finds "feishu:cli_xxx")
-                if not channel and ":" not in msg.channel:
-                    # Search for channels that start with "{type}:"
-                    for channel_name, channel_obj in self.channels.items():
-                        if channel_name.startswith(f"{msg.channel}:"):
-                            channel = channel_obj
-                            logger.debug(f"Matched channel {msg.channel} to {channel_name}")
-                            break
-                
+                channel = self.channels.get(msg.session_key.channel_key())
                 if channel:
                     try:
                         await channel.send(msg)
                     except Exception as e:
-                        logger.error(f"Error sending to {msg.channel}: {e}")
+                        logger.exception(f"Error sending to {msg.session_key}: {e}")
                 else:
-                    logger.warning(f"Unknown channel: {msg.channel}. Available: {list(self.channels.keys())}")
+                    logger.warning(f"Unknown channel: {msg.session_key}. Available: {list(self.channels.keys())}")
                     
             except asyncio.TimeoutError:
                 continue

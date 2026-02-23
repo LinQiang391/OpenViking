@@ -83,32 +83,55 @@ Use for complex or time-consuming tasks that can run independently. The subagent
 
 ## Scheduled Reminders (Cron)
 
-Use the `exec` tool to create scheduled reminders with `vikingbot cron add`:
+Use the `cron` tool to create scheduled reminders:
 
 ### Set a recurring reminder
 ```bash
 # Every day at 9am
-vikingbot cron add --name "morning" --message "Good morning! ☀️" --cron "0 9 * * *"
+cron(
+    action="add",
+    name="morning",
+    message="Good morning! ☀️",
+    cron_expr="0 9 * * *"
+) 
 
 # Every 2 hours
-vikingbot cron add --name "water" --message "Drink water! 💧" --every 7200
+cron(
+    action="add",
+    name="water",
+    message="Drink water! 💧",
+    every_seconds=7200
+) 
 ```
 
 ### Set a one-time reminder
 ```bash
 # At a specific time (ISO format)
-vikingbot cron add --name "meeting" --message "Meeting starts now!" --at "2025-01-31T15:00:00"
+cron(
+    action="add",
+    name="meeting",
+    message="Meeting starts now!",
+    at="2025-01-31T15:00:00"
+) 
 ```
 
 ### Manage reminders
 ```bash
-vikingbot cron list              # List all jobs
-vikingbot cron remove <job_id>   # Remove a job
+# List all jobs
+cron(
+    action="list"
+) 
+vikingbot cron list              
+# Remove a job
+cron(
+    action="remove",
+    job_id=<job_id>
+) 
 ```
 
 ## Heartbeat Task Management
 
-The `HEARTBEAT.md` file in the workspace is checked every 30 minutes.
+The `HEARTBEAT.md` file in the workspace is checked at regular intervals
 Use file operations to manage periodic tasks:
 
 ### Add a heartbeat task
@@ -139,12 +162,3 @@ write_file(
     content="# Heartbeat Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n"
 )
 ```
-
----
-
-## Adding Custom Tools
-
-To add custom tools:
-1. Create a class that extends `Tool` in `vikingbot/agent/tools/`
-2. Implement `name`, `description`, `parameters`, and `execute`
-3. Register it in `AgentLoop._register_default_tools()`

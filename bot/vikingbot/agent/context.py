@@ -8,6 +8,7 @@ from typing import Any
 
 from vikingbot.agent.memory import MemoryStore
 from vikingbot.agent.skills import SkillsLoader
+from vikingbot.config.schema import SessionKey
 
 
 class ContextBuilder:
@@ -49,7 +50,7 @@ class ContextBuilder:
             ensure_workspace_templates(self.workspace)
             self._templates_ensured = True
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    async def build_system_prompt(self, session_key: SessionKey, skill_names: list[str] | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
         
@@ -65,15 +66,13 @@ class ContextBuilder:
         parts = []
         
         # Core identity
-        parts.append(self._get_identity())
+        parts.append(await self._get_identity(session_key))
         
         # Sandbox environment info
         if self.sandbox_manager:
-            sandbox_cwd = self.sandbox_manager.get_sandbox_cwd()
-            if self.sandbox_manager._is_direct_mode:
-                parts.append(f"## Environment\n\nYou are running directly on the host system. The workspace directory is `{sandbox_cwd}`.")
-            else:
-                parts.append(f"## Sandbox Environment\n\nYou are running in a sandboxed environment. All file operations and command execution are restricted to the sandbox directory.\nThe sandbox root directory is `{sandbox_cwd}` (use relative paths for all operations).")
+            sandbox_cwd = await self.sandbox_manager.get_sandbox_cwd(session_key)
+
+            parts.append(f"## Sandbox Environment\n\nYou are running in a sandboxed environment. All file operations and command execution are restricted to the sandbox directory.\nThe sandbox root directory is `{sandbox_cwd}` (use relative paths for all operations).")
         
         # Bootstrap files
         bootstrap = self._load_bootstrap_files()
@@ -105,7 +104,7 @@ Skills with available="false" need dependencies installed first - you can try in
         
         return "\n\n---\n\n".join(parts)
     
-    def _get_identity(self) -> str:
+    async def _get_identity(self, session_key: SessionKey) -> str:
         """Get the core identity section."""
         from datetime import datetime
         import time as _time
@@ -117,7 +116,7 @@ Skills with available="false" need dependencies installed first - you can try in
         
         # Determine workspace display based on sandbox state
         if self.sandbox_manager:
-            workspace_display = self.sandbox_manager.get_sandbox_cwd()
+            workspace_display = await self.sandbox_manager.get_sandbox_cwd(session_key)
         else:
             workspace_display = workspace_path
         
@@ -138,9 +137,9 @@ You are vikingbot, a helpful AI assistant. You have access to tools that allow y
 
 ## Workspace
 Your workspace is at: {workspace_display}
-- Long-term memory: /memory/MEMORY.md
-- History log: /memory/HISTORY.md (grep-searchable)
-- Custom skills: /skills/{{skill-name}}/SKILL.md
+- Long-term memory: memory/MEMORY.md
+- History log: memory/HISTORY.md (grep-searchable)
+- Custom skills: skills/{{skill-name}}/SKILL.md
 
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
@@ -148,7 +147,7 @@ For normal conversation, just respond with text - do not call the message tool.
 
 Always be helpful, accurate, and concise. When using tools, think step by step: what you know, what you need, and why you chose this tool.
 When remembering something important, write to /memory/MEMORY.md
-To recall past events, grep /memory/HISTORY.md"""
+To recall past events, grep memory/HISTORY.md"""
     
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
@@ -162,14 +161,13 @@ To recall past events, grep /memory/HISTORY.md"""
         
         return "\n\n".join(parts) if parts else ""
     
-    def build_messages(
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
         skill_names: list[str] | None = None,
         media: list[str] | None = None,
-        channel: str | None = None,
-        chat_id: str | None = None,
+        session_key: SessionKey | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -188,9 +186,9 @@ To recall past events, grep /memory/HISTORY.md"""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
-        if channel and chat_id:
-            system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
+        system_prompt = await self.build_system_prompt(session_key, skill_names)
+        if session_key.channel_id and session_key.chat_id:
+            system_prompt += f"\n\n## Current Session\nChannel: {session_key.type}:{session_key.channel_id}\nChat ID: {session_key.chat_id}"
         messages.append({"role": "system", "content": system_prompt})
 
         # History

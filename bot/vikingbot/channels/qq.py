@@ -21,8 +21,8 @@ except ImportError:
     botpy = None
     C2CMessage = None
 
-if TYPE_CHECKING:
-    from botpy.message import C2CMessage
+
+from botpy.message import C2CMessage
 
 
 def _make_bot_class(channel: "QQChannel") -> "type[botpy.Client]":
@@ -60,11 +60,11 @@ class QQChannel(BaseChannel):
     async def start(self) -> None:
         """Start the QQ bot."""
         if not QQ_AVAILABLE:
-            logger.error("QQ SDK not installed. Run: pip install qq-botpy")
+            logger.exception("QQ SDK not installed. Run: pip install qq-botpy")
             return
 
         if not self.config.app_id or not self.config.secret:
-            logger.error("QQ app_id and secret not configured")
+            logger.exception("QQ app_id and secret not configured")
             return
 
         self._running = True
@@ -103,12 +103,12 @@ class QQChannel(BaseChannel):
             return
         try:
             await self._client.api.post_c2c_message(
-                openid=msg.chat_id,
+                openid=msg.session_key.chat_id,
                 msg_type=0,
                 content=msg.content,
             )
         except Exception as e:
-            logger.error(f"Error sending QQ message: {e}")
+            logger.exception(f"Error sending QQ message: {e}")
 
     async def _on_message(self, data: "C2CMessage") -> None:
         """Handle incoming message from QQ."""
@@ -131,4 +131,4 @@ class QQChannel(BaseChannel):
                 metadata={"message_id": data.id},
             )
         except Exception as e:
-            logger.error(f"Error handling QQ message: {e}")
+            logger.exception(f"Error handling QQ message: {e}")

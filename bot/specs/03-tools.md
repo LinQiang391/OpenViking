@@ -28,11 +28,16 @@ vikingbot/agent/tools/
 **职责**:
 - 定义工具的抽象接口
 - 提供参数验证
+- 支持会话键设置
 
 **接口**:
 
 ```python
 class Tool(ABC):
+    def set_session_key(self, session_key: SessionKey) -> None
+        """设置工具的会话键"""
+        pass
+    
     @property
     @abstractmethod
     def name(self) -> str:
@@ -136,6 +141,7 @@ class ToolRegistry:
 - 支持工作空间限制
 - 路径规范化
 - 错误处理
+- 支持 SessionKey 进行沙箱隔离
 
 #### WriteFileTool
 
@@ -239,6 +245,7 @@ class ToolRegistry:
 - 超时控制
 - 工作目录限制
 - 输出大小限制
+- 支持 SessionKey 进行沙箱隔离
 
 ### 3. Web Tools (Web 工具)
 
@@ -307,19 +314,13 @@ class ToolRegistry:
     "content": {
       "type": "string",
       "description": "消息内容"
-    },
-    "channel": {
-      "type": "string",
-      "description": "目标通道（telegram, discord 等）"
-    },
-    "chatId": {
-      "type": "string",
-      "description": "目标聊天 ID"
     }
   },
-  "required": ["content", "channel", "chatId"]
+  "required": ["content"]
 }
 ```
+
+**注意**: 此工具现在使用通过 `set_session_key()` 设置的会话键，不再需要单独指定 channel 和 chatId 参数。
 
 ### 5. Spawn Tool (子代理生成工具)
 
@@ -347,6 +348,8 @@ class ToolRegistry:
 }
 ```
 
+**注意**: 此工具使用通过 `set_session_key()` 设置的会话键来确定结果返回的目标会话。
+
 ### 6. Cron Tool (定时任务工具)
 
 **文件**: `vikingbot/agent/tools/cron.py`
@@ -367,7 +370,7 @@ class ToolRegistry:
     },
     "name": {
       "type": "string",
-      "description": "任务名称"
+      "description": "任务名称（用于 add 操作）"
     },
     "message": {
       "type": "string",
@@ -382,6 +385,8 @@ class ToolRegistry:
 }
 ```
 
+**注意**: 此工具使用通过 `set_session_key()` 设置的会话键来确定定时任务触发时消息发送的目标会话。
+
 ## 工具注册流程
 
 1. **AgentLoop 初始化**:
@@ -392,7 +397,11 @@ class ToolRegistry:
    - 每个工具类被实例化
    - 通过 `registry.register(tool)` 注册
 
-3. **工具执行**:
+3. **会话键设置**:
+   - 处理消息时，调用 `tool.set_session_key(session_key)` 为每个工具设置会话键
+   - 工具使用会话键进行上下文感知的操作
+
+4. **工具执行**:
    - LLM 返回工具调用
    - `registry.execute(name, params)` 被调用
    - 工具的 `execute()` 方法执行
@@ -411,6 +420,10 @@ class ToolRegistry:
 ### 验证模式
 
 所有工具参数在执行前通过 JSON Schema 验证。
+
+### 依赖注入模式
+
+会话键通过 `set_session_key()` 注入到工具中，实现上下文感知。
 
 ## 扩展点
 
@@ -446,6 +459,7 @@ class MyCustomTool(Tool):
         }
     
     async def execute(self, **kwargs) -> str:
+        # 可以通过 self._session_key 访问会话键
         return f"Processed: {kwargs['input']}"
 ```
 
@@ -456,6 +470,7 @@ class MyCustomTool(Tool):
 - 文件工具支持 `allowed_dir` 参数
 - 限制所有文件操作在指定目录内
 - 防止路径遍历攻击
+- 使用 SessionKey 进行会话级别的沙箱隔离
 
 ### 超时控制
 
@@ -466,6 +481,12 @@ class MyCustomTool(Tool):
 
 - 所有参数通过 JSON Schema 验证
 - 防止无效输入导致错误
+
+### 会话隔离
+
+- 每个工具在执行前设置会话键
+- 工具使用会话键进行上下文隔离
+- 不同会话的工具操作互不干扰
 
 ## 性能优化
 
@@ -479,3 +500,9 @@ class MyCustomTool(Tool):
 - 工具执行错误被捕获并返回为字符串
 - 不中断主流程
 - 错误信息对 LLM 可见
+
+### 会话键缓存
+
+- 会话键在工具初始化后设置一次
+- 避免重复设置
+- 提高执行效率

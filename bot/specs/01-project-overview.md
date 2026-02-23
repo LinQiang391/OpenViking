@@ -240,8 +240,8 @@ LLM 提供商的单一事实来源：
   },
   "agents": {
     "defaults": {
-      "workspace": "~/.vikingbot/workspace",
-      "model": "anthropic/claude-opus-4-5",
+      "workspace": "~/.vikingbot/workspace/shared",
+      "model": "openai/doubao-seed-2-0-pro-260215",
       "maxTokens": 8192,
       "temperature": 0.7,
       "maxToolIterations": 20,

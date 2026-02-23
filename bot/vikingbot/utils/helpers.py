@@ -15,9 +15,7 @@ def get_data_path() -> Path:
     return ensure_dir(Path.home() / ".vikingbot")
 
 
-def get_sandbox_parent_path() -> Path:
-    """Get the parent directory for sandboxes (~/.vikingbot/workspace)."""
-    return ensure_dir(Path.home() / ".vikingbot" / "workspace")
+
 
 
 def get_source_workspace_path() -> Path:
@@ -30,7 +28,7 @@ def get_workspace_path(workspace: str | None = None, ensure_exists: bool = True)
     Get the workspace path.
     
     Args:
-        workspace: Optional workspace path. Defaults to ~/.vikingbot/workspace/default.
+        workspace: Optional workspace path. Defaults to ~/.vikingbot/workspace/shared.
         ensure_exists: If True, ensure the directory exists (creates it if necessary.
     
     Returns:
@@ -39,12 +37,10 @@ def get_workspace_path(workspace: str | None = None, ensure_exists: bool = True)
     if workspace:
         path = Path(workspace).expanduser()
     else:
-        path = Path.home() / ".vikingbot" / "workspace" / "default"
+        path = Path.home() / ".vikingbot" / "workspace" / "shared"
     
     if ensure_exists:
-        # For default workspace, use the same initialization logic as session workspaces
-        if not workspace:
-            ensure_workspace_templates(path)
+        ensure_workspace_templates(path)
         return ensure_dir(path)
     return path
 
@@ -131,20 +127,6 @@ This file stores important information that should persist across sessions.
     
     skills_dir = workspace / "skills"
     skills_dir.mkdir(exist_ok=True)
-
-
-def get_session_workspace_path(session_key: str) -> Path:
-    """
-    Get the workspace path for a specific session.
-    
-    Args:
-        session_key: The session key (format: "channel:chat_id")
-        
-    Returns:
-        Path to the session workspace directory
-    """
-    safe_key = safe_filename(session_key.replace(":", "_"))
-    return get_data_path() / "workspace" / safe_key
 
 
 def ensure_session_workspace(workspace_path: Path) -> Path:
@@ -255,27 +237,3 @@ def truncate_string(s: str, max_len: int = 100, suffix: str = "...") -> str:
         return s
     return s[: max_len - len(suffix)] + suffix
 
-
-def safe_filename(name: str) -> str:
-    """Convert a string to a safe filename."""
-    # Replace unsafe characters
-    unsafe = '<>:"/\\|?*'
-    for char in unsafe:
-        name = name.replace(char, "_")
-    return name.strip()
-
-
-def parse_session_key(key: str) -> tuple[str, str]:
-    """
-    Parse a session key into channel and chat_id.
-    
-    Args:
-        key: Session key in format "channel:chat_id"
-    
-    Returns:
-        Tuple of (channel, chat_id)
-    """
-    parts = key.split(":", 1)
-    if len(parts) != 2:
-        raise ValueError(f"Invalid session key: {key}")
-    return parts[0], parts[1]
