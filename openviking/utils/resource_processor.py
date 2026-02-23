@@ -17,6 +17,7 @@ from openviking_cli.utils.storage import StoragePath
 
 if TYPE_CHECKING:
     from openviking.parse.vlm import VLMProcessor
+    from openviking.server.identity import RequestContext
 
 logger = get_logger(__name__)
 
@@ -76,6 +77,7 @@ class ResourceProcessor:
         scope: str = "resources",
         user: Optional[str] = None,
         target: Optional[str] = None,
+        ctx: Optional["RequestContext"] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -147,6 +149,7 @@ class ResourceProcessor:
                 base_uri=located_uri,
                 source_path=parse_result.source_path,
                 source_format=parse_result.source_format,
+                ctx=ctx,
             )
         except Exception as e:
             result["status"] = "error"

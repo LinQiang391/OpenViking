@@ -43,6 +43,8 @@ class CollectionSchemas:
             "Description": "Unified context collection",
             "Fields": [
                 {"FieldName": "id", "FieldType": "string", "IsPrimaryKey": True},
+                {"FieldName": "account_id", "FieldType": "string"},
+                {"FieldName": "owner_space", "FieldType": "string"},
                 {"FieldName": "uri", "FieldType": "path"},
                 {"FieldName": "type", "FieldType": "string"},
                 {"FieldName": "context_type", "FieldType": "string"},
@@ -59,6 +61,8 @@ class CollectionSchemas:
                 {"FieldName": "abstract", "FieldType": "string"},
             ],
             "ScalarIndex": [
+                "account_id",
+                "owner_space",
                 "uri",
                 "type",
                 "context_type",

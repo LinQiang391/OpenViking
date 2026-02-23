@@ -54,7 +54,7 @@ class GlobRequest(BaseModel):
 @router.post("/find")
 async def find(
     request: FindRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Semantic search without session context."""
     service = get_service()
@@ -64,6 +64,7 @@ async def find(
         limit=request.limit,
         score_threshold=request.score_threshold,
         filter=request.filter,
+        ctx=ctx,
     )
     # Convert FindResult to dict if it has to_dict method
     if hasattr(result, "to_dict"):
@@ -74,7 +75,7 @@ async def find(
 @router.post("/search")
 async def search(
     request: SearchRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Semantic search with optional session context."""
     service = get_service()
@@ -82,7 +83,7 @@ async def search(
     # Get session if session_id provided
     session = None
     if request.session_id:
-        session = service.sessions.session(request.session_id)
+        session = service.sessions.session(request.session_id, ctx=ctx)
         await session.load()
 
     result = await service.search.search(
@@ -92,6 +93,7 @@ async def search(
         limit=request.limit,
         score_threshold=request.score_threshold,
         filter=request.filter,
+        ctx=ctx,
     )
     # Convert FindResult to dict if it has to_dict method
     if hasattr(result, "to_dict"):
@@ -102,7 +104,7 @@ async def search(
 @router.post("/grep")
 async def grep(
     request: GrepRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Content search with pattern."""
     service = get_service()
@@ -110,6 +112,7 @@ async def grep(
         request.uri,
         request.pattern,
         case_insensitive=request.case_insensitive,
+        ctx=ctx,
     )
     return Response(status="ok", result=result)
 
@@ -117,9 +120,9 @@ async def grep(
 @router.post("/glob")
 async def glob(
     request: GlobRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """File pattern matching."""
     service = get_service()
-    result = await service.fs.glob(request.pattern, uri=request.uri)
+    result = await service.fs.glob(request.pattern, uri=request.uri, ctx=ctx)
     return Response(status="ok", result=result)

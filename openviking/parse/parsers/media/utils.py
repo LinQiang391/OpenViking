@@ -5,7 +5,7 @@
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from openviking.prompts import render_prompt
 from openviking.storage.viking_fs import get_viking_fs
@@ -13,6 +13,9 @@ from openviking_cli.utils.config import get_openviking_config
 from openviking_cli.utils.logger import get_logger
 
 from .constants import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+
+if TYPE_CHECKING:
+    from openviking.server.identity import RequestContext
 
 logger = get_logger(__name__)
 
@@ -63,7 +66,10 @@ def get_media_base_uri(media_type: str) -> str:
 
 
 async def generate_image_summary(
-    image_uri: str, original_filename: str, llm_sem: Optional[asyncio.Semaphore] = None
+    image_uri: str,
+    original_filename: str,
+    llm_sem: Optional[asyncio.Semaphore] = None,
+    ctx: Optional["RequestContext"] = None,
 ) -> Dict[str, Any]:
     """
     Generate summary for an image file using VLM.
@@ -71,6 +77,7 @@ async def generate_image_summary(
     Args:
         image_uri: URI to the image file in VikingFS
         original_filename: Original filename of the image
+        ctx: Request context for multi-tenant path resolution
 
     Returns:
         Dictionary with "name" and "summary" keys
@@ -81,7 +88,7 @@ async def generate_image_summary(
 
     try:
         # Read image bytes
-        image_bytes = await viking_fs.read_file_bytes(image_uri)
+        image_bytes = await viking_fs.read_file_bytes(image_uri, ctx=ctx)
         if not isinstance(image_bytes, bytes):
             raise ValueError(f"Expected bytes for image file, got {type(image_bytes)}")
 
@@ -116,7 +123,10 @@ async def generate_image_summary(
 
 
 async def generate_audio_summary(
-    audio_uri: str, original_filename: str, llm_sem: Optional[asyncio.Semaphore] = None
+    audio_uri: str,
+    original_filename: str,
+    llm_sem: Optional[asyncio.Semaphore] = None,
+    ctx: Optional["RequestContext"] = None,
 ) -> Dict[str, Any]:
     """
     Generate summary for an audio file (placeholder).
@@ -124,6 +134,7 @@ async def generate_audio_summary(
     Args:
         audio_uri: URI to the audio file in VikingFS
         original_filename: Original filename of the audio
+        ctx: Request context for multi-tenant path resolution
 
     Returns:
         Dictionary with "name" and "summary" keys
@@ -135,7 +146,10 @@ async def generate_audio_summary(
 
 
 async def generate_video_summary(
-    video_uri: str, original_filename: str, llm_sem: Optional[asyncio.Semaphore] = None
+    video_uri: str,
+    original_filename: str,
+    llm_sem: Optional[asyncio.Semaphore] = None,
+    ctx: Optional["RequestContext"] = None,
 ) -> Dict[str, Any]:
     """
     Generate summary for a video file (placeholder).
@@ -143,6 +157,7 @@ async def generate_video_summary(
     Args:
         video_uri: URI to the video file in VikingFS
         original_filename: Original filename of the video
+        ctx: Request context for multi-tenant path resolution
 
     Returns:
         Dictionary with "name" and "summary" keys

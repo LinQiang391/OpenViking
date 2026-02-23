@@ -8,7 +8,7 @@ and rerank-based relevance scoring.
 """
 
 import heapq
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from openviking.models.embedder.base import EmbedResult
 from openviking.storage import VikingDBInterface
@@ -22,6 +22,9 @@ from openviking_cli.retrieve.types import (
 )
 from openviking_cli.utils.config import RerankConfig
 from openviking_cli.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from openviking.server.identity import RequestContext
 
 logger = get_logger(__name__)
 
@@ -76,6 +79,7 @@ class HierarchicalRetriever:
     async def retrieve(
         self,
         query: TypedQuery,
+        ctx: Optional["RequestContext"] = None,
         limit: int = 5,
         mode: RetrieverMode = RetrieverMode.THINKING,
         score_threshold: Optional[float] = None,
@@ -86,10 +90,10 @@ class HierarchicalRetriever:
         Execute hierarchical retrieval.
 
         Args:
-            user: User ID (for permission filtering)
+            query: Typed query
+            ctx: Request context for multi-tenant filtering
             score_threshold: Custom score threshold (overrides config)
             score_gte: True uses >=, False uses >
-            grep_patterns: Keyword match pattern list
             metadata_filter: Additional metadata filter conditions
         """
 
@@ -103,6 +107,9 @@ class HierarchicalRetriever:
         # Create context_type filter
         type_filter = {"op": "must", "field": "context_type", "conds": [query.context_type.value]}
 
+        # Build tenant filters
+        tenant_filters = self._build_tenant_filter(ctx) if ctx else []
+
         # Merge all filters
         filters_to_merge = [type_filter]
         if target_dirs:
@@ -114,6 +121,7 @@ class HierarchicalRetriever:
                 ],
             }
             filters_to_merge.append(target_filter)
+        filters_to_merge = filters_to_merge + tenant_filters
         if metadata_filter:
             filters_to_merge.append(metadata_filter)
 
@@ -139,7 +147,7 @@ class HierarchicalRetriever:
         if target_dirs:
             root_uris = target_dirs
         else:
-            root_uris = self._get_root_uris_for_type(query.context_type)
+            root_uris = self._get_root_uris_for_type(query.context_type, ctx=ctx)
 
         # Step 2: Global vector search to supplement starting points
         global_results = await self._global_vector_search(
@@ -410,8 +418,42 @@ class HierarchicalRetriever:
 
         return results
 
-    def _get_root_uris_for_type(self, context_type: ContextType) -> List[str]:
+    def _build_tenant_filter(self, ctx: "RequestContext") -> List[Dict]:
+        """Build tenant isolation filters based on request context role."""
+        from openviking.server.identity import Role
+
+        filters = []
+        if ctx.role == Role.ROOT:
+            pass  # No filter for root
+        elif ctx.role == Role.ADMIN:
+            filters.append({"op": "must", "field": "account_id", "conds": [ctx.account_id]})
+        else:  # USER
+            filters.append({"op": "must", "field": "account_id", "conds": [ctx.account_id]})
+            filters.append(
+                {
+                    "op": "must",
+                    "field": "owner_space",
+                    "conds": [ctx.user.user_space_name(), ctx.user.agent_space_name(), ""],
+                }
+            )
+        return filters
+
+    def _get_root_uris_for_type(
+        self, context_type: ContextType, ctx: Optional["RequestContext"] = None
+    ) -> List[str]:
         """Return starting directory URI list based on context_type."""
+        if ctx:
+            if context_type == ContextType.MEMORY:
+                return [
+                    f"viking://user/{ctx.user.user_space_name()}/memories",
+                    f"viking://agent/{ctx.user.agent_space_name()}/memories",
+                ]
+            elif context_type == ContextType.RESOURCE:
+                return ["viking://resources"]
+            elif context_type == ContextType.SKILL:
+                return [f"viking://agent/{ctx.user.agent_space_name()}/skills"]
+            return []
+        # Fallback for no ctx (embedded mode)
         if context_type == ContextType.MEMORY:
             return ["viking://user/memories", "viking://agent/memories"]
         elif context_type == ContextType.RESOURCE:

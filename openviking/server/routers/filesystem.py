@@ -24,7 +24,7 @@ async def ls(
     abs_limit: int = Query(256, description="Abstract limit (only for agent output)"),
     show_all_hidden: bool = Query(False, description="List all hidden files, like -a"),
     node_limit: int = Query(1000, description="Maximum number of nodes to list"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """List directory contents."""
     service = get_service()
@@ -36,6 +36,7 @@ async def ls(
         abs_limit=abs_limit,
         show_all_hidden=show_all_hidden,
         node_limit=node_limit,
+        ctx=ctx,
     )
     return Response(status="ok", result=result)
 
@@ -47,7 +48,7 @@ async def tree(
     abs_limit: int = Query(256, description="Abstract limit (only for agent output)"),
     show_all_hidden: bool = Query(False, description="List all hidden files, like -a"),
     node_limit: int = Query(1000, description="Maximum number of nodes to list"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Get directory tree."""
     service = get_service()
@@ -57,6 +58,7 @@ async def tree(
         abs_limit=abs_limit,
         show_all_hidden=show_all_hidden,
         node_limit=node_limit,
+        ctx=ctx,
     )
     return Response(status="ok", result=result)
 
@@ -64,12 +66,12 @@ async def tree(
 @router.get("/stat")
 async def stat(
     uri: str = Query(..., description="Viking URI"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Get resource status."""
     service = get_service()
     try:
-        result = await service.fs.stat(uri)
+        result = await service.fs.stat(uri, ctx=ctx)
         return Response(status="ok", result=result)
     except AGFSClientError as e:
         if "no such file or directory" in str(e).lower():
@@ -86,11 +88,11 @@ class MkdirRequest(BaseModel):
 @router.post("/mkdir")
 async def mkdir(
     request: MkdirRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Create directory."""
     service = get_service()
-    await service.fs.mkdir(request.uri)
+    await service.fs.mkdir(request.uri, ctx=ctx)
     return Response(status="ok", result={"uri": request.uri})
 
 
@@ -98,11 +100,11 @@ async def mkdir(
 async def rm(
     uri: str = Query(..., description="Viking URI"),
     recursive: bool = Query(False, description="Remove recursively"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Remove resource."""
     service = get_service()
-    await service.fs.rm(uri, recursive=recursive)
+    await service.fs.rm(uri, recursive=recursive, ctx=ctx)
     return Response(status="ok", result={"uri": uri})
 
 
@@ -116,9 +118,9 @@ class MvRequest(BaseModel):
 @router.post("/mv")
 async def mv(
     request: MvRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Move resource."""
     service = get_service()
-    await service.fs.mv(request.from_uri, request.to_uri)
+    await service.fs.mv(request.from_uri, request.to_uri, ctx=ctx)
     return Response(status="ok", result={"from": request.from_uri, "to": request.to_uri})

@@ -15,31 +15,31 @@ router = APIRouter(prefix="/api/v1/content", tags=["content"])
 @router.get("/read")
 async def read(
     uri: str = Query(..., description="Viking URI"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Read file content (L2)."""
     service = get_service()
-    result = await service.fs.read(uri)
+    result = await service.fs.read(uri, ctx=ctx)
     return Response(status="ok", result=result)
 
 
 @router.get("/abstract")
 async def abstract(
     uri: str = Query(..., description="Viking URI"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Read L0 abstract."""
     service = get_service()
-    result = await service.fs.abstract(uri)
+    result = await service.fs.abstract(uri, ctx=ctx)
     return Response(status="ok", result=result)
 
 
 @router.get("/overview")
 async def overview(
     uri: str = Query(..., description="Viking URI"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Read L1 overview."""
     service = get_service()
-    result = await service.fs.overview(uri)
+    result = await service.fs.overview(uri, ctx=ctx)
     return Response(status="ok", result=result)

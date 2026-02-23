@@ -13,6 +13,7 @@ from openviking_cli.exceptions import NotInitializedError
 from openviking_cli.utils import get_logger
 
 if TYPE_CHECKING:
+    from openviking.server.identity import RequestContext
     from openviking.session import Session
 
 logger = get_logger(__name__)
@@ -42,20 +43,9 @@ class SearchService:
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict] = None,
+        ctx: Optional["RequestContext"] = None,
     ) -> Any:
-        """Complex search with session context.
-
-        Args:
-            query: Query string
-            target_uri: Target directory URI
-            session: Session object for context
-            limit: Max results
-            score_threshold: Score threshold
-            filter: Metadata filters
-
-        Returns:
-            FindResult
-        """
+        """Complex search with session context."""
         viking_fs = self._ensure_initialized()
 
         session_info = None
@@ -69,6 +59,7 @@ class SearchService:
             limit=limit,
             score_threshold=score_threshold,
             filter=filter,
+            ctx=ctx,
         )
 
     async def find(
@@ -78,19 +69,9 @@ class SearchService:
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict] = None,
+        ctx: Optional["RequestContext"] = None,
     ) -> Any:
-        """Semantic search without session context.
-
-        Args:
-            query: Query string
-            target_uri: Target directory URI
-            limit: Max results
-            score_threshold: Score threshold
-            filter: Metadata filters
-
-        Returns:
-            FindResult
-        """
+        """Semantic search without session context."""
         viking_fs = self._ensure_initialized()
         return await viking_fs.find(
             query=query,
@@ -98,4 +79,5 @@ class SearchService:
             limit=limit,
             score_threshold=score_threshold,
             filter=filter,
+            ctx=ctx,
         )

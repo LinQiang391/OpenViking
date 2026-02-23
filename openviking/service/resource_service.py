@@ -6,7 +6,7 @@ Resource Service for OpenViking.
 Provides resource management operations: add_resource, add_skill, wait_processed.
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from openviking.storage import VikingDBManager
 from openviking.storage.queuefs import get_queue_manager
@@ -22,6 +22,9 @@ from openviking_cli.session.user_id import UserIdentifier
 from openviking_cli.utils import get_logger
 from openviking_cli.utils.uri import VikingURI
 
+if TYPE_CHECKING:
+    from openviking.server.identity import RequestContext
+
 logger = get_logger(__name__)
 
 
@@ -34,13 +37,11 @@ class ResourceService:
         viking_fs: Optional[VikingFS] = None,
         resource_processor: Optional[ResourceProcessor] = None,
         skill_processor: Optional[SkillProcessor] = None,
-        user: Optional[UserIdentifier] = None,
     ):
         self._vikingdb = vikingdb
         self._viking_fs = viking_fs
         self._resource_processor = resource_processor
         self._skill_processor = skill_processor
-        self._user = user
 
     def set_dependencies(
         self,
@@ -48,14 +49,12 @@ class ResourceService:
         viking_fs: VikingFS,
         resource_processor: ResourceProcessor,
         skill_processor: SkillProcessor,
-        user: Optional[UserIdentifier] = None,
     ) -> None:
         """Set dependencies (for deferred initialization)."""
         self._vikingdb = vikingdb
         self._viking_fs = viking_fs
         self._resource_processor = resource_processor
         self._skill_processor = skill_processor
-        self._user = user
 
     def _ensure_initialized(self) -> None:
         """Ensure all dependencies are initialized."""
@@ -74,6 +73,7 @@ class ResourceService:
         instruction: str = "",
         wait: bool = False,
         timeout: Optional[float] = None,
+        ctx: Optional["RequestContext"] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """Add resource to OpenViking (only supports resources scope).
@@ -108,6 +108,7 @@ class ResourceService:
             instruction=instruction,
             scope="resources",
             target=target,
+            ctx=ctx,
             **kwargs,
         )
 
@@ -133,23 +134,16 @@ class ResourceService:
         data: Any,
         wait: bool = False,
         timeout: Optional[float] = None,
+        ctx: Optional["RequestContext"] = None,
     ) -> Dict[str, Any]:
-        """Add skill to OpenViking.
-
-        Args:
-            data: Skill data (directory path, file path, string, or dict)
-            wait: Whether to wait for vectorization to complete
-            timeout: Wait timeout in seconds
-
-        Returns:
-            Processing result
-        """
+        """Add skill to OpenViking."""
         self._ensure_initialized()
+        user = ctx.user if ctx else UserIdentifier.the_default_user()
 
         result = await self._skill_processor.process_skill(
             data=data,
             viking_fs=self._viking_fs,
-            user=self._user,
+            user=user,
         )
 
         if wait:

@@ -14,6 +14,7 @@ from openviking.core.context import Context, ContextType, Vectorize
 from openviking.storage.queuefs.embedding_msg_converter import EmbeddingMsgConverter
 
 if TYPE_CHECKING:
+    from openviking.server.identity import RequestContext
     from openviking.storage import VikingDBManager
 
 
@@ -125,7 +126,6 @@ PRESET_DIRECTORIES: Dict[str, DirectoryDefinition] = {
 
 def get_context_type_for_uri(uri: str) -> str:
     """Determine context_type based on URI."""
-    uri = uri[:20]
     if "/memories" in uri:
         return ContextType.MEMORY.value
     elif "/resources" in uri:
@@ -146,15 +146,29 @@ class DirectoryInitializer:
     ):
         self.vikingdb = vikingdb
 
-    async def initialize_all(self) -> int:
-        """Initialize all global preset directories (skip user scope)."""
-        from openviking_cli.utils.logger import get_logger
+    async def initialize_all(self, ctx: Optional["RequestContext"] = None) -> int:
+        """Initialize all global preset directories (skip user/agent space-specific dirs).
 
-        logger = get_logger(__name__)
+        Creates: viking://resources, viking://session, viking://user, viking://agent
+        (scope root directories only, without space-specific subdirectories)
+        """
+
         count = 0
         for scope, root_defn in PRESET_DIRECTORIES.items():
-            if scope == "user":
-                logger.info("Skipping user scope (lazy initialization)")
+            if scope in ("user", "agent"):
+                # Only create scope root, not children (those are space-specific)
+                root_uri = f"viking://{scope}"
+                created = await self._ensure_directory(
+                    uri=root_uri,
+                    parent_uri=None,
+                    defn=DirectoryDefinition(
+                        path="", abstract=root_defn.abstract, overview=root_defn.overview
+                    ),
+                    scope=scope,
+                    ctx=ctx,
+                )
+                if created:
+                    count += 1
                 continue
 
             root_uri = f"viking://{scope}"
@@ -163,35 +177,82 @@ class DirectoryInitializer:
                 parent_uri=None,
                 defn=root_defn,
                 scope=scope,
+                ctx=ctx,
             )
             if created:
                 count += 1
 
-            count += await self._initialize_children(scope, root_defn.children, root_uri)
+            count += await self._initialize_children(scope, root_defn.children, root_uri, ctx=ctx)
         return count
 
-    async def initialize_user_directories(self) -> int:
-        """Initialize user preset directory tree.
+    async def initialize_user_directories(self, ctx: Optional["RequestContext"] = None) -> int:
+        """Initialize user space directory tree.
 
-        Returns:
-            Number of directories created
+        Creates: viking://user/{user_space}/memories/preferences, etc.
         """
         if "user" not in PRESET_DIRECTORIES:
             return 0
 
-        user_root_uri = "viking://user"
+        owner_space = ctx.user.user_space_name() if ctx else ""
         user_tree = PRESET_DIRECTORIES["user"]
+
+        if owner_space:
+            user_root_uri = f"viking://user/{owner_space}"
+        else:
+            user_root_uri = "viking://user"
 
         created = await self._ensure_directory(
             uri=user_root_uri,
-            parent_uri=None,
+            parent_uri="viking://user" if owner_space else None,
             defn=user_tree,
             scope="user",
+            ctx=ctx,
+            owner_space=owner_space,
         )
 
         count = 1 if created else 0
-        count += await self._initialize_children("user", user_tree.children, user_root_uri)
+        count += await self._initialize_children(
+            "user",
+            user_tree.children,
+            user_root_uri,
+            ctx=ctx,
+            owner_space=owner_space,
+        )
+        return count
 
+    async def initialize_agent_directories(self, ctx: Optional["RequestContext"] = None) -> int:
+        """Initialize agent space directory tree.
+
+        Creates: viking://agent/{agent_space}/memories/cases, etc.
+        """
+        if "agent" not in PRESET_DIRECTORIES:
+            return 0
+
+        owner_space = ctx.user.agent_space_name() if ctx else ""
+        agent_tree = PRESET_DIRECTORIES["agent"]
+
+        if owner_space:
+            agent_root_uri = f"viking://agent/{owner_space}"
+        else:
+            agent_root_uri = "viking://agent"
+
+        created = await self._ensure_directory(
+            uri=agent_root_uri,
+            parent_uri="viking://agent" if owner_space else None,
+            defn=agent_tree,
+            scope="agent",
+            ctx=ctx,
+            owner_space=owner_space,
+        )
+
+        count = 1 if created else 0
+        count += await self._initialize_children(
+            "agent",
+            agent_tree.children,
+            agent_root_uri,
+            ctx=ctx,
+            owner_space=owner_space,
+        )
         return count
 
     async def _ensure_directory(
@@ -200,16 +261,19 @@ class DirectoryInitializer:
         parent_uri: Optional[str],
         defn: DirectoryDefinition,
         scope: str,
+        ctx: Optional["RequestContext"] = None,
+        owner_space: str = "",
     ) -> bool:
         """Ensure directory exists, return whether newly created."""
         from openviking_cli.utils.logger import get_logger
 
         logger = get_logger(__name__)
+        account_id = ctx.account_id if ctx else ""
         created = False
         # 1. Ensure files exist in AGFS
-        if not await self._check_agfs_files_exist(uri):
+        if not await self._check_agfs_files_exist(uri, ctx=ctx):
             logger.debug(f"[VikingFS] Creating directory: {uri} for scope {scope}")
-            await self._create_agfs_structure(uri, defn.abstract, defn.overview)
+            await self._create_agfs_structure(uri, defn.abstract, defn.overview, ctx=ctx)
             created = True
         else:
             logger.debug(f"[VikingFS] Directory {uri} already exists")
@@ -231,6 +295,8 @@ class DirectoryInitializer:
                 is_leaf=False,
                 context_type=get_context_type_for_uri(uri),
                 abstract=defn.abstract,
+                account_id=account_id,
+                owner_space=owner_space,
             )
             context.set_vectorize(Vectorize(text=defn.overview))
             dir_emb_msg = EmbeddingMsgConverter.from_context(context)
@@ -238,13 +304,15 @@ class DirectoryInitializer:
             created = True
         return created
 
-    async def _check_agfs_files_exist(self, uri: str) -> bool:
+    async def _check_agfs_files_exist(
+        self, uri: str, ctx: Optional["RequestContext"] = None
+    ) -> bool:
         """Check if L0/L1 files exist in AGFS."""
         from openviking.storage.viking_fs import get_viking_fs
 
         try:
             viking_fs = get_viking_fs()
-            await viking_fs.abstract(uri)
+            await viking_fs.abstract(uri, ctx=ctx)
             return True
         except Exception:
             return False
@@ -254,6 +322,8 @@ class DirectoryInitializer:
         scope: str,
         children: List[DirectoryDefinition],
         parent_uri: str,
+        ctx: Optional["RequestContext"] = None,
+        owner_space: str = "",
     ) -> int:
         """Recursively initialize subdirectories."""
         count = 0
@@ -266,16 +336,30 @@ class DirectoryInitializer:
                 parent_uri=parent_uri,
                 defn=defn,
                 scope=scope,
+                ctx=ctx,
+                owner_space=owner_space,
             )
             if created:
                 count += 1
 
             if defn.children:
-                count += await self._initialize_children(scope, defn.children, uri)
+                count += await self._initialize_children(
+                    scope,
+                    defn.children,
+                    uri,
+                    ctx=ctx,
+                    owner_space=owner_space,
+                )
 
         return count
 
-    async def _create_agfs_structure(self, uri: str, abstract: str, overview: str) -> None:
+    async def _create_agfs_structure(
+        self,
+        uri: str,
+        abstract: str,
+        overview: str,
+        ctx: Optional["RequestContext"] = None,
+    ) -> None:
         """Create L0/L1 file structure for directory in AGFS."""
         from openviking.storage.viking_fs import get_viking_fs
 
@@ -284,4 +368,5 @@ class DirectoryInitializer:
             abstract=abstract,
             overview=overview,
             is_leaf=False,  # Preset directories can continue traversing downward
+            ctx=ctx,
         )

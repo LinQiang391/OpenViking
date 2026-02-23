@@ -35,18 +35,18 @@ class ImportRequest(BaseModel):
 @router.post("/export")
 async def export_ovpack(
     request: ExportRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Export context as .ovpack file."""
     service = get_service()
-    result = await service.pack.export_ovpack(request.uri, request.to)
+    result = await service.pack.export_ovpack(request.uri, request.to, ctx=ctx)
     return Response(status="ok", result={"file": result})
 
 
 @router.post("/import")
 async def import_ovpack(
     request: ImportRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Import .ovpack file."""
     service = get_service()
@@ -60,5 +60,6 @@ async def import_ovpack(
         request.parent,
         force=request.force,
         vectorize=request.vectorize,
+        ctx=ctx,
     )
     return Response(status="ok", result={"uri": result})

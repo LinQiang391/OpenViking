@@ -37,11 +37,11 @@ def _to_jsonable(value: Any) -> Any:
 
 @router.post("")
 async def create_session(
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Create a new session."""
     service = get_service()
-    session = service.sessions.session()
+    session = service.sessions.session(ctx=ctx)
     return Response(
         status="ok",
         result={
@@ -53,22 +53,22 @@ async def create_session(
 
 @router.get("")
 async def list_sessions(
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """List all sessions."""
     service = get_service()
-    result = await service.sessions.sessions()
+    result = await service.sessions.sessions(ctx=ctx)
     return Response(status="ok", result=result)
 
 
 @router.get("/{session_id}")
 async def get_session(
     session_id: str = Path(..., description="Session ID"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Get session details."""
     service = get_service()
-    session = service.sessions.session(session_id)
+    session = service.sessions.session(session_id, ctx=ctx)
     await session.load()
     return Response(
         status="ok",
@@ -83,33 +83,33 @@ async def get_session(
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str = Path(..., description="Session ID"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Delete a session."""
     service = get_service()
-    await service.sessions.delete(session_id)
+    await service.sessions.delete(session_id, ctx=ctx)
     return Response(status="ok", result={"session_id": session_id})
 
 
 @router.post("/{session_id}/commit")
 async def commit_session(
     session_id: str = Path(..., description="Session ID"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Commit a session (archive and extract memories)."""
     service = get_service()
-    result = await service.sessions.commit(session_id)
+    result = await service.sessions.commit(session_id, ctx=ctx)
     return Response(status="ok", result=result)
 
 
 @router.post("/{session_id}/extract")
 async def extract_session(
     session_id: str = Path(..., description="Session ID"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Extract memories from a session."""
     service = get_service()
-    result = await service.sessions.extract(session_id)
+    result = await service.sessions.extract(session_id, ctx=ctx)
     return Response(status="ok", result=_to_jsonable(result))
 
 
@@ -117,11 +117,11 @@ async def extract_session(
 async def add_message(
     request: AddMessageRequest,
     session_id: str = Path(..., description="Session ID"),
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Add a message to a session."""
     service = get_service()
-    session = service.sessions.session(session_id)
+    session = service.sessions.session(session_id, ctx=ctx)
     await session.load()
     session.add_message(request.role, [TextPart(text=request.content)])
     return Response(

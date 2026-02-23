@@ -60,6 +60,8 @@ class Context:
         session_id: Optional[str] = None,
         user: Optional[UserIdentifier] = None,
         id: Optional[str] = None,
+        account_id: str = "",
+        owner_space: str = "",
     ):
         """
         Initialize a Context object.
@@ -69,6 +71,8 @@ class Context:
         self.parent_uri = parent_uri
         self.is_leaf = is_leaf
         self.abstract = abstract
+        self.account_id = account_id
+        self.owner_space = owner_space
         self.context_type = context_type or self._derive_context_type()
         self.category = category or self._derive_category()
         self.created_at = created_at or datetime.now(timezone.utc)
@@ -82,29 +86,35 @@ class Context:
         self.vectorize = Vectorize(abstract)
 
     def _derive_context_type(self) -> str:
-        """Derive context type from URI prefix."""
-        if self.uri.startswith("viking://agent/skills"):
+        """Derive context type from URI prefix.
+        Handles both old format (viking://agent/skills) and new format (viking://agent/{space}/skills).
+        """
+        if "/skills" in self.uri:
             return "skill"
-        elif "memories" in self.uri:
+        elif "/memories" in self.uri:
             return "memory"
         else:
             return "resource"
 
     def _derive_category(self) -> str:
-        """Derive category from URI prefix."""
-        if self.uri.startswith("viking://agent/memories"):
-            if "patterns" in self.uri:
+        """Derive category from URI.
+        Handles both old format (viking://agent/memories/cases) and new format
+        (viking://agent/{space}/memories/cases). Matches on keywords in the URI path.
+        """
+        uri = self.uri
+        if uri.startswith("viking://agent/") and "/memories" in uri:
+            if "/patterns" in uri:
                 return "patterns"
-            elif "cases" in self.uri:
+            elif "/cases" in uri:
                 return "cases"
-        elif self.uri.startswith("viking://user/memories"):
-            if "profile" in self.uri:
+        elif uri.startswith("viking://user/") and "/memories" in uri:
+            if "/profile" in uri:
                 return "profile"
-            if "preferences" in self.uri:
+            if "/preferences" in uri:
                 return "preferences"
-            if "entities" in self.uri:
+            if "/entities" in uri:
                 return "entities"
-            elif "events" in self.uri:
+            elif "/events" in uri:
                 return "events"
         return ""
 
@@ -132,6 +142,8 @@ class Context:
 
         data = {
             "id": self.id,
+            "account_id": self.account_id,
+            "owner_space": self.owner_space,
             "uri": self.uri,
             "parent_uri": self.parent_uri,
             "is_leaf": self.is_leaf,
@@ -182,6 +194,8 @@ class Context:
             meta=data.get("meta", {}),
             session_id=data.get("session_id"),
             user=data.get("user"),
+            account_id=data.get("account_id", ""),
+            owner_space=data.get("owner_space", ""),
         )
         obj.id = data.get("id", obj.id)
         obj.vector = data.get("vector")

@@ -80,8 +80,43 @@ async def delete_account(
     account_id: str = Path(..., description="Account ID"),
     ctx: RequestContext = require_role(Role.ROOT),
 ):
-    """Delete an account."""
+    """Delete an account and cascade-clean its storage data."""
+    from openviking.server.dependencies import get_service
+    from openviking.storage.viking_fs import get_viking_fs
+    from openviking_cli.session.user_id import UserIdentifier
+
     manager = _get_api_key_manager(request)
+
+    # Cascade clean: remove AGFS data for the account
+    try:
+        viking_fs = get_viking_fs()
+        # Build a synthetic ctx for the account being deleted
+        cleanup_user = UserIdentifier(account_id, "cleanup", "cleanup")
+        cleanup_ctx = RequestContext(user=cleanup_user, role=Role.ROOT)
+        await viking_fs.rm("viking://", recursive=True, ctx=cleanup_ctx)
+    except Exception as e:
+        from openviking_cli.utils import get_logger
+
+        get_logger(__name__).warning(f"Failed to clean AGFS data for account {account_id}: {e}")
+
+    # Cascade clean: remove VectorDB records for the account
+    try:
+        service = get_service()
+        if service.vikingdb_manager:
+            records = await service.vikingdb_manager.filter(
+                collection="context",
+                filter={"op": "must", "field": "account_id", "conds": [account_id]},
+                limit=10000,
+            )
+            if records:
+                ids = [r["id"] for r in records if "id" in r]
+                if ids:
+                    await service.vikingdb_manager.delete("context", ids)
+    except Exception as e:
+        from openviking_cli.utils import get_logger
+
+        get_logger(__name__).warning(f"Failed to clean VectorDB data for account {account_id}: {e}")
+
     await manager.delete_account(account_id)
     return Response(status="ok", result={"deleted": True})
 

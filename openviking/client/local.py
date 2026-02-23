@@ -5,11 +5,14 @@
 Implements BaseClient interface using direct service calls (embedded mode).
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from openviking.service import OpenVikingService
 from openviking_cli.client.base import BaseClient
 from openviking_cli.session.user_id import UserIdentifier
+
+if TYPE_CHECKING:
+    from openviking.server.identity import RequestContext
 
 
 class LocalClient(BaseClient):
@@ -21,17 +24,28 @@ class LocalClient(BaseClient):
     def __init__(
         self,
         path: Optional[str] = None,
+        user: Optional[UserIdentifier] = None,
     ):
         """Initialize LocalClient.
 
         Args:
             path: Local storage path (overrides ov.conf storage path)
+            user: User identifier (defaults to the_default_user)
         """
+        self._user = user or UserIdentifier.the_default_user()
         self._service = OpenVikingService(
             path=path,
-            user=UserIdentifier.the_default_user(),
+            user=self._user,
         )
-        self._user = self._service.user
+        self._ctx: Optional["RequestContext"] = None
+
+    def _get_ctx(self) -> Optional["RequestContext"]:
+        """Get the default request context for this local client."""
+        if self._ctx is None:
+            from openviking.server.identity import RequestContext, Role
+
+            self._ctx = RequestContext(user=self._user, role=Role.ROOT)
+        return self._ctx
 
     @property
     def service(self) -> OpenVikingService:
@@ -68,6 +82,7 @@ class LocalClient(BaseClient):
             instruction=instruction,
             wait=wait,
             timeout=timeout,
+            ctx=self._get_ctx(),
             **kwargs,
         )
 
@@ -82,6 +97,7 @@ class LocalClient(BaseClient):
             data=data,
             wait=wait,
             timeout=timeout,
+            ctx=self._get_ctx(),
         )
 
     async def wait_processed(self, timeout: Optional[float] = None) -> Dict[str, Any]:
@@ -107,6 +123,7 @@ class LocalClient(BaseClient):
             output=output,
             abs_limit=abs_limit,
             show_all_hidden=show_all_hidden,
+            ctx=self._get_ctx(),
         )
 
     async def tree(
@@ -124,37 +141,38 @@ class LocalClient(BaseClient):
             abs_limit=abs_limit,
             show_all_hidden=show_all_hidden,
             node_limit=node_limit,
+            ctx=self._get_ctx(),
         )
 
     async def stat(self, uri: str) -> Dict[str, Any]:
         """Get resource status."""
-        return await self._service.fs.stat(uri)
+        return await self._service.fs.stat(uri, ctx=self._get_ctx())
 
     async def mkdir(self, uri: str) -> None:
         """Create directory."""
-        await self._service.fs.mkdir(uri)
+        await self._service.fs.mkdir(uri, ctx=self._get_ctx())
 
     async def rm(self, uri: str, recursive: bool = False) -> None:
         """Remove resource."""
-        await self._service.fs.rm(uri, recursive=recursive)
+        await self._service.fs.rm(uri, recursive=recursive, ctx=self._get_ctx())
 
     async def mv(self, from_uri: str, to_uri: str) -> None:
         """Move resource."""
-        await self._service.fs.mv(from_uri, to_uri)
+        await self._service.fs.mv(from_uri, to_uri, ctx=self._get_ctx())
 
     # ============= Content Reading =============
 
     async def read(self, uri: str) -> str:
         """Read file content."""
-        return await self._service.fs.read(uri)
+        return await self._service.fs.read(uri, ctx=self._get_ctx())
 
     async def abstract(self, uri: str) -> str:
         """Read L0 abstract."""
-        return await self._service.fs.abstract(uri)
+        return await self._service.fs.abstract(uri, ctx=self._get_ctx())
 
     async def overview(self, uri: str) -> str:
         """Read L1 overview."""
-        return await self._service.fs.overview(uri)
+        return await self._service.fs.overview(uri, ctx=self._get_ctx())
 
     # ============= Search =============
 
@@ -173,6 +191,7 @@ class LocalClient(BaseClient):
             limit=limit,
             score_threshold=score_threshold,
             filter=filter,
+            ctx=self._get_ctx(),
         )
 
     async def search(
@@ -187,7 +206,7 @@ class LocalClient(BaseClient):
         """Semantic search with optional session context."""
         session = None
         if session_id:
-            session = self._service.sessions.session(session_id)
+            session = self._service.sessions.session(session_id, ctx=self._get_ctx())
             await session.load()
         return await self._service.search.search(
             query=query,
@@ -196,35 +215,38 @@ class LocalClient(BaseClient):
             limit=limit,
             score_threshold=score_threshold,
             filter=filter,
+            ctx=self._get_ctx(),
         )
 
     async def grep(self, uri: str, pattern: str, case_insensitive: bool = False) -> Dict[str, Any]:
         """Content search with pattern."""
-        return await self._service.fs.grep(uri, pattern, case_insensitive=case_insensitive)
+        return await self._service.fs.grep(
+            uri, pattern, case_insensitive=case_insensitive, ctx=self._get_ctx()
+        )
 
     async def glob(self, pattern: str, uri: str = "viking://") -> Dict[str, Any]:
         """File pattern matching."""
-        return await self._service.fs.glob(pattern, uri=uri)
+        return await self._service.fs.glob(pattern, uri=uri, ctx=self._get_ctx())
 
     # ============= Relations =============
 
     async def relations(self, uri: str) -> List[Any]:
         """Get relations for a resource."""
-        return await self._service.relations.relations(uri)
+        return await self._service.relations.relations(uri, ctx=self._get_ctx())
 
     async def link(self, from_uri: str, to_uris: Union[str, List[str]], reason: str = "") -> None:
         """Create link between resources."""
-        await self._service.relations.link(from_uri, to_uris, reason)
+        await self._service.relations.link(from_uri, to_uris, reason, ctx=self._get_ctx())
 
     async def unlink(self, from_uri: str, to_uri: str) -> None:
         """Remove link between resources."""
-        await self._service.relations.unlink(from_uri, to_uri)
+        await self._service.relations.unlink(from_uri, to_uri, ctx=self._get_ctx())
 
     # ============= Sessions =============
 
     async def create_session(self) -> Dict[str, Any]:
         """Create a new session."""
-        session = self._service.sessions.session()
+        session = self._service.sessions.session(ctx=self._get_ctx())
         return {
             "session_id": session.session_id,
             "user": session.user.to_dict(),
@@ -232,11 +254,11 @@ class LocalClient(BaseClient):
 
     async def list_sessions(self) -> List[Any]:
         """List all sessions."""
-        return await self._service.sessions.sessions()
+        return await self._service.sessions.sessions(ctx=self._get_ctx())
 
     async def get_session(self, session_id: str) -> Dict[str, Any]:
         """Get session details."""
-        session = self._service.sessions.session(session_id)
+        session = self._service.sessions.session(session_id, ctx=self._get_ctx())
         await session.load()
         return {
             "session_id": session.session_id,
@@ -246,15 +268,15 @@ class LocalClient(BaseClient):
 
     async def delete_session(self, session_id: str) -> None:
         """Delete a session."""
-        await self._service.sessions.delete(session_id)
+        await self._service.sessions.delete(session_id, ctx=self._get_ctx())
 
     async def commit_session(self, session_id: str) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
-        return await self._service.sessions.commit(session_id)
+        return await self._service.sessions.commit(session_id, ctx=self._get_ctx())
 
     async def add_message(self, session_id: str, role: str, content: str) -> Dict[str, Any]:
         """Add a message to a session."""
-        session = self._service.sessions.session(session_id)
+        session = self._service.sessions.session(session_id, ctx=self._get_ctx())
         await session.load()
         session.add_message(role, content)
         return {
@@ -266,7 +288,7 @@ class LocalClient(BaseClient):
 
     async def export_ovpack(self, uri: str, to: str) -> str:
         """Export context as .ovpack file."""
-        return await self._service.pack.export_ovpack(uri, to)
+        return await self._service.pack.export_ovpack(uri, to, ctx=self._get_ctx())
 
     async def import_ovpack(
         self,
@@ -277,7 +299,11 @@ class LocalClient(BaseClient):
     ) -> str:
         """Import .ovpack file."""
         return await self._service.pack.import_ovpack(
-            file_path, parent, force=force, vectorize=vectorize
+            file_path,
+            parent,
+            force=force,
+            vectorize=vectorize,
+            ctx=self._get_ctx(),
         )
 
     # ============= Debug =============

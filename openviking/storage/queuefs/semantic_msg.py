@@ -28,6 +28,7 @@ class SemanticMsg:
     id: str  # UUID
     uri: str  # Directory URI
     context_type: str  # resource, memory, skill
+    account_id: str = ""  # Multi-tenant account identifier
     status: str = "pending"  # pending/processing/completed
     timestamp: int = int(datetime.now().timestamp())
     recursive: bool = True  # Whether to recursively process subdirectories
@@ -37,11 +38,13 @@ class SemanticMsg:
         uri: str,
         context_type: str,
         recursive: bool = True,
+        account_id: str = "",
     ):
         self.id = str(uuid4())
         self.uri = uri
         self.context_type = context_type
         self.recursive = recursive
+        self.account_id = account_id
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert object to dictionary."""
@@ -72,6 +75,7 @@ class SemanticMsg:
             uri=uri,
             context_type=context_type,
             recursive=data.get("recursive", True),
+            account_id=data.get("account_id", ""),
         )
         if "id" in data and data["id"]:
             obj.id = data["id"]

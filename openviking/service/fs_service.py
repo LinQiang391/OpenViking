@@ -6,11 +6,14 @@ File System Service for OpenViking.
 Provides file system operations: ls, mkdir, rm, mv, tree, stat, read, abstract, overview, grep, glob.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from openviking.storage.viking_fs import VikingFS
 from openviking_cli.exceptions import NotInitializedError
 from openviking_cli.utils import get_logger
+
+if TYPE_CHECKING:
+    from openviking.server.identity import RequestContext
 
 logger = get_logger(__name__)
 
@@ -40,18 +43,9 @@ class FSService:
         abs_limit: int = 256,
         show_all_hidden: bool = False,
         node_limit: int = 1000,
+        ctx: Optional["RequestContext"] = None,
     ) -> List[Any]:
-        """List directory contents.
-
-        Args:
-            uri: Viking URI
-            recursive: List all subdirectories recursively
-            simple: Return only relative path list
-            output: str = "original" or "agent"
-            abs_limit: int = 256 if output == "agent" else ignore
-            show_all_hidden: bool = False (list all hidden files, like -a)
-            node_limit: int = 1000 (maximum number of nodes to list)
-        """
+        """List directory contents."""
         viking_fs = self._ensure_initialized()
 
         if simple:
@@ -76,27 +70,34 @@ class FSService:
                 abs_limit=abs_limit,
                 show_all_hidden=show_all_hidden,
                 node_limit=node_limit,
+                ctx=ctx,
             )
         else:
             entries = await viking_fs.ls(
-                uri, output=output, abs_limit=abs_limit, show_all_hidden=show_all_hidden
+                uri,
+                output=output,
+                abs_limit=abs_limit,
+                show_all_hidden=show_all_hidden,
+                ctx=ctx,
             )
         return entries
 
-    async def mkdir(self, uri: str) -> None:
+    async def mkdir(self, uri: str, ctx: Optional["RequestContext"] = None) -> None:
         """Create directory."""
         viking_fs = self._ensure_initialized()
-        await viking_fs.mkdir(uri)
+        await viking_fs.mkdir(uri, ctx=ctx)
 
-    async def rm(self, uri: str, recursive: bool = False) -> None:
+    async def rm(
+        self, uri: str, recursive: bool = False, ctx: Optional["RequestContext"] = None
+    ) -> None:
         """Remove resource."""
         viking_fs = self._ensure_initialized()
-        await viking_fs.rm(uri, recursive=recursive)
+        await viking_fs.rm(uri, recursive=recursive, ctx=ctx)
 
-    async def mv(self, from_uri: str, to_uri: str) -> None:
+    async def mv(self, from_uri: str, to_uri: str, ctx: Optional["RequestContext"] = None) -> None:
         """Move resource."""
         viking_fs = self._ensure_initialized()
-        await viking_fs.mv(from_uri, to_uri)
+        await viking_fs.mv(from_uri, to_uri, ctx=ctx)
 
     async def tree(
         self,
@@ -105,6 +106,7 @@ class FSService:
         abs_limit: int = 128,
         show_all_hidden: bool = False,
         node_limit: int = 1000,
+        ctx: Optional["RequestContext"] = None,
     ) -> List[Dict[str, Any]]:
         """Get directory tree."""
         viking_fs = self._ensure_initialized()
@@ -114,34 +116,43 @@ class FSService:
             abs_limit=abs_limit,
             show_all_hidden=show_all_hidden,
             node_limit=node_limit,
+            ctx=ctx,
         )
 
-    async def stat(self, uri: str) -> Dict[str, Any]:
+    async def stat(self, uri: str, ctx: Optional["RequestContext"] = None) -> Dict[str, Any]:
         """Get resource status."""
         viking_fs = self._ensure_initialized()
-        return await viking_fs.stat(uri)
+        return await viking_fs.stat(uri, ctx=ctx)
 
-    async def read(self, uri: str) -> str:
+    async def read(self, uri: str, ctx: Optional["RequestContext"] = None) -> str:
         """Read file content."""
         viking_fs = self._ensure_initialized()
-        return await viking_fs.read_file(uri)
+        return await viking_fs.read_file(uri, ctx=ctx)
 
-    async def abstract(self, uri: str) -> str:
+    async def abstract(self, uri: str, ctx: Optional["RequestContext"] = None) -> str:
         """Read L0 abstract (.abstract.md)."""
         viking_fs = self._ensure_initialized()
-        return await viking_fs.abstract(uri)
+        return await viking_fs.abstract(uri, ctx=ctx)
 
-    async def overview(self, uri: str) -> str:
+    async def overview(self, uri: str, ctx: Optional["RequestContext"] = None) -> str:
         """Read L1 overview (.overview.md)."""
         viking_fs = self._ensure_initialized()
-        return await viking_fs.overview(uri)
+        return await viking_fs.overview(uri, ctx=ctx)
 
-    async def grep(self, uri: str, pattern: str, case_insensitive: bool = False) -> Dict:
+    async def grep(
+        self,
+        uri: str,
+        pattern: str,
+        case_insensitive: bool = False,
+        ctx: Optional["RequestContext"] = None,
+    ) -> Dict:
         """Content search."""
         viking_fs = self._ensure_initialized()
-        return await viking_fs.grep(uri, pattern, case_insensitive=case_insensitive)
+        return await viking_fs.grep(uri, pattern, case_insensitive=case_insensitive, ctx=ctx)
 
-    async def glob(self, pattern: str, uri: str = "viking://") -> Dict:
+    async def glob(
+        self, pattern: str, uri: str = "viking://", ctx: Optional["RequestContext"] = None
+    ) -> Dict:
         """File pattern matching."""
         viking_fs = self._ensure_initialized()
-        return await viking_fs.glob(pattern, uri=uri)
+        return await viking_fs.glob(pattern, uri=uri, ctx=ctx)

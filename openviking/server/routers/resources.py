@@ -57,7 +57,7 @@ def _cleanup_temp_files(temp_dir: Path, max_age_hours: int = 1):
 @router.post("/resources/temp_upload")
 async def temp_upload(
     file: UploadFile = File(...),
-    _: bool = Depends(verify_api_key),
+    _: RequestContext = Depends(get_request_context),
 ):
     """Upload a temporary file for add_resource or import_ovpack."""
     config = get_openviking_config()
@@ -80,7 +80,7 @@ async def temp_upload(
 @router.post("/resources")
 async def add_resource(
     request: AddResourceRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Add resource to OpenViking."""
     service = get_service()
@@ -96,6 +96,7 @@ async def add_resource(
         instruction=request.instruction,
         wait=request.wait,
         timeout=request.timeout,
+        ctx=ctx,
     )
     return Response(status="ok", result=result)
 
@@ -103,7 +104,7 @@ async def add_resource(
 @router.post("/skills")
 async def add_skill(
     request: AddSkillRequest,
-    _ctx: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
 ):
     """Add skill to OpenViking."""
     service = get_service()
@@ -111,5 +112,6 @@ async def add_skill(
         data=request.data,
         wait=request.wait,
         timeout=request.timeout,
+        ctx=ctx,
     )
     return Response(status="ok", result=result)

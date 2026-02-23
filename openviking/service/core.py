@@ -214,10 +214,17 @@ class OpenVikingService:
         )
 
         # Initialize directories
+        # Build a RequestContext from self._user so directories are created under
+        # the correct account / space paths even in embedded mode.
+        from openviking.server.identity import RequestContext, Role
+
+        init_ctx = RequestContext(user=self._user, role=Role.ROOT)
+
         directory_initializer = DirectoryInitializer(vikingdb=self._vikingdb_manager)
-        await directory_initializer.initialize_all()
-        count = await directory_initializer.initialize_user_directories()
-        logger.info(f"Initialized {count} directories for user scope")
+        await directory_initializer.initialize_all(ctx=init_ctx)
+        count = await directory_initializer.initialize_user_directories(ctx=init_ctx)
+        count += await directory_initializer.initialize_agent_directories(ctx=init_ctx)
+        logger.info(f"Initialized {count} directories for user/agent scope")
 
         # Initialize processors
         self._resource_processor = ResourceProcessor(vikingdb=self._vikingdb_manager)
@@ -239,13 +246,11 @@ class OpenVikingService:
             viking_fs=self._viking_fs,
             resource_processor=self._resource_processor,
             skill_processor=self._skill_processor,
-            user=self.user,
         )
         self._session_service.set_dependencies(
             vikingdb=self._vikingdb_manager,
             viking_fs=self._viking_fs,
             session_compressor=self._session_compressor,
-            user=self.user,
         )
         self._debug_service.set_dependencies(
             vikingdb=self._vikingdb_manager,
