@@ -64,7 +64,7 @@ EOF
   OPENVIKING_CLI_CONFIG_FILE="$TMPDIR/cli.conf" openviking "$@"
 }
 
-# Helper: extract field from --json output
+# Helper: extract field from JSON output
 jq_field() {
   python3 -c "import sys,json; print(json.load(sys.stdin)['result']['$1'])"
 }
@@ -90,7 +90,7 @@ ovcli "$ROOT_KEY" health
 # Returns the admin user's API key.
 
 section "2. Create Account 'acme' (first admin: alice)"
-RESULT=$(ovcli "$ROOT_KEY" --json admin create-account acme --admin alice)
+RESULT=$(ovcli "$ROOT_KEY" -o json admin create-account acme --admin alice)
 echo "$RESULT" | python3 -m json.tool
 ALICE_KEY=$(echo "$RESULT" | jq_field "user_key")
 ok "Alice (ADMIN) key: ${ALICE_KEY:0:16}..."
@@ -103,7 +103,7 @@ ok "Alice (ADMIN) key: ${ALICE_KEY:0:16}..."
 # Register a user in the account. Default role is "user".
 
 section "3. Register User 'bob' as USER (by ROOT)"
-RESULT=$(ovcli "$ROOT_KEY" --json admin register-user acme bob --role user)
+RESULT=$(ovcli "$ROOT_KEY" -o json admin register-user acme bob --role user)
 echo "$RESULT" | python3 -m json.tool
 BOB_KEY=$(echo "$RESULT" | jq_field "user_key")
 ok "Bob (USER) key: ${BOB_KEY:0:16}..."
@@ -114,7 +114,7 @@ ok "Bob (USER) key: ${BOB_KEY:0:16}..."
 # ADMIN users can register new users within their own account.
 
 section "4. Register User 'charlie' as USER (by ADMIN alice)"
-RESULT=$(ovcli "$ALICE_KEY" --json admin register-user acme charlie --role user)
+RESULT=$(ovcli "$ALICE_KEY" -o json admin register-user acme charlie --role user)
 echo "$RESULT" | python3 -m json.tool
 CHARLIE_KEY=$(echo "$RESULT" | jq_field "user_key")
 ok "Charlie (USER) key: ${CHARLIE_KEY:0:16}..."
@@ -158,7 +158,7 @@ ok "Bob (ADMIN) can list users in acme"
 
 section "8. Regenerate Charlie's Key"
 info "Old key: ${CHARLIE_KEY:0:16}..."
-RESULT=$(ovcli "$ROOT_KEY" --json admin regenerate-key acme charlie)
+RESULT=$(ovcli "$ROOT_KEY" -o json admin regenerate-key acme charlie)
 echo "$RESULT" | python3 -m json.tool
 NEW_CHARLIE_KEY=$(echo "$RESULT" | jq_field "user_key")
 ok "New key: ${NEW_CHARLIE_KEY:0:16}... (old key invalidated)"
@@ -232,7 +232,7 @@ expect_fail "Charlie's old key rejected" \
 # ── 10f. ADMIN cross-account isolation ──
 # Create a second account to test that ADMIN of one account cannot manage another
 info "10f. ADMIN cross-account isolation:"
-RESULT=$(ovcli "$ROOT_KEY" --json admin create-account beta --admin beta_admin)
+RESULT=$(ovcli "$ROOT_KEY" -o json admin create-account beta --admin beta_admin)
 BETA_ADMIN_KEY=$(echo "$RESULT" | jq_field "user_key")
 ok "Created account 'beta' for cross-account test"
 

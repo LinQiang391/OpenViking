@@ -208,9 +208,9 @@ The default output format can be set in `ovcli.conf`:
 }
 ```
 
-### Script Mode (`--json`)
+### Script Mode (`-o json`)
 
-Compact JSON with status wrapper, suitable for scripting. Overrides `--output`:
+Compact JSON with status wrapper (when `--compact` is true, which is the default), suitable for scripting:
 
 **Success**
 

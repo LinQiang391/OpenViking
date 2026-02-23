@@ -57,7 +57,7 @@ def _cleanup_temp_files(temp_dir: Path, max_age_hours: int = 1):
 @router.post("/resources/temp_upload")
 async def temp_upload(
     file: UploadFile = File(...),
-    _: RequestContext = Depends(get_request_context),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """Upload a temporary file for add_resource or import_ovpack."""
     config = get_openviking_config()
