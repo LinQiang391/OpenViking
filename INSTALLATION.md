@@ -75,10 +75,11 @@ EOF
 
 **Replace `your-api-key` with your actual API key.**
 
+> **For AI agents:** Before creating the config, prompt the user for their preferred model provider and API credentials. Required: embedding provider/model/api_key/api_base, and VLM provider/model/api_key/api_base. Use the user's provided values instead of the placeholder defaults above.
+
 Start the server in background:
 
 ```bash
-export OPENVIKING_CONFIG_DIR=~/.openviking
 nohup openviking-server > ~/.openviking/server.log 2>&1 &
 ```
 
@@ -205,7 +206,6 @@ uv tool install openviking
 curl -fsSL .../install.sh | bash  # ov CLI
 
 # Start server (background)
-export OPENVIKING_CONFIG_DIR=~/.openviking
 nohup openviking-server > ~/.openviking/server.log 2>&1 &
 
 # Stop server

@@ -200,7 +200,7 @@ export OPENVIKING_CLI_CONFIG_FILE=~/.openviking/ovcli.conf
 
 ### Using pip (not recommended)
 
-While uv is the recommended method, you can also use pip:
+**Note:** uv is the recommended and only supported installation method. pip installation is not officially supported and may not work correctly. The following is provided for reference only:
 
 ```bash
 pip install openviking
@@ -253,7 +253,6 @@ mkdir -p ~/.openviking
 # Create ov.conf with your API keys
 
 # 5. Start with nohup
-export OPENVIKING_CONFIG_DIR=~/.openviking
 nohup openviking-server > /data/openviking.log 2>&1 &
 ```
 
@@ -326,7 +325,7 @@ docker run -d \
   -v $(pwd)/data:/data \
   -v $(pwd)/ov.conf:/app/ov.conf \
   -e OPENVIKING_CONFIG_FILE=/app/ov.conf \
-  volcengine/openviking:latest
+  ghcr.io/volcengine/openviking:main
 ```
 
 ### Docker Compose
@@ -336,7 +335,7 @@ version: '3.8'
 
 services:
   openviking:
-    image: volcengine/openviking:latest
+    image: ghcr.io/volcengine/openviking:main
     ports:
       - "1933:1933"
     volumes:
@@ -366,7 +365,7 @@ spec:
     spec:
       containers:
       - name: openviking
-        image: volcengine/openviking:latest
+        image: ghcr.io/volcengine/openviking:main
         ports:
         - containerPort: 1933
         env:
