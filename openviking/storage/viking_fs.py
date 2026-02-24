@@ -129,8 +129,7 @@ class VikingFS:
         self, uri: str, offset: int = 0, size: int = -1, ctx: Optional["RequestContext"] = None
     ) -> bytes:
         """Read file"""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         result = self.agfs.read(path, offset, size)
         if isinstance(result, bytes):
             return result
@@ -143,8 +142,7 @@ class VikingFS:
         self, uri: str, data: Union[bytes, str], ctx: Optional["RequestContext"] = None
     ) -> str:
         """Write file"""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         if isinstance(data, str):
             data = data.encode("utf-8")
         return self.agfs.write(path, data)
@@ -157,8 +155,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> None:
         """Create directory."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         # Always ensure parent directories exist before creating this directory
         await self._ensure_parent_dirs(path)
 
@@ -175,9 +172,8 @@ class VikingFS:
         self, uri: str, recursive: bool = False, ctx: Optional["RequestContext"] = None
     ) -> Dict[str, Any]:
         """Delete file/directory + recursively update vector index."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
-        uris_to_delete = await self._collect_uris(path, recursive, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
+        uris_to_delete = await self._collect_uris(path, recursive, ctx=ctx)
         result = self.agfs.rm(path, recursive)
         if uris_to_delete:
             await self._delete_from_vector_store(uris_to_delete)
@@ -187,10 +183,9 @@ class VikingFS:
         self, old_uri: str, new_uri: str, ctx: Optional["RequestContext"] = None
     ) -> Dict[str, Any]:
         """Move file/directory + recursively update vector index."""
-        account_id = ctx.account_id if ctx else ""
-        old_path = self._uri_to_path(old_uri, account_id=account_id)
-        new_path = self._uri_to_path(new_uri, account_id=account_id)
-        uris_to_move = await self._collect_uris(old_path, recursive=True, account_id=account_id)
+        old_path = self._uri_to_path(old_uri, ctx=ctx)
+        new_path = self._uri_to_path(new_uri, ctx=ctx)
+        uris_to_move = await self._collect_uris(old_path, recursive=True, ctx=ctx)
         result = self.agfs.mv(old_path, new_path)
         if uris_to_move:
             await self._update_vector_store_uris(uris_to_move, old_uri, new_uri)
@@ -204,8 +199,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> Dict:
         """Content search by pattern or keywords."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         result = self.agfs.grep(path, pattern, True, case_insensitive)
         if result.get("matches", None) is None:
             result["matches"] = []
@@ -213,7 +207,7 @@ class VikingFS:
         for match in result.get("matches", []):
             new_match = {
                 "line": match.get("line"),
-                "uri": self._path_to_uri(match.get("file"), account_id=account_id),
+                "uri": self._path_to_uri(match.get("file"), ctx=ctx),
                 "content": match.get("content"),
             }
             new_matches.append(new_match)
@@ -226,8 +220,7 @@ class VikingFS:
 
         example: {'name': 'resources', 'size': 128, 'mode': 2147484141, 'modTime': '2026-02-10T21:26:02.934376379+08:00', 'isDir': True, 'meta': {'Name': 'localfs', 'Type': 'local', 'Content': {'local_path': '...'}}}
         """
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         return self.agfs.stat(path)
 
     async def glob(
@@ -298,15 +291,10 @@ class VikingFS:
             show_all_hidden: bool = False (list all hidden files, like -a)
             ctx: Request context for multi-tenant path resolution
         """
-        account_id = ctx.account_id if ctx else ""
         if output == "original":
-            return await self._tree_original(
-                uri, show_all_hidden, node_limit, account_id=account_id, ctx=ctx
-            )
+            return await self._tree_original(uri, show_all_hidden, node_limit, ctx=ctx)
         elif output == "agent":
-            return await self._tree_agent(
-                uri, abs_limit, show_all_hidden, node_limit, account_id=account_id, ctx=ctx
-            )
+            return await self._tree_agent(uri, abs_limit, show_all_hidden, node_limit, ctx=ctx)
         else:
             raise ValueError(f"Invalid output format: {output}")
 
@@ -315,24 +303,23 @@ class VikingFS:
         uri: str,
         show_all_hidden: bool = False,
         node_limit: int = 1000,
-        account_id: str = "",
         ctx: Optional["RequestContext"] = None,
     ) -> List[Dict[str, Any]]:
         """Recursively list all contents (original format)."""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         all_entries = []
 
         async def _walk(current_path: str, current_rel: str):
             if len(all_entries) >= node_limit:
                 return
-            for entry in self._ls_entries(current_path, account_id=account_id):
+            for entry in self._ls_entries(current_path, ctx=ctx):
                 if len(all_entries) >= node_limit:
                     break
                 name = entry.get("name", "")
                 if name in [".", ".."]:
                     continue
                 rel_path = f"{current_rel}/{name}" if current_rel else name
-                entry_uri = self._path_to_uri(f"{current_path}/{name}", account_id=account_id)
+                entry_uri = self._path_to_uri(f"{current_path}/{name}", ctx=ctx)
                 if ctx and not self._is_accessible(entry_uri, ctx):
                     continue
                 new_entry = dict(entry)
@@ -355,25 +342,24 @@ class VikingFS:
         abs_limit: int,
         show_all_hidden: bool = False,
         node_limit: int = 1000,
-        account_id: str = "",
         ctx: Optional["RequestContext"] = None,
     ) -> List[Dict[str, Any]]:
         """Recursively list all contents (agent format with abstracts)."""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         all_entries = []
         now = datetime.now()
 
         async def _walk(current_path: str, current_rel: str):
             if len(all_entries) >= node_limit:
                 return
-            for entry in self._ls_entries(current_path, account_id=account_id):
+            for entry in self._ls_entries(current_path, ctx=ctx):
                 if len(all_entries) >= node_limit:
                     break
                 name = entry.get("name", "")
                 if name in [".", ".."]:
                     continue
                 rel_path = f"{current_rel}/{name}" if current_rel else name
-                entry_uri = self._path_to_uri(f"{current_path}/{name}", account_id=account_id)
+                entry_uri = self._path_to_uri(f"{current_path}/{name}", ctx=ctx)
                 if ctx and not self._is_accessible(entry_uri, ctx):
                     continue
                 new_entry = {
@@ -404,8 +390,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> str:
         """Read directory's L0 summary (.abstract.md)."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         info = self.agfs.stat(path)
         if not info.get("isDir"):
             raise ValueError(f"{uri} is not a directory")
@@ -419,8 +404,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> str:
         """Read directory's L1 overview (.overview.md)."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         info = self.agfs.stat(path)
         if not info.get("isDir"):
             raise ValueError(f"{uri} is not a directory")
@@ -658,8 +642,7 @@ class VikingFS:
         if isinstance(uris, str):
             uris = [uris]
 
-        account_id = ctx.account_id if ctx else ""
-        from_path = self._uri_to_path(from_uri, account_id=account_id)
+        from_path = self._uri_to_path(from_uri, ctx=ctx)
 
         entries = await self._read_relation_table(from_path)
         existing_ids = {e.id for e in entries}
@@ -678,8 +661,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> None:
         """Delete relation."""
-        account_id = ctx.account_id if ctx else ""
-        from_path = self._uri_to_path(from_uri, account_id=account_id)
+        from_path = self._uri_to_path(from_uri, ctx=ctx)
 
         try:
             entries = await self._read_relation_table(from_path)
@@ -711,8 +693,7 @@ class VikingFS:
         self, uri: str, ctx: Optional["RequestContext"] = None
     ) -> List[RelationEntry]:
         """Get relation table."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         return await self._read_relation_table(path)
 
     # ========== URI Conversion ==========
@@ -733,8 +714,9 @@ class VikingFS:
             prefix = prefix[:-1]
         return f"{prefix}_{hash_suffix}"
 
-    def _uri_to_path(self, uri: str, account_id: str = "") -> str:
+    def _uri_to_path(self, uri: str, ctx: Optional["RequestContext"] = None) -> str:
         """viking://user/memories/preferences/test -> /local/{account_id}/user/memories/preferences/test"""
+        account_id = ctx.account_id if ctx else ""
         remainder = uri[len("viking://") :].strip("/")
         if not remainder:
             return f"/local/{account_id}" if account_id else "/local"
@@ -749,13 +731,16 @@ class VikingFS:
     _INTERNAL_DIRS = {"_system"}
     _ROOT_PATH = "/local"
 
-    def _ls_entries(self, path: str, account_id: str = "") -> List[Dict[str, Any]]:
+    def _ls_entries(
+        self, path: str, ctx: Optional["RequestContext"] = None
+    ) -> List[Dict[str, Any]]:
         """List directory entries, filtering out internal directories.
 
         At account root level (/local/{account_id}), uses VALID_SCOPES whitelist.
         At root level (/local) without account_id, uses VALID_SCOPES whitelist.
         At other levels, uses _INTERNAL_DIRS blacklist.
         """
+        account_id = ctx.account_id if ctx else ""
         entries = self.agfs.ls(path)
         if account_id and path == f"/local/{account_id}":
             return [e for e in entries if e.get("name") in VikingURI.VALID_SCOPES]
@@ -763,8 +748,9 @@ class VikingFS:
             return [e for e in entries if e.get("name") in VikingURI.VALID_SCOPES]
         return [e for e in entries if e.get("name") not in self._INTERNAL_DIRS]
 
-    def _path_to_uri(self, path: str, account_id: str = "") -> str:
+    def _path_to_uri(self, path: str, ctx: Optional["RequestContext"] = None) -> str:
         """/local/{account_id}/user/memories/preferences -> viking://user/memories/preferences"""
+        account_id = ctx.account_id if ctx else ""
         if path.startswith("viking://"):
             return path
         elif path.startswith("/local/"):
@@ -842,13 +828,15 @@ class VikingFS:
 
     # ========== Vector Sync Helper Methods ==========
 
-    async def _collect_uris(self, path: str, recursive: bool, account_id: str = "") -> List[str]:
+    async def _collect_uris(
+        self, path: str, recursive: bool, ctx: Optional["RequestContext"] = None
+    ) -> List[str]:
         """Recursively collect all URIs (for rm/mv)."""
         uris = []
 
         async def _collect(p: str):
             try:
-                for entry in self._ls_entries(p, account_id=account_id):
+                for entry in self._ls_entries(p, ctx=ctx):
                     name = entry.get("name", "")
                     if name in [".", ".."]:
                         continue
@@ -857,7 +845,7 @@ class VikingFS:
                         if recursive:
                             await _collect(full_path)
                     else:
-                        uris.append(self._path_to_uri(full_path, account_id=account_id))
+                        uris.append(self._path_to_uri(full_path, ctx=ctx))
             except Exception:
                 pass
 
@@ -1020,8 +1008,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> None:
         """Write file directly."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         await self._ensure_parent_dirs(path)
 
         if isinstance(content, str):
@@ -1034,8 +1021,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> str:
         """Read single file."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         content = self.agfs.read(path)
         return self._handle_agfs_content(content)
 
@@ -1045,8 +1031,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> bytes:
         """Read single binary file."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         try:
             return self._handle_agfs_read(self.agfs.read(path))
         except Exception as e:
@@ -1059,8 +1044,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> None:
         """Write single binary file."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         await self._ensure_parent_dirs(path)
         self.agfs.write(path, content)
 
@@ -1071,8 +1055,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> None:
         """Append content to file."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
 
         try:
             existing = ""
@@ -1107,13 +1090,10 @@ class VikingFS:
             show_all_hidden: bool = False (list all hidden files, like -a)
             ctx: Request context for multi-tenant path resolution
         """
-        account_id = ctx.account_id if ctx else ""
         if output == "original":
-            return await self._ls_original(uri, show_all_hidden, account_id=account_id, ctx=ctx)
+            return await self._ls_original(uri, show_all_hidden, ctx=ctx)
         elif output == "agent":
-            return await self._ls_agent(
-                uri, abs_limit, show_all_hidden, account_id=account_id, ctx=ctx
-            )
+            return await self._ls_agent(uri, abs_limit, show_all_hidden, ctx=ctx)
         else:
             raise ValueError(f"Invalid output format: {output}")
 
@@ -1122,13 +1102,12 @@ class VikingFS:
         uri: str,
         abs_limit: int,
         show_all_hidden: bool,
-        account_id: str = "",
         ctx: Optional["RequestContext"] = None,
     ) -> List[Dict[str, Any]]:
         """List directory contents (URI version)."""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         try:
-            entries = self._ls_entries(path, account_id=account_id)
+            entries = self._ls_entries(path, ctx=ctx)
         except Exception as e:
             raise FileNotFoundError(f"Failed to list {uri}: {e}")
         # basic info
@@ -1144,7 +1123,7 @@ class VikingFS:
                 parts = raw_time.split("+")
                 # 保持时间部分最多 26 位 (YYYY-MM-DDTHH:MM:SS.mmmmmm)
                 raw_time = parts[0][:26] + "+" + parts[1]
-            entry_uri = self._path_to_uri(f"{path}/{name}", account_id=account_id)
+            entry_uri = self._path_to_uri(f"{path}/{name}", ctx=ctx)
             if ctx and not self._is_accessible(entry_uri, ctx):
                 continue
             new_entry = {
@@ -1167,18 +1146,17 @@ class VikingFS:
         self,
         uri: str,
         show_all_hidden: bool = False,
-        account_id: str = "",
         ctx: Optional["RequestContext"] = None,
     ) -> List[Dict[str, Any]]:
         """List directory contents (URI version)."""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
         try:
-            entries = self._ls_entries(path, account_id=account_id)
+            entries = self._ls_entries(path, ctx=ctx)
             # AGFS returns read-only structure, need to create new dict
             all_entries = []
             for entry in entries:
                 name = entry.get("name", "")
-                entry_uri = self._path_to_uri(f"{path}/{name}", account_id=account_id)
+                entry_uri = self._path_to_uri(f"{path}/{name}", ctx=ctx)
                 if ctx and not self._is_accessible(entry_uri, ctx):
                     continue
                 new_entry = dict(entry)  # Copy original data
@@ -1200,9 +1178,8 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> None:
         """Move file."""
-        account_id = ctx.account_id if ctx else ""
-        from_path = self._uri_to_path(from_uri, account_id=account_id)
-        to_path = self._uri_to_path(to_uri, account_id=account_id)
+        from_path = self._uri_to_path(from_uri, ctx=ctx)
+        to_path = self._uri_to_path(to_uri, ctx=ctx)
         content = self.agfs.read(from_path)
         await self._ensure_parent_dirs(to_path)
         self.agfs.write(to_path, content)
@@ -1280,8 +1257,7 @@ class VikingFS:
         ctx: Optional["RequestContext"] = None,
     ) -> None:
         """Write context to AGFS (L0/L1/L2)."""
-        account_id = ctx.account_id if ctx else ""
-        path = self._uri_to_path(uri, account_id=account_id)
+        path = self._uri_to_path(uri, ctx=ctx)
 
         try:
             await self._ensure_parent_dirs(path)

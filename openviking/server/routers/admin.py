@@ -116,7 +116,6 @@ async def delete_account(
         from openviking_cli.utils import get_logger
 
         get_logger(__name__).warning(f"Failed to clean VectorDB data for account {account_id}: {e}")
-
     await manager.delete_account(account_id)
     return Response(status="ok", result={"deleted": True})
 
