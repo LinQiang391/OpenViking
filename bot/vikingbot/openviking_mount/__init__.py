@@ -11,7 +11,7 @@ from .manager import (
     MountPoint,
     get_mount_manager
 )
-from .fuse import (
+from .viking_fuse import (
     OpenVikingFUSE,
     mount_fuse,
     FUSEMountManager,

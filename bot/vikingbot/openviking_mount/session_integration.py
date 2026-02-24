@@ -17,7 +17,7 @@ from loguru import logger
 
 # 相对导入同一包内的模块
 from .mount import OpenVikingMount, MountConfig, MountScope
-from .fuse import mount_fuse, FUSEMountManager, FUSE_AVAILABLE
+from .viking_fuse import mount_fuse, FUSEMountManager, FUSE_AVAILABLE
 
 
 class SessionOpenVikingManager:

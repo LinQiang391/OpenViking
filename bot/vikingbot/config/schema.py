@@ -389,6 +389,7 @@ class ProvidersConfig(BaseModel):
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     minimax: ProviderConfig = Field(default_factory=ProviderConfig)
+    volcengine: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine (火山引擎) API gateway
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
 
 
@@ -413,6 +414,16 @@ class WebSearchConfig(BaseModel):
     max_results: int = 5
 
 
+class OpenVikingToolsConfig(BaseModel):
+    """Viking tools configuration."""
+
+    server_url: str = ""
+    tos_endpoint: str = ""
+    tos_region: str = ""
+    tos_bucket: str = ""
+    tos_ak: str = ""
+    tos_sk: str = ""
+
 class WebToolsConfig(BaseModel):
     """Web tools configuration."""
 
@@ -430,6 +441,7 @@ class ToolsConfig(BaseModel):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    openviking: OpenVikingToolsConfig = Field(default_factory=OpenVikingToolsConfig)
 
 
 class SandboxNetworkConfig(BaseModel):

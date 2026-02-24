@@ -21,6 +21,8 @@ from vikingbot.providers.base import LLMProvider
 from vikingbot.agent.context import ContextBuilder
 from vikingbot.agent.tools.registry import ToolRegistry
 from vikingbot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
+from vikingbot.agent.tools.ov_file import VikingReadTool, VikingListTool, VikingAddResourceTool, VikingSearchTool, \
+    VikingGrepTool, VikingGlobTool
 from vikingbot.agent.tools.shell import ExecTool
 from vikingbot.agent.tools.web import WebFetchTool
 from vikingbot.agent.tools.websearch import WebSearchTool
@@ -88,7 +90,6 @@ class AgentLoop:
         config: Config = None,
     ):
         from vikingbot.config.schema import ExecToolConfig
-        from vikingbot.cron.service import CronService
         self.bus = bus
         self.provider = provider
         self.workspace = workspace
@@ -157,6 +158,13 @@ class AgentLoop:
             exa_api_key=self.exa_api_key
         ))
         self.tools.register(WebFetchTool())
+
+        # Open Viking tool
+        self.tools.register(VikingReadTool())
+        self.tools.register(VikingListTool())
+        self.tools.register(VikingSearchTool())
+        self.tools.register(VikingGrepTool())
+        self.tools.register(VikingGlobTool())
 
         # Image generation tool
         self.tools.register(ImageGenerationTool(
