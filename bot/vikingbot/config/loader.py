@@ -73,6 +73,24 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
 
 def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""
+    # Move sandbox.network/filesystem/runtime to sandbox.backends.srt if they exist
+    if "sandbox" in data:
+        sandbox = data["sandbox"]
+        # Initialize backends if not present
+        if "backends" not in sandbox:
+            sandbox["backends"] = {}
+        if "srt" not in sandbox["backends"]:
+            sandbox["backends"]["srt"] = {}
+        srt_backend = sandbox["backends"]["srt"]
+        # Move network
+        if "network" in sandbox:
+            srt_backend["network"] = sandbox.pop("network")
+        # Move filesystem
+        if "filesystem" in sandbox:
+            srt_backend["filesystem"] = sandbox.pop("filesystem")
+        # Move runtime
+        if "runtime" in sandbox:
+            srt_backend["runtime"] = sandbox.pop("runtime")
     return data
 
 

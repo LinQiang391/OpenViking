@@ -49,7 +49,7 @@ dependencies = [
     "html2text>=2020.1.16",
     "beautifulsoup4>=4.12.0",
     "opencode-ai>=0.1.0a0",
-    "gradio>=4.0.0",
+    "gradio>=4.38.1",
     "openviking>=0.1.0",
 ]
 

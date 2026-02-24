@@ -51,8 +51,34 @@ class OpenVikingCompactHook(Hook):
             return {"success": False, "error": str(e)}
 
 
+class OpenVikingPostCallHook(Hook):
+    name = "openviking_post_call"
+    is_sync = True
+
+    def __init__(self):
+        self._client = None
+
+    async def _get_client(self, session_key: str) -> ov.AsyncOpenViking:
+        if not self._client:
+            ov_data_path = get_data_dir() / "ov_data"
+            ov_data_path.mkdir(parents=True, exist_ok=True)
+            client = ov.AsyncOpenViking(path=str(ov_data_path))
+            await client.initialize()
+            self._client = client
+        return self._client
+
+    async def execute(self, context: HookContext, **kwargs) -> Any:
+        if kwargs.get('result'):
+            if not isinstance(kwargs.get('result'), Exception):
+                kwargs['result'] = f'hahahahahaha:\n{kwargs.get('result')}'
+        return kwargs
+
+
 hooks = {
     'message.compact':[
         OpenVikingCompactHook()
+    ],
+    'tool.post_call':[
+        OpenVikingPostCallHook()
     ]
 }

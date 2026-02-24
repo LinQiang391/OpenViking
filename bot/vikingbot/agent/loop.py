@@ -304,28 +304,17 @@ class AgentLoop:
 
             # Handle tool calls
             if response.has_tool_calls:
-                # Prepare truncated tool call arguments for messages (avoid large base64)
-                truncated_args_list = []
-                for tc in response.tool_calls:
-                    args = tc.arguments.copy()
-                    # Truncate large image-related parameters
-                    if tc.name == "generate_image":
-                        for key in ["base_image", "mask"]:
-                            if key in args and len(str(args[key])) > 500:
-                                args[key] = f"{str(args[key])[:200]}..."  # Truncate to 200 chars
-                    truncated_args_list.append(args)
-
-                # Add assistant message with tool calls (using truncated args)
+                args_list = [tc.arguments for tc in response.tool_calls]
                 tool_call_dicts = [
                     {
                         "id": tc.id,
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": json.dumps(truncated_args)  # Use truncated args
+                            "arguments": json.dumps(args)  # Use truncated args
                         }
                     }
-                    for tc, truncated_args in zip(response.tool_calls, truncated_args_list)
+                    for tc, args in zip(response.tool_calls, args_list)
                 ]
                 messages = self.context.add_assistant_message(
                     messages, response.content, tool_call_dicts,
@@ -346,7 +335,7 @@ class AgentLoop:
                         ))
 
                     logger.info(f"[TOOL_CALL]: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await self.tools.execute(tool_call.name, tool_call.arguments, session_key=session_key)
                     logger.info(f"[RESULT]: {str(result)[:600]}")
                     # Special handling for image generation tool
                     if tool_call.name == "generate_image" and result and not result.startswith("Error"):

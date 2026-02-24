@@ -27,6 +27,7 @@ class HookContext:
 
 class Hook(ABC):
     name: str
+    is_sync: bool = False
 
     @abstractmethod
     async def execute(self, context: HookContext, **kwargs) -> Any:

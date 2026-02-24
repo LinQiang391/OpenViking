@@ -21,6 +21,23 @@ class ChannelType(str, Enum):
     QQ = "qq"
 
 
+class SandboxBackend(str, Enum):
+    """Sandbox backend type enumeration."""
+
+    SRT = "srt"
+    DOCKER = "docker"
+    OPENSANDBOX = "opensandbox"
+    DIRECT = "direct"
+    AIOSANDBOX = "aiosandbox"
+
+
+class SandboxMode(str, Enum):
+    """Sandbox mode enumeration."""
+
+    PER_SESSION = "per-session"
+    SHARED = "shared"
+
+
 class BaseChannelConfig(BaseModel):
     """Base channel configuration."""
 
@@ -457,6 +474,9 @@ class SrtBackendConfig(BaseModel):
 
     settings_path: str = "~/.vikingbot/srt-settings.json"
     node_path: str = "node"
+    network: SandboxNetworkConfig = Field(default_factory=SandboxNetworkConfig)
+    filesystem: SandboxFilesystemConfig = Field(default_factory=SandboxFilesystemConfig)
+    runtime: SandboxRuntimeConfig = Field(default_factory=SandboxRuntimeConfig)
 
 
 class DockerBackendConfig(BaseModel):
@@ -515,11 +535,8 @@ class SandboxBackendsConfig(BaseModel):
 class SandboxConfig(BaseModel):
     """Sandbox configuration."""
 
-    backend: str = "direct"
-    mode: str = "shared"
-    network: SandboxNetworkConfig = Field(default_factory=SandboxNetworkConfig)
-    filesystem: SandboxFilesystemConfig = Field(default_factory=SandboxFilesystemConfig)
-    runtime: SandboxRuntimeConfig = Field(default_factory=SandboxRuntimeConfig)
+    backend: SandboxBackend = SandboxBackend.DIRECT
+    mode: SandboxMode = SandboxMode.SHARED
     backends: SandboxBackendsConfig = Field(default_factory=SandboxBackendsConfig)
 
 

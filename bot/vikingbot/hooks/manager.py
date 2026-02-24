@@ -39,27 +39,30 @@ class HookManager:
                     logger.debug(f"Registered hook '{hook_type}' for event '{event_type}'")
 
     async def execute_hooks(self, context: HookContext, **kwargs) -> List[Any]:
-        hooks_to_execute = [
+        async_hooks = [
             hook
             for hook in self._hooks[context.event_type]
+            if not hook.is_sync
         ]
-
-        if not hooks_to_execute:
-            return []
-
-        results=[]
-        logger.debug(f"Executing {len(hooks_to_execute)} hooks for event '{context.event_type}'")
-        if hooks_to_execute:
+        sync_hooks = [
+            hook
+            for hook in self._hooks[context.event_type]
+            if hook.is_sync
+        ]
+        if async_hooks:
+            logger.debug(f"Executing {len(async_hooks)} async hooks for event '{context.event_type}'")
             async_results = await asyncio.gather(
-                *[hook.execute(context, **kwargs) for hook in hooks_to_execute], return_exceptions=True
+                *[hook.execute(context, **kwargs) for hook in async_hooks], return_exceptions=True
             )
             for i, result in enumerate(async_results):
                 if isinstance(result, Exception):
-                    logger.error(f"Hook '{hooks_to_execute[i].name}' failed: {result}")
-                else:
-                    results.append(result)
+                    logger.error(f"Hook '{async_hooks[i].name}' failed: {result}")
 
-        return results
+        if sync_hooks:
+            logger.debug(f"Executing {len(async_hooks)} sync hooks for event '{context.event_type}'")
+            for hook in sync_hooks:
+                kwargs = await hook.execute(context, **kwargs)
+        return kwargs
 
 
 hook_manager = HookManager()

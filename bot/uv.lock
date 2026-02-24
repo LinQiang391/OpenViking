@@ -3663,7 +3663,7 @@ requires-dist = [
     { name = "ddgs", specifier = ">=9.0.0" },
     { name = "dingtalk-stream", specifier = ">=0.4.0" },
     { name = "fastapi", specifier = ">=0.100.0" },
-    { name = "gradio", specifier = ">=4.0.0" },
+    { name = "gradio", specifier = ">=4.38.1" },
     { name = "html2text", specifier = ">=2020.1.16" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.25.0" },
     { name = "lark-oapi", specifier = ">=1.0.0" },

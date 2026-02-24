@@ -503,9 +503,8 @@ def gateway(
 
     cron = prepare_cron(bus)
     channels = prepare_channel(config, bus)
-    heartbeat = prepare_heartbeat(config, session_manager)
     agent_loop = prepare_agent_loop(config, bus, session_manager, cron)
-
+    heartbeat = prepare_heartbeat(config, agent_loop, session_manager)
     async def run():
         tasks = []
         tasks.append(cron.start())
@@ -589,11 +588,11 @@ def prepare_channel(config, bus):
     return channels
 
 
-def prepare_heartbeat(config, session_manager)-> HeartbeatService:
+def prepare_heartbeat(config,agent_loop, session_manager)-> HeartbeatService:
     # Create heartbeat service
     async def on_heartbeat(prompt: str, session_key: SessionKey | None = None) -> str:
 
-        return await agent.process_direct(
+        return await agent_loop.process_direct(
             prompt,
             session_key=session_key,
         )
