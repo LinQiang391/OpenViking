@@ -6,7 +6,7 @@ RAG Query Pipeline for OpenViking evaluation.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 from openviking_cli.utils.logger import get_logger
 
@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 class RAGQueryPipeline:
     """
     RAG query pipeline for document and code repositories.
-    
+
     This pipeline:
     1. Adds documents/code to OpenViking
     2. Performs retrieval for queries
@@ -30,7 +30,7 @@ class RAGQueryPipeline:
     ):
         """
         Initialize the RAG pipeline.
-        
+
         Args:
             config_path: Path to OpenViking config file
             data_path: Path to OpenViking data directory
@@ -72,12 +72,12 @@ class RAGQueryPipeline:
     ) -> List[str]:
         """
         Add document directories/files to OpenViking.
-        
+
         Args:
             docs_dirs: List of document directory or file paths
             wait: Whether to wait for processing
             timeout: Timeout for waiting
-            
+
         Returns:
             List of root URIs for added resources
         """
@@ -114,12 +114,12 @@ class RAGQueryPipeline:
     ) -> List[str]:
         """
         Add code repositories to OpenViking.
-        
+
         Args:
             code_dirs: List of code repository paths (local or git URLs)
             wait: Whether to wait for processing
             timeout: Timeout for waiting
-            
+
         Returns:
             List of root URIs for added resources
         """
@@ -133,12 +133,12 @@ class RAGQueryPipeline:
     ) -> Dict[str, Any]:
         """
         Query the RAG pipeline.
-        
+
         Args:
             question: The question to answer
             top_k: Number of context chunks to retrieve
             generate_answer: Whether to generate an answer using LLM
-            
+
         Returns:
             Dict with 'question', 'contexts', 'answer', and 'retrieved_uris'
         """

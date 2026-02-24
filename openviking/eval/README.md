@@ -111,22 +111,16 @@ asyncio.run(main())
 
 ```bash
 # 基础评估
+# --docs_dir 评估前会将指定的路径加载到 OpenViking 中
 python -m openviking.eval.rag_eval \
     --docs_dir ./docs \
     --question_file ./questions.jsonl \
-    --config ./.local/s3/ov-local.conf \
+    --config ./ov.conf \
     --output ./results.json
 
-python -m openviking.eval.rag_eval \
-    --docs_dir ./docs \
-    --docs_dir ./README.md \
-    --question_file ./openviking/eval/datasets/local_doc_example_glm5.jsonl \
-    --config ./.local/s3/ov-local.conf \
-    --recorder
-
+# 直接评估，不加载文档库
 # 启用 RAGAS 指标
 python -m openviking.eval.rag_eval \
-    --docs_dir ./docs \
     --question_file ./questions.jsonl \
     --ragas \
     --output ./results.json

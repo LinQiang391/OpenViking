@@ -10,14 +10,6 @@ This file provides backward compatibility.
 import warnings
 
 
-from openviking.eval.playback import (
-    PlaybackResult,
-    PlaybackStats,
-    IOPlayback,
-)
-from openviking.eval.record_analysis import load_records
-
-
 def get_record_stats(record_file: str) -> dict:
     """
     Deprecated: Get statistics from a record file without playback.

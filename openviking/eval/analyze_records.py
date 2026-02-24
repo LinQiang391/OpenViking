@@ -21,7 +21,6 @@ from pathlib import Path
 from openviking.eval.record_analysis import (
     analyze_records,
     print_analysis_stats,
-    load_records,
 )
 from openviking_cli.utils.logger import get_logger
 

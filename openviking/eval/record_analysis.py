@@ -330,7 +330,7 @@ def print_analysis_stats(stats: RecordAnalysisStats) -> None:
     print("=" * 80)
     print("Record Analysis Report")
     print("=" * 80)
-    
+
     print(f"\nFile: {stats.file_path}")
     print(f"Total Records: {stats.total_records}")
     print(f"FS Operations: {stats.fs_count}")
@@ -345,7 +345,7 @@ def print_analysis_stats(stats: RecordAnalysisStats) -> None:
         print("\n" + "=" * 80)
         print("VikingFS Detailed Statistics")
         print("=" * 80)
-        
+
         print("\n" + "-" * 50)
         print(f"{'Metric':<30} {'Value':>18}")
         print("-" * 50)
@@ -368,7 +368,7 @@ def print_analysis_stats(stats: RecordAnalysisStats) -> None:
         print("\n" + "=" * 80)
         print("FS Operation Statistics")
         print("=" * 80)
-        
+
         print("\n" + "-" * 110)
         print(f"{'Operation':<10} {'Count':>6} {'Total(ms)':>10} {'Avg(ms)':>10} {'Min(ms)':>10} {'Max(ms)':>10} {'Success':>8} {'Errors':>8} {'Rate':>8}")
         print("-" * 110)
@@ -390,7 +390,7 @@ def print_analysis_stats(stats: RecordAnalysisStats) -> None:
         print("\n" + "=" * 80)
         print("VikingDB Operation Statistics")
         print("=" * 80)
-        
+
         print("\n" + "-" * 110)
         print(f"{'Operation':<10} {'Count':>6} {'Total(ms)':>10} {'Avg(ms)':>10} {'Min(ms)':>10} {'Max(ms)':>10} {'Success':>8} {'Errors':>8} {'Rate':>8}")
         print("-" * 110)

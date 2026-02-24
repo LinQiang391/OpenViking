@@ -97,7 +97,7 @@ class PlaybackStats:
             if self.total_viking_fs_operations > 0
             else 0
         )
-        
+
         return {
             "total_records": self.total_records,
             "success_count": self.success_count,
@@ -551,14 +551,14 @@ class IOPlayback:
                 stats.fs_stats[op_key]["count"] += 1
                 stats.fs_stats[op_key]["total_original_latency_ms"] += record.latency_ms
                 stats.fs_stats[op_key]["total_playback_latency_ms"] += result.playback_latency_ms
-                
+
                 if hasattr(record, "agfs_calls") and record.agfs_calls:
                     stats.total_viking_fs_operations += 1
                     if result.playback_success:
                         stats.viking_fs_success_count += 1
                     else:
                         stats.viking_fs_error_count += 1
-                    
+
                     stats.total_agfs_calls += len(record.agfs_calls)
                     for call in record.agfs_calls:
                         if call.success:

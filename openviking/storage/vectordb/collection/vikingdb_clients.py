@@ -5,11 +5,7 @@ from typing import Any, Dict, Optional
 
 import requests
 
-<<<<<<< Updated upstream
 from openviking_cli.utils.logger import default_logger as logger
-=======
-from openviking.utils.logger import default_logger as logger
->>>>>>> Stashed changes
 
 # Default request timeout (seconds)
 DEFAULT_TIMEOUT = 30

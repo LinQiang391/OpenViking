@@ -9,12 +9,14 @@ Records IO operations (fs, vikingdb) during evaluation for later playback.
 import json
 import os
 import threading
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from enum import Enum
 
+# Export RecordingVikingFS and RecordingVikingDB
+from openviking.eval.recorder.wrapper import RecordingVikingDB, RecordingVikingFS
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,7 +64,7 @@ class VikingDBOperation(Enum):
 class AGFSCallRecord:
     """
     Record of a single AGFS client call.
-    
+
     Used when recording VikingFS operations that may involve multiple AGFS calls.
     """
     operation: str
@@ -101,7 +103,7 @@ class IORecord:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        
+
         def serialize_any(obj: Any) -> Any:
             """Recursively serialize any object."""
             if obj is None:
@@ -117,10 +119,10 @@ class IORecord:
             if hasattr(obj, "__dict__"):
                 return serialize_any(obj.__dict__)
             return str(obj)
-        
+
         data = asdict(self)
         data["response"] = serialize_any(data["response"])
-        
+
         serialized_agfs_calls = []
         for call in data["agfs_calls"]:
             serialized_call = call.copy()
@@ -128,7 +130,7 @@ class IORecord:
             serialized_call["response"] = serialize_any(serialized_call["response"])
             serialized_agfs_calls.append(serialized_call)
         data["agfs_calls"] = serialized_agfs_calls
-        
+
         return data
 
     @classmethod
@@ -406,7 +408,7 @@ class RecordContext:
     def set_response(self, response: Any) -> None:
         """Set the response data."""
         self.response = response
-        
+
     def add_agfs_call(
         self,
         operation: str,
@@ -418,7 +420,7 @@ class RecordContext:
     ) -> None:
         """
         Add an AGFS call to this operation record.
-        
+
         Args:
             operation: AGFS operation name
             request: Request parameters
@@ -486,7 +488,3 @@ def create_recording_agfs_client(agfs_client: Any, record_file: Optional[str] = 
 
     record_path = record_file or str(recorder.record_file)
     return RecordingAGFSClient(agfs_client, record_path)
-
-
-# Export RecordingVikingFS and RecordingVikingDB
-from openviking.eval.recorder.wrapper import RecordingVikingFS, RecordingVikingDB

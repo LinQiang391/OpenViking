@@ -54,8 +54,7 @@ def validate_item(item: Dict[str, Any], index: int) -> List[str]:
 def test_eval_types():
     """Test EvalSample and EvalDataset types."""
     print("\n📦 Testing EvalSample and EvalDataset types...")
-    
-    jsonl_path = "/Users/bytedance/workspace/github/OpenViking/openviking/eval/local_doc_example_glm5.jsonl"
+    jsonl_path = Path.cwd() / "openviking" / "eval" / "datasets" / "local_doc_example_glm5.jsonl"
     data = load_jsonl(jsonl_path)
     
     from openviking.eval.types import EvalSample, EvalDataset
@@ -120,9 +119,9 @@ def test_question_loader():
     """Test question loading from JSONL."""
     print("\n📄 Testing question loader...")
     
-    test_file = "/Users/bytedance/workspace/github/OpenViking/openviking/eval/local_doc_example_glm5.jsonl"
+    jsonl_path = Path.cwd() / "openviking" / "eval" / "datasets" / "local_doc_example_glm5.jsonl"
     
-    data = load_jsonl(test_file)
+    data = load_jsonl(jsonl_path)
     print(f"  ✅ Loaded {len(data)} questions from JSONL")
     
     errors = []

@@ -99,7 +99,7 @@ class OpenVikingService:
 
     def _init_storage(self, config: StorageConfig) -> None:
         """Initialize storage resources."""
-        if True:
+        if config.agfs.backend == "local":
             self._agfs_manager = AGFSManager(config=config.agfs)
             self._agfs_manager.start()
             self._agfs_url = self._agfs_manager.url

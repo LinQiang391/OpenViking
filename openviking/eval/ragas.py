@@ -101,8 +101,8 @@ def _create_ragas_llm_from_config() -> Optional[Any]:
         RAGAS LLM instance or None if VLM is not configured.
     """
     try:
-        from ragas.llms import llm_factory
         from openai import OpenAI
+        from ragas.llms import llm_factory
     except ImportError:
         return None
 

@@ -5,10 +5,10 @@ Dataset generator for OpenViking evaluation.
 """
 
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional
 
 from openviking.eval.types import EvalDataset, EvalSample
-from openviking.storage.viking_fs import VikingFS, get_viking_fs
+from openviking.storage.viking_fs import get_viking_fs
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -48,11 +48,10 @@ class DatasetGenerator:
         Returns:
             EvalDataset
         """
-        vfs = get_viking_fs()
+        get_viking_fs()
         uri_base = f"viking://{scope}/{path.lstrip('/')}"
 
         # Collect files
-        files = []
         # This is a simplified logic, assuming we can list files in VikingFS
         # In a real scenario, we'd use VikingFS.list or similar
         try:
@@ -115,8 +114,9 @@ class DatasetGenerator:
             # This depends on the LLM abstraction used
             response = await self.llm.get_completion_async(prompt)
             import json
+
             from json_repair import repair_json
-            
+
             clean_json = repair_json(response)
             data = json.loads(clean_json)
 

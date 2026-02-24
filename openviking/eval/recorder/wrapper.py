@@ -7,14 +7,12 @@ Wraps existing storage backends to record IO operations.
 """
 
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from openviking.eval.recorder import (
-    IORecorder,
-    IOType,
-    get_recorder,
-    RecordContext,
     AGFSCallRecord,
+    IORecorder,
+    get_recorder,
 )
 from openviking_cli.utils.logger import get_logger
 
@@ -24,7 +22,7 @@ logger = get_logger(__name__)
 class _AGFSCallCollector:
     """
     Helper to collect AGFS calls from a wrapped AGFS client.
-    
+
     This wraps an AGFS client and collects all calls made through it.
     """
 
@@ -69,11 +67,11 @@ class _AGFSCallCollector:
 class RecordingVikingFS:
     """
     Wrapper for VikingFS that records all operations.
-    
+
     This wrapper records VikingFS operations at two levels:
     1. VikingFS level: One record per VikingFS operation
     2. AGFS level: Collects all internal AGFS calls made during the operation
-    
+
     Usage:
         from openviking.eval.recorder import init_recorder
         from openviking.eval.recorder.wrapper import RecordingVikingFS
@@ -98,12 +96,12 @@ class RecordingVikingFS:
     def __getattr__(self, name: str) -> Any:
         """
         Smart attribute getter that wraps async methods for recording.
-        
+
         This will automatically wrap all async methods of VikingFS,
         ensuring every operation is recorded.
         """
         original_attr = getattr(self._fs, name)
-        
+
         if not callable(original_attr) or name.startswith("_"):
             return original_attr
         # viking_fs文件操作
@@ -114,14 +112,14 @@ class RecordingVikingFS:
                         "find", "search",
                         ):
             return original_attr
-        
+
         async def wrapped_async(*args, **kwargs):
             request = self._build_request(name, args, kwargs)
             start_time = time.time()
-            
+
             collector = _AGFSCallCollector(self._fs.agfs)
             self._fs.agfs = collector
-            
+
             try:
                 result = await original_attr(*args, **kwargs)
                 latency_ms = (time.time() - start_time) * 1000
@@ -149,11 +147,11 @@ class RecordingVikingFS:
                 raise
             finally:
                 self._fs.agfs = self._original_agfs
-        
+
         def wrapped_sync(*args, **kwargs):
             request = self._build_request(name, args, kwargs)
             start_time = time.time()
-            
+
             try:
                 result = original_attr(*args, **kwargs)
                 latency_ms = (time.time() - start_time) * 1000
@@ -179,27 +177,27 @@ class RecordingVikingFS:
                     agfs_calls=[],
                 )
                 raise
-        
+
         import inspect
         if inspect.iscoroutinefunction(original_attr) or name.startswith("_"):
             return wrapped_async
-        
+
         return wrapped_async
 
     def _build_request(self, name: str, args: tuple, kwargs: dict) -> Dict[str, Any]:
         """
         Build request dict from method arguments.
-        
+
         Args:
             name: Method name
             args: Positional arguments
             kwargs: Keyword arguments
-            
+
         Returns:
             Request dictionary
         """
         request = {}
-        
+
         param_names = []
         try:
             import inspect
@@ -209,17 +207,17 @@ class RecordingVikingFS:
                 param_names = list(sig.parameters.keys())
         except Exception:
             pass
-        
+
         if param_names:
             for i, arg in enumerate(args):
                 if i < len(param_names):
                     param_name = param_names[i]
                     if param_name != "self":
                         request[param_name] = arg
-        
+
         for key, value in kwargs.items():
             request[key] = value
-        
+
         return request
 
 

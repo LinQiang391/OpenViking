@@ -195,9 +195,8 @@ class VikingFS:
                 return None
             except Exception:
                 pass
-        path = self._uri_to_path(uri)
-        # fix s3fs
-        return await asyncio.to_thread(self.agfs.mkdir, path, mode)
+
+        self.agfs.mkdir(path)
 
     async def rm(self, uri: str, recursive: bool = False) -> Dict[str, Any]:
         """Delete file/directory + recursively update vector index."""
@@ -1103,7 +1102,6 @@ class VikingFS:
         await self._ensure_parent_dirs(to_path)
         self.agfs.write(to_path, content)
         self.agfs.rm(from_path)
-        print(f"[VikingFS] Moved {from_uri} to {to_uri}")
 
     # ========== Temp File Operations (backward compatible) ==========
 

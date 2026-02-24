@@ -46,7 +46,7 @@ def print_playback_stats(stats: PlaybackStats) -> None:
     print(f"Failed: {stats.error_count}")
     print(f"Success Rate: {stats.success_count / stats.total_records * 100:.1f}%" if stats.total_records > 0 else "N/A")
 
-    print(f"\nPerformance:")
+    print("\nPerformance:")
     print(f"  Original Total Latency: {stats.total_original_latency_ms:.2f} ms")
     print(f"  Playback Total Latency: {stats.total_playback_latency_ms:.2f} ms")
 
@@ -61,18 +61,18 @@ def print_playback_stats(stats: PlaybackStats) -> None:
         stats_dict = stats.to_dict()
         viking_fs_stats = stats_dict.get("viking_fs_stats", {})
         agfs_fs_stats = stats_dict.get("agfs_fs_stats", {})
-        
-        print(f"\nVikingFS Detailed Stats:")
+
+        print("\nVikingFS Detailed Stats:")
         print(f"  Total VikingFS Operations: {viking_fs_stats.get('total_operations', 0)}")
         print(f"  VikingFS Success Rate: {viking_fs_stats.get('success_rate_percent', 0):.1f}%")
         print(f"  Average AGFS Calls per VikingFS Operation: {viking_fs_stats.get('avg_agfs_calls_per_operation', 0):.2f}")
-        
-        print(f"\nAGFS FS Detailed Stats:")
+
+        print("\nAGFS FS Detailed Stats:")
         print(f"  Total AGFS Calls: {agfs_fs_stats.get('total_calls', 0)}")
         print(f"  AGFS Success Rate: {agfs_fs_stats.get('success_rate_percent', 0):.1f}%")
 
     if stats.fs_stats:
-        print(f"\nFS Operations:")
+        print("\nFS Operations:")
         print(f"{'Operation':<30} {'Count':>10} {'Orig Avg (ms)':>15} {'Play Avg (ms)':>15}")
         print(f"{'-' * 72}")
         for op, data in sorted(stats.fs_stats.items()):
@@ -82,7 +82,7 @@ def print_playback_stats(stats: PlaybackStats) -> None:
             print(f"{op:<30} {count:>10} {orig_avg:>15.2f} {play_avg:>15.2f}")
 
     if stats.vikingdb_stats:
-        print(f"\nVikingDB Operations:")
+        print("\nVikingDB Operations:")
         print(f"{'Operation':<30} {'Count':>10} {'Orig Avg (ms)':>15} {'Play Avg (ms)':>15}")
         print(f"{'-' * 72}")
         for op, data in sorted(stats.vikingdb_stats.items()):
@@ -105,7 +105,7 @@ async def main_async(args: argparse.Namespace) -> int:
             io_type = "fs"
         elif args.vikingdb and not args.fs:
             io_type = "vikingdb"
-        
+
         stats = analyze_records(
             record_file=str(record_file),
             io_type=io_type,

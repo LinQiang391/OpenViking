@@ -272,7 +272,7 @@ def print_report(eval_results: Dict[str, Any]):
     print("=" * 60)
 
     metrics = eval_results.get("metrics", {})
-    print(f"\nOverall Metrics:")
+    print("\nOverall Metrics:")
     print(f"  Total Questions: {metrics.get('total_questions', 0)}")
     print(f"  Avg Contexts/Question: {metrics.get('avg_contexts_per_question', 0)}")
     print(f"  Questions with Contexts: {metrics.get('questions_with_contexts', 0)}")
@@ -280,7 +280,7 @@ def print_report(eval_results: Dict[str, Any]):
     print(f"  Avg Retrieval Time: {metrics.get('avg_retrieval_time_ms', 0):.1f}ms")
     print(f"  Total Retrieval Time: {metrics.get('total_retrieval_time_ms', 0):.1f}ms")
 
-    print(f"\nDetailed Results:")
+    print("\nDetailed Results:")
     for i, result in enumerate(eval_results.get("results", []), 1):
         print(f"\n[Q{i}] {result['question'][:80]}...")
         print(f"  Contexts Retrieved: {result['context_count']}")
@@ -329,16 +329,16 @@ async def run_ragas_evaluation(eval_results: Dict[str, Any]):
         return ragas_result
 
     except ImportError as e:
-        logger.error(f"RAGAS not installed.", exc_info=e)
+        logger.error("RAGAS not installed.", exc_info=e)
         logger.info("   Install with: pip install ragas datasets")
         return None
 
 
 async def main_async(args):
     """Main async function."""
-    if not args.docs_dir and not args.code_dir:
-        logger.error("At least one --docs_dir or --code_dir must be specified")
-        sys.exit(1)
+    # if not args.docs_dir and not args.code_dir:
+    #     logger.error("At least one --docs_dir or --code_dir must be specified")
+    #     sys.exit(1)
 
     if not args.question_file:
         logger.error("--question_file is required")
