@@ -125,8 +125,10 @@ tos_region: cn-beijing
 # OpenSandbox 配置
 # 是否启用 OpenSandbox Sidecar 容器
 opensandbox_enabled: true
-# OpenSandbox Server 镜像
-opensandbox_image: opensandbox/server:latest
+# OpenSandbox Server 镜像源 (Docker Hub)
+opensandbox_source_image: opensandbox/server:latest
+# OpenSandbox Server 镜像在火山引擎仓库中的名称
+opensandbox_repository: opensandbox-server
 """
 
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
@@ -167,7 +169,7 @@ opensandbox_image: opensandbox/server:latest
         opensandbox_enabled = self.config.get('opensandbox_enabled', True)
         print(f"  OpenSandbox: {'启用' if opensandbox_enabled else '禁用'}")
         if opensandbox_enabled:
-            print(f"  OpenSandbox 镜像: {self.config.get('opensandbox_image', 'opensandbox/server:latest')}")
+            print(f"  OpenSandbox 源镜像: {self.config.get('opensandbox_source_image', 'opensandbox/server:latest')}")
         print()
 
     def run_command(self, cmd: str, cwd: Optional[str] = None, show_output: bool = False, timeout: Optional[float] = 60.0) -> tuple[int, str, str]:
@@ -294,6 +296,149 @@ opensandbox_image: opensandbox/server:latest
         self.config["full_image_name"] = full_image_name
         return True
 
+    def prepare_opensandbox_image(self) -> bool:
+        if not self.config.get("opensandbox_enabled", True):
+            print("\n=== OpenSandbox 已禁用，跳过 ===")
+            return True
+
+        print("\n=== 准备 OpenSandbox 镜像 ===")
+
+        source_image = self.config.get("opensandbox_source_image", "opensandbox/server:latest")
+        registry = self.config["image_registry"]
+        namespace = self.config.get("image_namespace", "vikingbot")
+        repository = self.config.get("opensandbox_repository", "opensandbox-server")
+        target_image = f"{registry}/{namespace}/{repository}:latest"
+
+        print(f"拉取源镜像: {source_image}")
+        cmd = f"docker pull --platform linux/amd64 {source_image}"
+        code, stdout, stderr = self.run_command(cmd, show_output=True)
+        if code != 0:
+            print(f"拉取 OpenSandbox 镜像失败")
+            return False
+
+        print(f"打标签: {target_image}")
+        cmd = f"docker tag {source_image} {target_image}"
+        code, stdout, stderr = self.run_command(cmd)
+        if code != 0:
+            print(f"打标签失败: {stderr}")
+            return False
+
+        print(f"推送镜像: {target_image}")
+        cmd = f"docker push {target_image}"
+        code, stdout, stderr = self.run_command(cmd, show_output=True)
+        if code != 0:
+            print(f"推送 OpenSandbox 镜像失败")
+            return False
+
+        print(f"OpenSandbox 镜像准备成功: {target_image}")
+        self.config["opensandbox_full_image"] = target_image
+        return True
+
+    def create_k8s_resources(self, kubeconfig_path: str, k8s_namespace: str) -> bool:
+        print("\n=== 创建 Kubernetes 资源 ===")
+        
+        os.environ["KUBECONFIG"] = kubeconfig_path
+
+        # 创建 Image Pull Secret
+        print("创建 Image Pull Secret...")
+        registry = self.config["image_registry"]
+        username = self.config.get("registry_username", self.config["volcengine_access_key"])
+        password = self.config.get("registry_password", self.config["volcengine_secret_key"])
+        
+        # 检查 secret 是否已存在
+        cmd = f"kubectl get secret vikingbot-cr-secret -n {k8s_namespace} --ignore-not-found=true -o name"
+        code, stdout, stderr = self.run_command(cmd)
+        if code == 0 and stdout.strip():
+            print("Image Pull Secret 已存在，跳过创建")
+        else:
+            cmd = f"kubectl create secret docker-registry vikingbot-cr-secret --docker-server={registry} --docker-username={username} --docker-password={password} -n {k8s_namespace}"
+            code, stdout, stderr = self.run_command(cmd)
+            if code != 0:
+                print(f"创建 Image Pull Secret 失败: {stderr}")
+                return False
+            print("Image Pull Secret 创建成功")
+
+        # 创建 ServiceAccount
+        print("创建 ServiceAccount...")
+        cmd = f"kubectl get serviceaccount vikingbot-sa -n {k8s_namespace} --ignore-not-found=true -o name"
+        code, stdout, stderr = self.run_command(cmd)
+        if code == 0 and stdout.strip():
+            print("ServiceAccount 已存在，跳过创建")
+        else:
+            sa_yaml = f"""apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vikingbot-sa
+  namespace: {k8s_namespace}
+"""
+            with open("/tmp/vikingbot_sa.yaml", "w", encoding='utf-8') as f:
+                f.write(sa_yaml)
+            cmd = f"kubectl apply -f /tmp/vikingbot_sa.yaml"
+            code, stdout, stderr = self.run_command(cmd)
+            if code != 0:
+                print(f"创建 ServiceAccount 失败: {stderr}")
+                return False
+            print("ServiceAccount 创建成功")
+
+        # 创建 ClusterRole
+        print("创建 ClusterRole...")
+        cmd = f"kubectl get clusterrole vikingbot-clusterrole --ignore-not-found=true -o name"
+        code, stdout, stderr = self.run_command(cmd)
+        if code == 0 and stdout.strip():
+            print("ClusterRole 已存在，跳过创建")
+        else:
+            cr_yaml = f"""apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vikingbot-clusterrole
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec", "secrets", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+"""
+            with open("/tmp/vikingbot_cr.yaml", "w", encoding='utf-8') as f:
+                f.write(cr_yaml)
+            cmd = f"kubectl apply -f /tmp/vikingbot_cr.yaml"
+            code, stdout, stderr = self.run_command(cmd)
+            if code != 0:
+                print(f"创建 ClusterRole 失败: {stderr}")
+                return False
+            print("ClusterRole 创建成功")
+
+        # 创建 ClusterRoleBinding
+        print("创建 ClusterRoleBinding...")
+        cmd = f"kubectl get clusterrolebinding vikingbot-clusterrolebinding --ignore-not-found=true -o name"
+        code, stdout, stderr = self.run_command(cmd)
+        if code == 0 and stdout.strip():
+            print("ClusterRoleBinding 已存在，跳过创建")
+        else:
+            crb_yaml = f"""apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vikingbot-clusterrolebinding
+subjects:
+- kind: ServiceAccount
+  name: vikingbot-sa
+  namespace: {k8s_namespace}
+roleRef:
+  kind: ClusterRole
+  name: vikingbot-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+"""
+            with open("/tmp/vikingbot_crb.yaml", "w", encoding='utf-8') as f:
+                f.write(crb_yaml)
+            cmd = f"kubectl apply -f /tmp/vikingbot_crb.yaml"
+            code, stdout, stderr = self.run_command(cmd)
+            if code != 0:
+                print(f"创建 ClusterRoleBinding 失败: {stderr}")
+                return False
+            print("ClusterRoleBinding 创建成功")
+
+        return True
+
     def get_vke_kubeconfig(self) -> Optional[str]:
         print("\n=== 步骤4: 获取VKE集群kubeconfig ===")
 
@@ -317,8 +462,6 @@ opensandbox_image: opensandbox/server:latest
         cmd = f"kubectl get pvc {pvc_name} -n {namespace} --no-headers 2>/dev/null || true"
         code, stdout, stderr = self.run_command(cmd, timeout=60.0)
         return code == 0 and stdout.strip() != ""
-
-
 
     def deploy_to_vke(self, kubeconfig_path: str) -> bool:
         print("\n=== 步骤5: 部署应用到VKE ===")
@@ -374,10 +517,27 @@ opensandbox_image: opensandbox/server:latest
             modified = True
             print("已移除 OpenSandbox Sidecar 容器")
         else:
-            opensandbox_image = self.config.get("opensandbox_image", "opensandbox/server:latest")
+            opensandbox_image = self.config.get("opensandbox_full_image")
+            if not opensandbox_image:
+                registry = self.config["image_registry"]
+                namespace = self.config.get("image_namespace", "vikingbot")
+                repository = self.config.get("opensandbox_repository", "opensandbox-server")
+                opensandbox_image = f"{registry}/{namespace}/{repository}:latest"
+            
             if "opensandbox/server:latest" in manifest_content:
                 manifest_content = manifest_content.replace("opensandbox/server:latest", opensandbox_image)
                 print(f"已设置 OpenSandbox 镜像为: {opensandbox_image}")
+                modified = True
+            
+            # 添加 imagePullSecrets 和 serviceAccountName
+            if "imagePullSecrets:" not in manifest_content:
+                import re
+                # 在 spec.containers 之前添加
+                manifest_content = re.sub(
+                    r'(\n\s+spec:\s*\n)',
+                    r'\1      imagePullSecrets:\n      - name: vikingbot-cr-secret\n      serviceAccountName: vikingbot-sa\n',
+                    manifest_content
+                )
                 modified = True
         
         if modified:
@@ -532,6 +692,17 @@ spec:
 
         print(f"部署成功:\n{stdout}")
 
+        # 如果跳过了镜像构建，触发滚动重启以强制重新拉取镜像
+        if self.config.get("skip_build", False):
+            print("\n检测到跳过镜像构建，触发滚动重启以强制重新拉取镜像...")
+            deployment_name = self.config.get("k8s_deployment_name", "vikingbot")
+            restart_cmd = f"kubectl rollout restart deployment/{deployment_name} -n {k8s_namespace}"
+            restart_code, restart_stdout, restart_stderr = self.run_command(restart_cmd)
+            if restart_code == 0:
+                print(f"滚动重启已触发: {restart_stdout}")
+            else:
+                print(f"滚动重启触发失败: {restart_stderr}")
+
         if self.config.get("wait_for_rollout", True):
             self.wait_for_rollout(k8s_namespace)
 
@@ -618,8 +789,18 @@ spec:
             if not self.push_image():
                 return False
 
+        # 准备 OpenSandbox 镜像
+        if self.config.get("opensandbox_enabled", True):
+            if not self.prepare_opensandbox_image():
+                return False
+
         kubeconfig_path = self.get_vke_kubeconfig()
         if not kubeconfig_path:
+            return False
+
+        # 创建 K8s 资源
+        k8s_namespace = self.config.get("k8s_namespace", "default")
+        if not self.create_k8s_resources(kubeconfig_path, k8s_namespace):
             return False
 
         if self.config.get("skip_deploy", False):

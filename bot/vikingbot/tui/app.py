@@ -10,6 +10,7 @@ from textual.widgets import Header, Footer, Static, Input, Button, RichLog
 from textual.binding import Binding
 from textual.reactive import reactive
 
+from vikingbot.config.schema import SessionKey
 from vikingbot.tui.state import TUIState, MessageRole, Message, ThinkingStep, ThinkingStepType
 from vikingbot import __logo__
 
@@ -282,7 +283,7 @@ class NanobotTUI(App):
             # 处理消息
             response = await self.agent_loop.process_direct(
                 message_text,
-                session_key=self.state.session_id
+                session_key=self.state.session_key
             )
             
             # 恢复原回调
@@ -346,7 +347,11 @@ class NanobotTUI(App):
         
         # 生成新的 session ID
         import uuid
-        self.state.session_id = f"tui:{uuid.uuid4().hex[:8]}"
+        self.state.session_key = SessionKey(
+            type="tui",
+            channel_id="default",
+            chat_id="uuid.uuid4().hex[:8]"
+        )
         
         # 清空思考过程
         if self.chat_screen:
@@ -354,7 +359,7 @@ class NanobotTUI(App):
             self.chat_screen.message_list.clear()
             welcome_msg = Message(
                 role=MessageRole.SYSTEM,
-                content=f"{__logo__} Chat cleared. New session started (Session: {self.state.session_id})."
+                content=f"{__logo__} Chat cleared. New session started (Session: {self.state.session_key})."
             )
             self.chat_screen.add_message(welcome_msg)
     

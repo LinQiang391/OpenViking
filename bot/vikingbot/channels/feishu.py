@@ -389,7 +389,7 @@ class FeishuChannel(BaseChannel):
                 try:
                     self._ws_client.start()
                 except Exception as e:
-                    logger.warning(f"Feishu WebSocket error: {e}")
+                    logger.exception(f"Feishu WebSocket error: {e}")
                 if self._running:
                     import time
 

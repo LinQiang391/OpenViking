@@ -29,7 +29,7 @@ def is_safe_path(base: Path, target: Path) -> bool:
 def get_workspace_base(workspace_id: Optional[str] = None) -> Path:
     config = load_config()
     workspace =  config.workspace_path
-    if workspace_id:
+    if workspace_id and workspace_id != "shared":
         workspace = workspace / workspace_id
     return workspace
 
@@ -41,16 +41,30 @@ async def list_workspaces():
         config = load_config()
         
         workspaces = []
-
+        
+        # 主 workspace
         workspace = get_workspace_base(None)
-
-        for item in workspace.iterdir():
-            workspaces.append({
-                "id": item.name,
-                "name": item.name,
-                "path": str(item),
-                "is_default": False
-            })
+        workspaces.append({
+            "id": "shared",
+            "name": "Default Workspace",
+            "path": str(workspace),
+            "is_default": True
+        })
+        
+        # 列出 workspace 下的子目录作为可选 workspaces
+        try:
+            for item in workspace.iterdir():
+                if item.is_dir() and not item.name.startswith('.'):
+                    workspaces.append({
+                        "id": item.name,
+                        "name": item.name,
+                        "path": str(item),
+                        "is_default": False
+                    })
+        except Exception:
+            # 如果无法列出子目录，就只返回主 workspace
+            pass
+            
         return {
             "success": True,
             "data": workspaces

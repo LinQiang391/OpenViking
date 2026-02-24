@@ -91,3 +91,7 @@ async def start_console_server(port: int = 18791, host: str = "0.0.0.0"):
     )
     server = uvicorn.Server(config)
     await server.serve()
+
+
+if __name__ == "__main__":
+    asyncio.run(start_console_server())

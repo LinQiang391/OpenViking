@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Callable, Any
 
+from vikingbot.config.schema import SessionKey
+
 
 class MessageRole(Enum):
     USER = "user"
@@ -41,7 +43,11 @@ class Message:
 @dataclass
 class TUIState:
     messages: List[Message] = field(default_factory=list)
-    session_id: str = "tui:default"
+    session_key: SessionKey = SessionKey(
+        type="tui",
+        channel_id="default",
+        chat_id="default"
+    )
     is_thinking: bool = False
     thinking_message: str = "vikingbot is thinking..."
     input_text: str = ""

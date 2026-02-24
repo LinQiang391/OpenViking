@@ -3,9 +3,8 @@
 import json
 from pathlib import Path
 from typing import Any
-
+from loguru import logger
 from vikingbot.config.schema import Config
-
 
 def get_config_path() -> Path:
     """Get the default configuration file path."""
@@ -17,6 +16,17 @@ def get_data_dir() -> Path:
     from vikingbot.utils.helpers import get_data_path
     return get_data_path()
 
+
+def ensure_config():
+    config_path = get_config_path()
+    if not config_path.exists():
+        logger.info("Config not found, creating default config...")
+
+        config = Config()
+        save_config(config)
+        logger.info(f"[green]✓[/green] Created default config at {config_path}")
+    config = load_config(config_path)
+    return config
 
 def load_config(config_path: Path | None = None) -> Config:
     """
