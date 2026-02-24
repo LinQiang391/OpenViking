@@ -342,17 +342,6 @@ class AgentDefaults(BaseModel):
     max_tool_iterations: int = 50
     memory_window: int = 50
     gen_image_model: str = "openai/doubao-seedream-4-5-251128"
-    default_skills: list[str] = Field(default_factory=lambda: [
-        "opencode",
-        "github-proxy",
-        "github",
-        "memory",
-        "cron",
-        "weather",
-        "tmux",
-        "skill-creator",
-        "summarize",
-    ])
 
 
 class AgentsConfig(BaseModel):
@@ -546,7 +535,16 @@ class Config(BaseSettings):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     hooks: list[str] = Field(['vikingbot.hooks.builtins.openviking_hooks.hooks'])
-
+    skills: list[str] = Field(default_factory=lambda: [
+        "github-proxy",
+        "github",
+        "memory",
+        "cron",
+        "weather",
+        "tmux",
+        "skill-creator",
+        "summarize",
+    ])
     @property
     def channels_config(self) -> ChannelsConfig:
         """Get channels config wrapper."""

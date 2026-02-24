@@ -493,7 +493,7 @@ def gateway(
 
     sandbox_parent_path = config.workspace_path
     source_workspace_path = get_source_workspace_path()
-    sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
+    sandbox_manager = SandboxManager(config, sandbox_parent_path, source_workspace_path)
     console.print(
         f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})"
     )
@@ -1087,7 +1087,7 @@ def tui(
 
     sandbox_parent_path = config.workspace_path
     source_workspace_path = get_source_workspace_path()
-    sandbox_manager = SandboxManager(config.sandbox, sandbox_parent_path, source_workspace_path)
+    sandbox_manager = SandboxManager(config, sandbox_parent_path, source_workspace_path)
     console.print(
         f"[green]✓[/green] Sandbox: enabled (backend={config.sandbox.backend}, mode={config.sandbox.mode})"
     )

@@ -8,18 +8,18 @@ from vikingbot.sandbox.base import SandboxBackend, SandboxDisabledError, Unsuppo
 from vikingbot.sandbox.backends import get_backend
 
 
-from vikingbot.config.schema import SandboxConfig, SessionKey
+from vikingbot.config.schema import SandboxConfig, SessionKey, Config
 
 
 class SandboxManager:
     """Manager for creating and managing sandbox instances."""
 
-    def __init__(self, config: "SandboxConfig", sandbox_parent_path: Path, source_workspace_path: Path):
+    def __init__(self, config: Config, sandbox_parent_path: Path, source_workspace_path: Path):
         self.config = config
         self.workspace = sandbox_parent_path
         self.source_workspace = source_workspace_path
         self._sandboxes: dict[str, SandboxBackend] = {}
-        backend_cls = get_backend(config.backend)
+        backend_cls = get_backend(config.sandbox.backend)
         if not backend_cls:
             raise UnsupportedBackendError(f"Unknown sandbox backend: {config.backend}")
         self._backend_cls = backend_cls
@@ -41,7 +41,7 @@ class SandboxManager:
     async def _create_sandbox(self, sandbox_key: str) -> SandboxBackend:
         """Create new sandbox instance."""
         workspace = self.workspace / sandbox_key
-        instance = self._backend_cls(self.config, sandbox_key, workspace)
+        instance = self._backend_cls(self.config.sandbox, sandbox_key, workspace)
         try:
             await instance.start()
         except Exception as e:
@@ -79,13 +79,15 @@ class SandboxManager:
         # Copy source workspace skills (highest priority)
         skills_dir = self.source_workspace / "skills"
         if skills_dir.exists() and skills_dir.is_dir():
-            dst_skills = sandbox_workspace / "skills"
-            shutil.copytree(skills_dir, dst_skills, dirs_exist_ok=True)
+            for item in skills_dir.iterdir():
+                if item.name not in self.config.skills or []:
+                    continue
+                dst_skill = sandbox_workspace / "skills" / item.name
+                if dst_skill.exists():
+                    continue
+                shutil.copytree(item, dst_skill, dirs_exist_ok=True)
 
-        # Copy built-in skills (lower priority, dirs_exist_ok=True ensures source skills override)
-        if BUILTIN_SKILLS_DIR.exists() and BUILTIN_SKILLS_DIR.is_dir():
-            dst_skills = sandbox_workspace / "skills"
-            shutil.copytree(BUILTIN_SKILLS_DIR, dst_skills, dirs_exist_ok=True)
+
 
     async def cleanup_session(self, session_key: SessionKey) -> None:
         """Clean up sandbox for a session."""
@@ -105,7 +107,7 @@ class SandboxManager:
         return self.workspace / self.to_sandbox_key(session_key)
 
     def to_sandbox_key(self, session_key: SessionKey):
-        if self.config.mode == "shared":
+        if self.config.sandbox.mode == "shared":
             return "shared"
         else:
             return session_key.safe_name()
