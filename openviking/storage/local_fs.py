@@ -87,6 +87,7 @@ async def _enqueue_direct_vectorization(
         related_uri=[],
         meta={"semantic_name": uri.split("/")[-1]},
         account_id=account_id,
+        owner_space="",  # ovpack import 为 resource 级，account 共享
     )
 
     embedding_msg = EmbeddingMsgConverter.from_context(resource)

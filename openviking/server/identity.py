@@ -35,3 +35,7 @@ class RequestContext:
     @property
     def account_id(self) -> str:
         return self.user.account_id
+
+    @property
+    def user_id(self) -> str:
+        return self.user.user_id

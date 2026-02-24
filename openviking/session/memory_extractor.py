@@ -61,6 +61,25 @@ class MergedMemoryPayload:
     reason: str = ""
 
 
+# User-scoped memory categories
+_USER_CATEGORIES = {
+    MemoryCategory.PROFILE,
+    MemoryCategory.PREFERENCES,
+    MemoryCategory.ENTITIES,
+    MemoryCategory.EVENTS,
+}
+
+
+def _get_owner_space(user: Optional[UserIdentifier], category: MemoryCategory) -> str:
+    """Determine owner_space based on memory category scope."""
+    if not user:
+        return ""
+    if category in _USER_CATEGORIES:
+        return user.user_space_name()
+    # Agent-scoped categories: CASES, PATTERNS
+    return user.agent_space_name()
+
+
 class MemoryExtractor:
     """Extracts memories from session messages with 6-category classification."""
 
@@ -206,8 +225,8 @@ class MemoryExtractor:
     async def create_memory(
         self,
         candidate: CandidateMemory,
-        user: str,
-        session_id: str,
+        user: Optional[UserIdentifier] = None,
+        session_id: str = "",
     ) -> Optional[Context]:
         """Create Context object from candidate and persist to AGFS as .md file."""
         viking_fs = get_viking_fs()
@@ -230,6 +249,8 @@ class MemoryExtractor:
                 category=candidate.category.value,
                 session_id=session_id,
                 user=user,
+                account_id=user.account_id if user else "",
+                owner_space=user.user_space_name() if user else "",
             )
             logger.info(f"uri {memory_uri} abstract: {payload.abstract} content: {payload.content}")
             memory.set_vectorize(Vectorize(text=payload.content))
@@ -267,6 +288,8 @@ class MemoryExtractor:
             category=candidate.category.value,
             session_id=session_id,
             user=user,
+            account_id=user.account_id if user else "",
+            owner_space=_get_owner_space(user, candidate.category),
         )
         logger.info(f"uri {memory_uri} abstract: {candidate.abstract} content: {candidate.content}")
         memory.set_vectorize(Vectorize(text=candidate.content))

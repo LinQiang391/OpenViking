@@ -37,6 +37,10 @@ class UserIdentifier(object):
     def account_id(self) -> str:
         return self._account_id
 
+    @property
+    def user_id(self) -> str:
+        return self._user_id
+
     def user_space_name(self) -> str:
         """User-level space, determined by user_id only.
         Does not contain account_id (account_id is handled by VikingFS at AGFS path level)."""

@@ -110,3 +110,56 @@ pub async fn regenerate_key(
     output_success(&response, output_format, compact);
     Ok(())
 }
+
+pub async fn create_invitation_token(
+    client: &HttpClient,
+    max_uses: Option<i64>,
+    expires_at: Option<&str>,
+    output_format: OutputFormat,
+    compact: bool,
+) -> Result<()> {
+    let response = client.admin_create_invitation_token(max_uses, expires_at).await?;
+    output_success(&response, output_format, compact);
+    Ok(())
+}
+
+pub async fn list_invitation_tokens(
+    client: &HttpClient,
+    output_format: OutputFormat,
+    compact: bool,
+) -> Result<()> {
+    let response = client.admin_list_invitation_tokens().await?;
+    output_success(&response, output_format, compact);
+    Ok(())
+}
+
+pub async fn revoke_invitation_token(
+    client: &HttpClient,
+    token_id: &str,
+    output_format: OutputFormat,
+    compact: bool,
+) -> Result<()> {
+    let response = client.admin_revoke_invitation_token(token_id).await?;
+    let result = if response.is_null()
+        || response.as_object().map(|o| o.is_empty()).unwrap_or(false)
+    {
+        json!({"revoked": true})
+    } else {
+        response
+    };
+    output_success(&result, output_format, compact);
+    Ok(())
+}
+
+pub async fn register_account(
+    client: &HttpClient,
+    invitation_token: &str,
+    account_id: &str,
+    admin_user_id: &str,
+    output_format: OutputFormat,
+    compact: bool,
+) -> Result<()> {
+    let response = client.register_account(invitation_token, account_id, admin_user_id).await?;
+    output_success(&response, output_format, compact);
+    Ok(())
+}

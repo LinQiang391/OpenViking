@@ -720,6 +720,44 @@ class AsyncHTTPClient(BaseClient):
         )
         return self._handle_response(response)
 
+    async def admin_create_invitation_token(
+        self,
+        max_uses: Optional[int] = None,
+        expires_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create an invitation token for self-service registration."""
+        body: Dict[str, Any] = {}
+        if max_uses is not None:
+            body["max_uses"] = max_uses
+        if expires_at is not None:
+            body["expires_at"] = expires_at
+        response = await self._http.post("/api/v1/admin/invitation-tokens", json=body)
+        return self._handle_response(response)
+
+    async def admin_list_invitation_tokens(self) -> List[Any]:
+        """List all invitation tokens."""
+        response = await self._http.get("/api/v1/admin/invitation-tokens")
+        return self._handle_response(response)
+
+    async def admin_revoke_invitation_token(self, token_id: str) -> Dict[str, Any]:
+        """Revoke an invitation token."""
+        response = await self._http.delete(f"/api/v1/admin/invitation-tokens/{token_id}")
+        return self._handle_response(response)
+
+    async def register_account(
+        self, invitation_token: str, account_id: str, admin_user_id: str
+    ) -> Dict[str, Any]:
+        """Register a new account using an invitation token (no auth required)."""
+        response = await self._http.post(
+            "/api/v1/register/account",
+            json={
+                "invitation_token": invitation_token,
+                "account_id": account_id,
+                "admin_user_id": admin_user_id,
+            },
+        )
+        return self._handle_response(response)
+
     # ============= New methods for BaseClient interface =============
 
     def session(self, session_id: Optional[str] = None) -> Any:

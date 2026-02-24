@@ -287,6 +287,30 @@ class SyncHTTPClient:
         """Regenerate a user's API key. Old key is immediately invalidated."""
         return run_async(self._async_client.admin_regenerate_key(account_id, user_id))
 
+    def admin_create_invitation_token(
+        self,
+        max_uses: Optional[int] = None,
+        expires_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create an invitation token for self-service registration."""
+        return run_async(self._async_client.admin_create_invitation_token(max_uses, expires_at))
+
+    def admin_list_invitation_tokens(self) -> List[Any]:
+        """List all invitation tokens."""
+        return run_async(self._async_client.admin_list_invitation_tokens())
+
+    def admin_revoke_invitation_token(self, token_id: str) -> Dict[str, Any]:
+        """Revoke an invitation token."""
+        return run_async(self._async_client.admin_revoke_invitation_token(token_id))
+
+    def register_account(
+        self, invitation_token: str, account_id: str, admin_user_id: str
+    ) -> Dict[str, Any]:
+        """Register a new account using an invitation token (no auth required)."""
+        return run_async(
+            self._async_client.register_account(invitation_token, account_id, admin_user_id)
+        )
+
     # ============= Debug =============
 
     def health(self) -> bool:

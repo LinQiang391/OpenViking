@@ -94,6 +94,122 @@ Server connects to remote AGFS and VectorDB services. Configure remote URLs in `
 python -m openviking serve
 ```
 
+### Cloud (Volcengine)
+
+Use Volcengine TOS (object storage) + VikingDB (vector database) as backends for production deployments.
+
+See `examples/cloud/ov.conf.example` for a complete config template. Key configuration:
+
+```json
+{
+  "storage": {
+    "agfs": {
+      "backend": "s3",
+      "port": 1833,
+      "s3": {
+        "bucket": "<TOS_BUCKET_NAME>",
+        "region": "cn-beijing",
+        "access_key": "<TOS_ACCESS_KEY>",
+        "secret_key": "<TOS_SECRET_KEY>",
+        "endpoint": "https://tos-cn-beijing.ivolces.com",
+        "prefix": "openviking",
+        "use_ssl": true,
+        "use_path_style": false
+      }
+    },
+    "vectordb": {
+      "backend": "volcengine",
+      "name": "context",
+      "project": "openviking",
+      "dimension": 1024,
+      "volcengine": {
+        "ak": "<VIKINGDB_ACCESS_KEY>",
+        "sk": "<VIKINGDB_SECRET_KEY>",
+        "region": "cn-beijing"
+      }
+    }
+  },
+  "embedding": {
+    "dense": {
+      "provider": "volcengine",
+      "model": "doubao-embedding-vision-250615",
+      "api_key": "<ARK_API_KEY>",
+      "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+      "dimension": 1024
+    }
+  },
+  "vlm": {
+    "provider": "volcengine",
+    "model": "doubao-seed-1-8-251228",
+    "api_key": "<ARK_API_KEY>",
+    "api_base": "https://ark.cn-beijing.volces.com/api/v3"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 1933,
+    "root_api_key": "<ROOT_API_KEY>",
+    "cors_origins": ["*"]
+  }
+}
+```
+
+**Steps**:
+
+1. Copy the config template and fill in your credentials:
+   ```bash
+   cp examples/cloud/ov.conf.example ~/.openviking/ov.conf
+   # Edit ov.conf, replace all <PLACEHOLDER> values
+   ```
+
+2. Start the server:
+   ```bash
+   python -m openviking serve
+   ```
+
+3. Verify all dependencies are connected:
+   ```bash
+   curl http://localhost:1933/ready
+   # {"status": "ok", "checks": {"agfs": "ok", "vectordb": "ok", "api_key_manager": "ok"}}
+   ```
+
+### Kubernetes
+
+The project includes a Helm chart at `examples/k8s-helm/`.
+
+```bash
+# Install
+helm install openviking examples/k8s-helm/ \
+  --set-file config=~/.openviking/ov.conf
+
+# Verify pod readiness
+kubectl get pods -l app.kubernetes.io/name=openviking
+```
+
+The Helm chart configures two probes:
+
+| Probe | Path | Purpose |
+|-------|------|---------|
+| `livenessProbe` | `/health` | Process liveness check; failure triggers pod restart |
+| `readinessProbe` | `/ready` | Dependency readiness check; failure removes pod from traffic |
+
+## Health Checks
+
+OpenViking provides two health check endpoints, both unauthenticated:
+
+**`GET /health`** — Process liveness check. Always returns `{"status": "ok"}`. Used for K8s livenessProbe and basic connectivity verification.
+
+**`GET /ready`** — Dependency readiness check. Verifies connectivity to AGFS, VectorDB, and APIKeyManager. Returns 200 when all components are healthy, 503 otherwise.
+
+```bash
+# Basic liveness check
+curl http://localhost:1933/health
+
+# Full readiness check
+curl http://localhost:1933/ready
+# OK: {"status": "ok", "checks": {"agfs": "ok", "vectordb": "ok", "api_key_manager": "ok"}}
+# Degraded: {"status": "degraded", "checks": {"agfs": "ok", "vectordb": "error: ...", "api_key_manager": "ok"}}
+```
+
 ## Connecting Clients
 
 ### Python SDK

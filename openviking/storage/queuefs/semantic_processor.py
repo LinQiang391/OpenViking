@@ -493,6 +493,7 @@ class SemanticProcessor(DequeueHandlerBase):
             context_type=context_type,
         )
         context.account_id = ctx.account_id if ctx else ""
+        context.owner_space = ""  # resources 为 account 级共享，owner_space 留空
         context.set_vectorize(Vectorize(text=overview))
 
         embedding_msg = EmbeddingMsgConverter.from_context(context)
@@ -557,6 +558,7 @@ class SemanticProcessor(DequeueHandlerBase):
                 created_at=datetime.now(),
             )
             context.account_id = ctx.account_id if ctx else ""
+            context.owner_space = ""  # resources 为 account 级共享，owner_space 留空
 
             if self.get_resource_content_type(file_name) == ResourceContentType.TEXT:
                 content = await get_viking_fs().read_file(file_path, ctx=ctx)

@@ -73,6 +73,8 @@ class SkillProcessor:
                 "tags": skill_dict.get("tags", []),
                 "source_path": skill_dict.get("source_path", ""),
             },
+            account_id=user.account_id if user else "",
+            owner_space=user.agent_space_name() if user else "",
         )
         context.set_vectorize(Vectorize(text=context.abstract))
 

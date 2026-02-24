@@ -112,29 +112,85 @@ When no `root_api_key` is configured, authentication is disabled. All requests a
 }
 ```
 
-## Unauthenticated Endpoints
+## Invitation Token Self-Registration
 
-The `/health` endpoint never requires authentication. This allows load balancers and monitoring tools to check server health.
+In addition to ROOT manually creating accounts, OpenViking supports self-service registration via invitation tokens. This is useful for controlled open registration.
 
-```bash
-curl http://localhost:1933/health
+### Flow
+
+```
+ROOT creates invitation token → distributes token → user self-registers → gets admin key
 ```
 
-## Admin API Reference
+### 1. Create Invitation Token (ROOT)
 
-| Method | Endpoint | Role | Description |
-|--------|----------|------|-------------|
-| POST | `/api/v1/admin/accounts` | ROOT | Create account with first admin |
-| GET | `/api/v1/admin/accounts` | ROOT | List all accounts |
-| DELETE | `/api/v1/admin/accounts/{id}` | ROOT | Delete account |
-| POST | `/api/v1/admin/accounts/{id}/users` | ROOT, ADMIN | Register user |
-| GET | `/api/v1/admin/accounts/{id}/users` | ROOT, ADMIN | List users |
-| DELETE | `/api/v1/admin/accounts/{id}/users/{uid}` | ROOT, ADMIN | Remove user |
-| PUT | `/api/v1/admin/accounts/{id}/users/{uid}/role` | ROOT | Change user role |
-| POST | `/api/v1/admin/accounts/{id}/users/{uid}/key` | ROOT, ADMIN | Regenerate user key |
+```bash
+# Create unlimited, non-expiring token
+curl -X POST http://localhost:1933/api/v1/admin/invitation-tokens \
+  -H "X-API-Key: <ROOT_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Create token with 50 uses limit, 30-day expiry
+curl -X POST http://localhost:1933/api/v1/admin/invitation-tokens \
+  -H "X-API-Key: <ROOT_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"max_uses": 50, "expires_at": "2026-03-24T00:00:00Z"}'
+
+# Returns:
+# {"status": "ok", "result": {"token_id": "inv_abc123...", "account_id": "default", ...}}
+```
+
+### 2. Manage Tokens (ROOT)
+
+```bash
+# List all invitation tokens
+curl http://localhost:1933/api/v1/admin/invitation-tokens \
+  -H "X-API-Key: <ROOT_KEY>"
+
+# Revoke a token
+curl -X DELETE http://localhost:1933/api/v1/admin/invitation-tokens/inv_abc123 \
+  -H "X-API-Key: <ROOT_KEY>"
+```
+
+### 3. Self-Register (No Auth Required)
+
+```bash
+curl -X POST http://localhost:1933/api/v1/register/account \
+  -H "Content-Type: application/json" \
+  -d '{
+    "invitation_token": "inv_abc123...",
+    "account_id": "my-team",
+    "admin_user_id": "alice"
+  }'
+
+# Returns:
+# {"status": "ok", "result": {"account_id": "my-team", "admin_user_id": "alice", "admin_key": "..."}}
+```
+
+After registration, the user receives an admin key for the new account and can register additional users.
+
+### Token Constraints
+
+| Condition | Behavior |
+|-----------|----------|
+| Token does not exist or was revoked | Registration fails |
+| Token has expired (`expires_at`) | Registration fails |
+| Token has reached usage limit (`max_uses`) | Registration fails |
+| `account_id` already exists | Registration fails |
+
+## Unauthenticated Endpoints
+
+The following endpoints do not require authentication:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Process liveness check |
+| `GET /ready` | Dependency readiness check |
+| `POST /api/v1/register/account` | Invitation token self-registration |
 
 ## Related Documentation
 
+- [Admin API Reference](../api/08-admin.md) - Full Admin API parameters, examples, and response formats
 - [Configuration](01-configuration.md) - Config file reference
 - [Deployment](03-deployment.md) - Server setup
-- [API Overview](../api/01-overview.md) - API reference

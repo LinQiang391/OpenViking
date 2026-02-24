@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Admin endpoints for OpenViking multi-tenant HTTP Server."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Path, Request
 from pydantic import BaseModel
 
@@ -25,6 +27,11 @@ class RegisterUserRequest(BaseModel):
 
 class SetRoleRequest(BaseModel):
     role: str
+
+
+class CreateInvitationTokenRequest(BaseModel):
+    max_uses: Optional[int] = None
+    expires_at: Optional[str] = None
 
 
 def _get_api_key_manager(request: Request):
@@ -204,3 +211,45 @@ async def regenerate_key(
     manager = _get_api_key_manager(request)
     new_key = await manager.regenerate_key(account_id, user_id)
     return Response(status="ok", result={"user_key": new_key})
+
+
+# ---- Invitation Token endpoints ----
+
+
+@router.post("/invitation-tokens")
+async def create_invitation_token(
+    body: CreateInvitationTokenRequest,
+    request: Request,
+    ctx: RequestContext = require_role(Role.ROOT),
+):
+    """Create an invitation token for self-service account registration (ROOT only)."""
+    manager = _get_api_key_manager(request)
+    token_info = await manager.create_invitation_token(
+        created_by="root",
+        max_uses=body.max_uses,
+        expires_at=body.expires_at,
+    )
+    return Response(status="ok", result=token_info)
+
+
+@router.get("/invitation-tokens")
+async def list_invitation_tokens(
+    request: Request,
+    ctx: RequestContext = require_role(Role.ROOT),
+):
+    """List all invitation tokens (ROOT only)."""
+    manager = _get_api_key_manager(request)
+    tokens = manager.list_invitation_tokens()
+    return Response(status="ok", result=tokens)
+
+
+@router.delete("/invitation-tokens/{token_id}")
+async def revoke_invitation_token(
+    request: Request,
+    token_id: str = Path(..., description="Invitation token ID"),
+    ctx: RequestContext = require_role(Role.ROOT),
+):
+    """Revoke an invitation token (ROOT only)."""
+    manager = _get_api_key_manager(request)
+    await manager.revoke_invitation_token(token_id)
+    return Response(status="ok", result={"revoked": True})

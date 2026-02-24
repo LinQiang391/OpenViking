@@ -1,0 +1,50 @@
+{
+    "storage": {
+        "agfs": {
+            "backend": "s3",
+            "port": 1833,
+            "s3": {
+                "bucket": "<TOS_BUCKET_NAME>",
+                "region": "cn-beijing",
+                "access_key": "<TOS_ACCESS_KEY>",
+                "secret_key": "<TOS_SECRET_KEY>",
+                "endpoint": "https://tos-cn-beijing.ivolces.com",
+                "prefix": "openviking",
+                "use_ssl": true,
+                "use_path_style": false
+            }
+        },
+        "vectordb": {
+            "backend": "volcengine",
+            "name": "context",
+            "project": "openviking",
+            "dimension": 1024,
+            "volcengine": {
+                "ak": "<VIKINGDB_ACCESS_KEY>",
+                "sk": "<VIKINGDB_SECRET_KEY>",
+                "region": "cn-beijing"
+            }
+        }
+    },
+    "embedding": {
+        "dense": {
+            "provider": "volcengine",
+            "model": "doubao-embedding-vision-250615",
+            "api_key": "<ARK_API_KEY>",
+            "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+            "dimension": 1024
+        }
+    },
+    "vlm": {
+        "provider": "volcengine",
+        "model": "doubao-seed-1-8-251228",
+        "api_key": "<ARK_API_KEY>",
+        "api_base": "https://ark.cn-beijing.volces.com/api/v3"
+    },
+    "server": {
+        "host": "0.0.0.0",
+        "port": 1933,
+        "root_api_key": "<ROOT_API_KEY>",
+        "cors_origins": ["*"]
+    }
+}

@@ -94,6 +94,122 @@ python -m openviking serve
 python -m openviking serve
 ```
 
+### 云上模式（火山引擎）
+
+使用火山引擎 TOS（对象存储）+ VikingDB（向量数据库）作为后端，适合生产环境部署。
+
+完整配置模板见 `examples/cloud/ov.conf.example`，核心配置如下：
+
+```json
+{
+  "storage": {
+    "agfs": {
+      "backend": "s3",
+      "port": 1833,
+      "s3": {
+        "bucket": "<TOS_BUCKET_NAME>",
+        "region": "cn-beijing",
+        "access_key": "<TOS_ACCESS_KEY>",
+        "secret_key": "<TOS_SECRET_KEY>",
+        "endpoint": "https://tos-cn-beijing.ivolces.com",
+        "prefix": "openviking",
+        "use_ssl": true,
+        "use_path_style": false
+      }
+    },
+    "vectordb": {
+      "backend": "volcengine",
+      "name": "context",
+      "project": "openviking",
+      "dimension": 1024,
+      "volcengine": {
+        "ak": "<VIKINGDB_ACCESS_KEY>",
+        "sk": "<VIKINGDB_SECRET_KEY>",
+        "region": "cn-beijing"
+      }
+    }
+  },
+  "embedding": {
+    "dense": {
+      "provider": "volcengine",
+      "model": "doubao-embedding-vision-250615",
+      "api_key": "<ARK_API_KEY>",
+      "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+      "dimension": 1024
+    }
+  },
+  "vlm": {
+    "provider": "volcengine",
+    "model": "doubao-seed-1-8-251228",
+    "api_key": "<ARK_API_KEY>",
+    "api_base": "https://ark.cn-beijing.volces.com/api/v3"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 1933,
+    "root_api_key": "<ROOT_API_KEY>",
+    "cors_origins": ["*"]
+  }
+}
+```
+
+**步骤**：
+
+1. 复制配置模板并填写实际凭证：
+   ```bash
+   cp examples/cloud/ov.conf.example ~/.openviking/ov.conf
+   # 编辑 ov.conf，替换所有 <PLACEHOLDER> 为实际值
+   ```
+
+2. 启动服务：
+   ```bash
+   python -m openviking serve
+   ```
+
+3. 验证所有依赖连通：
+   ```bash
+   curl http://localhost:1933/ready
+   # {"status": "ok", "checks": {"agfs": "ok", "vectordb": "ok", "api_key_manager": "ok"}}
+   ```
+
+### Kubernetes 部署
+
+项目提供 Helm Chart，见 `examples/k8s-helm/`。
+
+```bash
+# 安装
+helm install openviking examples/k8s-helm/ \
+  --set-file config=~/.openviking/ov.conf
+
+# 验证 Pod 就绪
+kubectl get pods -l app.kubernetes.io/name=openviking
+```
+
+Helm Chart 中配置了两个探针：
+
+| 探针 | 路径 | 用途 |
+|------|------|------|
+| `livenessProbe` | `/health` | 进程存活检查，失败则重启 Pod |
+| `readinessProbe` | `/ready` | 依赖就绪检查，失败则摘除流量 |
+
+## 健康检查
+
+OpenViking 提供两个健康检查端点，均无需认证：
+
+**`GET /health`** — 进程存活检查，始终返回 `{"status": "ok"}`。用于 K8s livenessProbe 和基本连通性验证。
+
+**`GET /ready`** — 依赖就绪检查，验证 AGFS、VectorDB、APIKeyManager 的连通性。全部正常返回 200，有组件异常返回 503。
+
+```bash
+# 基本存活检查
+curl http://localhost:1933/health
+
+# 完整就绪检查
+curl http://localhost:1933/ready
+# 成功: {"status": "ok", "checks": {"agfs": "ok", "vectordb": "ok", "api_key_manager": "ok"}}
+# 异常: {"status": "degraded", "checks": {"agfs": "ok", "vectordb": "error: ...", "api_key_manager": "ok"}}
+```
+
 ## 连接客户端
 
 ### Python SDK

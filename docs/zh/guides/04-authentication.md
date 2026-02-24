@@ -112,29 +112,85 @@ client = ov.SyncHTTPClient(
 }
 ```
 
-## 无需认证的端点
+## 邀请 Token 自助注册
 
-`/health` 端点始终不需要认证，用于负载均衡器和监控工具检查服务健康状态。
+除了 ROOT 手动创建账户外，OpenViking 还支持通过邀请 Token 让用户自助注册。适用于需要开放注册但又要控制入口的场景。
 
-```bash
-curl http://localhost:1933/health
+### 流程
+
+```
+ROOT 创建邀请 Token → 分发 Token 给用户 → 用户凭 Token 自助注册 → 获得 admin key
 ```
 
-## Admin API 参考
+### 1. 创建邀请 Token（ROOT）
 
-| 方法 | 端点 | 角色 | 说明 |
-|------|------|------|------|
-| POST | `/api/v1/admin/accounts` | ROOT | 创建工作区 + 首个 admin |
-| GET | `/api/v1/admin/accounts` | ROOT | 列出所有工作区 |
-| DELETE | `/api/v1/admin/accounts/{id}` | ROOT | 删除工作区 |
-| POST | `/api/v1/admin/accounts/{id}/users` | ROOT, ADMIN | 注册用户 |
-| GET | `/api/v1/admin/accounts/{id}/users` | ROOT, ADMIN | 列出用户 |
-| DELETE | `/api/v1/admin/accounts/{id}/users/{uid}` | ROOT, ADMIN | 移除用户 |
-| PUT | `/api/v1/admin/accounts/{id}/users/{uid}/role` | ROOT | 修改用户角色 |
-| POST | `/api/v1/admin/accounts/{id}/users/{uid}/key` | ROOT, ADMIN | 重新生成 user key |
+```bash
+# 创建不限次数、不过期的 Token
+curl -X POST http://localhost:1933/api/v1/admin/invitation-tokens \
+  -H "X-API-Key: <ROOT_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# 创建限 50 次使用、30 天过期的 Token
+curl -X POST http://localhost:1933/api/v1/admin/invitation-tokens \
+  -H "X-API-Key: <ROOT_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"max_uses": 50, "expires_at": "2026-03-24T00:00:00Z"}'
+
+# 返回:
+# {"status": "ok", "result": {"token_id": "inv_abc123...", "account_id": "default", ...}}
+```
+
+### 2. 查看和管理 Token（ROOT）
+
+```bash
+# 列出所有邀请 Token
+curl http://localhost:1933/api/v1/admin/invitation-tokens \
+  -H "X-API-Key: <ROOT_KEY>"
+
+# 撤销某个 Token
+curl -X DELETE http://localhost:1933/api/v1/admin/invitation-tokens/inv_abc123 \
+  -H "X-API-Key: <ROOT_KEY>"
+```
+
+### 3. 用户自助注册（无需认证）
+
+```bash
+curl -X POST http://localhost:1933/api/v1/register/account \
+  -H "Content-Type: application/json" \
+  -d '{
+    "invitation_token": "inv_abc123...",
+    "account_id": "my-team",
+    "admin_user_id": "alice"
+  }'
+
+# 返回:
+# {"status": "ok", "result": {"account_id": "my-team", "admin_user_id": "alice", "admin_key": "..."}}
+```
+
+注册成功后，用户获得该 account 的 admin key，可以用来注册更多用户。
+
+### Token 限制
+
+| 条件 | 行为 |
+|------|------|
+| Token 不存在或已撤销 | 注册失败 |
+| Token 已过期（`expires_at`） | 注册失败 |
+| Token 已达使用上限（`max_uses`） | 注册失败 |
+| `account_id` 已存在 | 注册失败 |
+
+## 无需认证的端点
+
+以下端点不需要认证：
+
+| 端点 | 用途 |
+|------|------|
+| `GET /health` | 进程存活检查 |
+| `GET /ready` | 依赖就绪检查 |
+| `POST /api/v1/register/account` | 邀请 Token 自助注册 |
 
 ## 相关文档
 
+- [Admin API 参考](../api/08-admin.md) - 完整的 Admin API 参数、示例和响应格式
 - [配置](01-configuration.md) - 配置文件说明
 - [服务部署](03-deployment.md) - 服务部署
-- [API 概览](../api/01-overview.md) - API 参考

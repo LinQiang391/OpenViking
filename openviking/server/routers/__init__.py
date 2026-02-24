@@ -8,6 +8,7 @@ from openviking.server.routers.debug import router as debug_router
 from openviking.server.routers.filesystem import router as filesystem_router
 from openviking.server.routers.observer import router as observer_router
 from openviking.server.routers.pack import router as pack_router
+from openviking.server.routers.register import router as register_router
 from openviking.server.routers.relations import router as relations_router
 from openviking.server.routers.resources import router as resources_router
 from openviking.server.routers.search import router as search_router
@@ -17,6 +18,7 @@ from openviking.server.routers.system import router as system_router
 __all__ = [
     "admin_router",
     "system_router",
+    "register_router",
     "resources_router",
     "filesystem_router",
     "content_router",
