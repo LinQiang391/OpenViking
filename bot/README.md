@@ -746,28 +746,3 @@ vikingbot cron remove <job_id>
 ```
 
 </details>
-
-## 🐳 Docker
-
-> [!TIP]
-> The `-v ~/.vikingbot:/root/.vikingbot` flag mounts your local config directory into the container, so your config and workspace persist across container restarts.
-
-Build and run vikingbot in a container:
-
-```bash
-# Build the image
-docker build -t vikingbot .
-
-# Initialize config (first time only)
-docker run -v ~/.vikingbot:/root/.vikingbot --rm vikingbot onboard
-
-# Edit config on host to add API keys
-vim ~/.vikingbot/config.json
-
-# Run gateway (connects to enabled channels, e.g. Telegram/Discord/Mochat)
-docker run -v ~/.vikingbot:/root/.vikingbot -p 18790:18790 vikingbot gateway
-
-# Or run a single command
-docker run -v ~/.vikingbot:/root/.vikingbot --rm vikingbot agent -m "Hello!"
-docker run -v ~/.vikingbot:/root/.vikingbot --rm vikingbot status
-```
