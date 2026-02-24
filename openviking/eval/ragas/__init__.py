@@ -27,11 +27,14 @@ logger = get_logger(__name__)
 RAGAS_LLM_API_KEY_ENV = "RAGAS_LLM_API_KEY"
 RAGAS_LLM_API_BASE_ENV = "RAGAS_LLM_API_BASE"
 RAGAS_LLM_MODEL_ENV = "RAGAS_LLM_MODEL"
+RAGAS_LLM_MAX_TOKENS_ENV = "RAGAS_LLM_MAX_TOKENS"
 
 RAGAS_MAX_WORKERS_ENV = "RAGAS_MAX_WORKERS"
 RAGAS_BATCH_SIZE_ENV = "RAGAS_BATCH_SIZE"
 RAGAS_TIMEOUT_ENV = "RAGAS_TIMEOUT"
 RAGAS_MAX_RETRIES_ENV = "RAGAS_MAX_RETRIES"
+
+RAGAS_DEFAULT_MAX_TOKENS = 4096
 
 
 @dataclass
@@ -73,7 +76,7 @@ class RagasConfig:
         )
 
 
-def _get_llm_config_from_env() -> Optional[Dict[str, str]]:
+def _get_llm_config_from_env() -> Optional[Dict[str, Any]]:
     """
     Get LLM configuration from environment variables.
 
@@ -81,19 +84,22 @@ def _get_llm_config_from_env() -> Optional[Dict[str, str]]:
         - RAGAS_LLM_API_KEY: API key for the LLM
         - RAGAS_LLM_API_BASE: API base URL (e.g., https://ark.cn-beijing.volces.com/api/v3)
         - RAGAS_LLM_MODEL: Model name (e.g., ep-xxxx-xxxx)
+        - RAGAS_LLM_MAX_TOKENS: Maximum tokens for LLM response (default: 4096)
 
     Returns:
-        Dict with api_key, api_base, model or None if not configured.
+        Dict with api_key, api_base, model, max_tokens or None if not configured.
     """
     api_key = os.environ.get(RAGAS_LLM_API_KEY_ENV)
     api_base = os.environ.get(RAGAS_LLM_API_BASE_ENV)
     model = os.environ.get(RAGAS_LLM_MODEL_ENV)
+    max_tokens = int(os.environ.get(RAGAS_LLM_MAX_TOKENS_ENV, RAGAS_DEFAULT_MAX_TOKENS))
 
     if api_key:
         return {
             "api_key": api_key,
             "api_base": api_base,
             "model": model,
+            "max_tokens": max_tokens,
         }
     return None
 
@@ -103,7 +109,7 @@ def _create_ragas_llm_from_config() -> Optional[Any]:
     Create a RAGAS-compatible LLM from OpenViking VLM configuration or environment variables.
 
     Priority:
-        1. Environment variables (RAGAS_LLM_API_KEY, RAGAS_LLM_API_BASE, RAGAS_LLM_MODEL)
+        1. Environment variables (RAGAS_LLM_API_KEY, RAGAS_LLM_API_BASE, RAGAS_LLM_MODEL, RAGAS_LLM_MAX_TOKENS)
         2. OpenViking VLM configuration (~/.openviking/ov.conf)
 
     Returns:
@@ -120,14 +126,15 @@ def _create_ragas_llm_from_config() -> Optional[Any]:
         api_key = env_config["api_key"]
         api_base = env_config["api_base"]
         model_name = env_config["model"] or "gpt-4o-mini"
+        max_tokens = env_config["max_tokens"]
 
-        logger.info(f"Using RAGAS LLM from environment: model={model_name}, base_url={api_base}")
+        logger.info(f"Using RAGAS LLM from environment: model={model_name}, base_url={api_base}, max_tokens={max_tokens}")
 
         client = OpenAI(
             api_key=api_key,
             base_url=api_base,
         )
-        return llm_factory(model_name, client=client)
+        return llm_factory(model_name, client=client, max_tokens=max_tokens)
 
     try:
         from openviking_cli.utils.config import get_openviking_config
@@ -156,7 +163,8 @@ def _create_ragas_llm_from_config() -> Optional[Any]:
     )
 
     model_name = vlm_config.model or "gpt-4o-mini"
-    return llm_factory(model_name, client=client)
+    max_tokens = int(os.environ.get(RAGAS_LLM_MAX_TOKENS_ENV, RAGAS_DEFAULT_MAX_TOKENS))
+    return llm_factory(model_name, client=client, max_tokens=max_tokens)
 
 
 class RagasEvaluator(BaseEvaluator):

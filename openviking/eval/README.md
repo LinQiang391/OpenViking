@@ -301,6 +301,7 @@ RAGAS 评估支持以下性能配置参数：
 | batch_size | 10 | RAGAS_BATCH_SIZE | 批处理大小 |
 | timeout | 180 | RAGAS_TIMEOUT | 超时时间（秒） |
 | max_retries | 3 | RAGAS_MAX_RETRIES | 最大重试次数 |
+| max_tokens | 4096 | RAGAS_LLM_MAX_TOKENS | LLM 响应最大 token 数 |
 
 ```bash
 # 通过环境变量配置
@@ -308,8 +309,19 @@ export RAGAS_MAX_WORKERS=8
 export RAGAS_BATCH_SIZE=5
 export RAGAS_TIMEOUT=120
 export RAGAS_MAX_RETRIES=2
+export RAGAS_LLM_MAX_TOKENS=8192  # 如果遇到 IncompleteOutputException，增大此值
 
 python -m openviking.eval.ragas.rag_eval --docs_dir ./docs --question_file ./questions.jsonl --ragas
+```
+
+### 常见问题：IncompleteOutputException
+
+如果遇到 `IncompleteOutputException: The output is incomplete due to a max_tokens length limit` 错误，
+说明 LLM 响应被 token 限制截断。解决方法：
+
+```bash
+# 增大 max_tokens 值
+export RAGAS_LLM_MAX_TOKENS=8192
 ```
 
 ## 相关文件
