@@ -146,7 +146,7 @@ class VikingClient:
 
 
 if __name__ == "__main__":
-    client = VikingClient("http://115.191.64.130:1933")
+    client = VikingClient("")
     # res = client.list_resources()
     res = client.search("头有点疼")
     # res = client.read_content("viking://resources/bot_test/dutao/test/")
