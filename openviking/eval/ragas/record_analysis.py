@@ -369,44 +369,74 @@ def print_analysis_stats(stats: RecordAnalysisStats) -> None:
         print("FS Operation Statistics")
         print("=" * 80)
 
-        print("\n" + "-" * 110)
-        print(f"{'Operation':<10} {'Count':>6} {'Total(ms)':>10} {'Avg(ms)':>10} {'Min(ms)':>10} {'Max(ms)':>10} {'Success':>8} {'Errors':>8} {'Rate':>8}")
-        print("-" * 110)
+        all_ops = list(stats.fs_operations.keys())
+        op_width = max(len(op) for op in all_ops) if all_ops else 15
+        op_width = max(op_width, 15)
+        table_width = op_width + 6 + 12 + 12 + 12 + 12 + 10 + 10 + 10 + 9
+
+        print("\n" + "-" * table_width)
+        print(
+            f"{'Operation':<{op_width}} "
+            f"{'Count':>6} "
+            f"{'Total(ms)':>12} "
+            f"{'Avg(ms)':>12} "
+            f"{'Min(ms)':>12} "
+            f"{'Max(ms)':>12} "
+            f"{'Success':>10} "
+            f"{'Errors':>10} "
+            f"{'Rate':>10}"
+        )
+        print("-" * table_width)
         for op, op_stats in sorted(stats.fs_operations.items()):
             print(
-                f"{op:<10} "
+                f"{op:<{op_width}} "
                 f"{op_stats.count:>6} "
-                f"{op_stats.total_latency_ms:>10.2f} "
-                f"{op_stats.avg_latency_ms:>10.2f} "
-                f"{op_stats.min_latency_ms:>10.2f} "
-                f"{op_stats.max_latency_ms:>10.2f} "
-                f"{op_stats.success_count:>8} "
-                f"{op_stats.error_count:>8} "
-                f"{f'{op_stats.success_rate_percent:.1f}%':>8}"
+                f"{op_stats.total_latency_ms:>12.2f} "
+                f"{op_stats.avg_latency_ms:>12.2f} "
+                f"{op_stats.min_latency_ms:>12.2f} "
+                f"{op_stats.max_latency_ms:>12.2f} "
+                f"{op_stats.success_count:>10} "
+                f"{op_stats.error_count:>10} "
+                f"{f'{op_stats.success_rate_percent:.1f}%':>10}"
             )
-        print("-" * 110)
+        print("-" * table_width)
 
     if stats.vikingdb_operations:
         print("\n" + "=" * 80)
         print("VikingDB Operation Statistics")
         print("=" * 80)
 
-        print("\n" + "-" * 110)
-        print(f"{'Operation':<10} {'Count':>6} {'Total(ms)':>10} {'Avg(ms)':>10} {'Min(ms)':>10} {'Max(ms)':>10} {'Success':>8} {'Errors':>8} {'Rate':>8}")
-        print("-" * 110)
+        all_ops = list(stats.vikingdb_operations.keys())
+        op_width = max(len(op) for op in all_ops) if all_ops else 15
+        op_width = max(op_width, 15)
+        table_width = op_width + 6 + 12 + 12 + 12 + 12 + 10 + 10 + 10 + 9
+
+        print("\n" + "-" * table_width)
+        print(
+            f"{'Operation':<{op_width}} "
+            f"{'Count':>6} "
+            f"{'Total(ms)':>12} "
+            f"{'Avg(ms)':>12} "
+            f"{'Min(ms)':>12} "
+            f"{'Max(ms)':>12} "
+            f"{'Success':>10} "
+            f"{'Errors':>10} "
+            f"{'Rate':>10}"
+        )
+        print("-" * table_width)
         for op, op_stats in sorted(stats.vikingdb_operations.items()):
             print(
-                f"{op:<10} "
+                f"{op:<{op_width}} "
                 f"{op_stats.count:>6} "
-                f"{op_stats.total_latency_ms:>10.2f} "
-                f"{op_stats.avg_latency_ms:>10.2f} "
-                f"{op_stats.min_latency_ms:>10.2f} "
-                f"{op_stats.max_latency_ms:>10.2f} "
-                f"{op_stats.success_count:>8} "
-                f"{op_stats.error_count:>8} "
-                f"{f'{op_stats.success_rate_percent:.1f}%':>8}"
+                f"{op_stats.total_latency_ms:>12.2f} "
+                f"{op_stats.avg_latency_ms:>12.2f} "
+                f"{op_stats.min_latency_ms:>12.2f} "
+                f"{op_stats.max_latency_ms:>12.2f} "
+                f"{op_stats.success_count:>10} "
+                f"{op_stats.error_count:>10} "
+                f"{f'{op_stats.success_rate_percent:.1f}%':>10}"
             )
-        print("-" * 110)
+        print("-" * table_width)
 
     print("\n" + "=" * 80)
     print("Analysis Complete")

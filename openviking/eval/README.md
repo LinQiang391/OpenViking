@@ -9,23 +9,24 @@ Eval 模块支持对 RAG 系统进行全面评估：
 - **检索质量评估**：精确度、召回率、相关性
 - **生成质量评估**：忠实度、答案相关性
 - **性能评估**：检索速度、端到端延迟
-- **框架集成**：支持 RAGAS、TruLens 等主流评测工具
+- **框架集成**：支持 RAGAS等主流评测工具
 - **存储层评估**：IO 操作录制与回放，对比不同存储后端性能
 
 ## 模块设计
 
 ```
 openviking/eval/
-├── types.py         # 数据类型：EvalSample, EvalDataset, EvalResult
-├── base.py          # 评估器基类：BaseEvaluator
-├── ragas.py         # RAGAS 框架集成
-├── generator.py     # 数据集生成器
-├── pipeline.py      # RAG 查询流水线
-├── rag_eval.py      # CLI 评估工具
-├── playback.py      # Playback 回放器
-├── record_analysis.py  # Record 分析器
-├── play_recorder.py # Playback CLI 工具
-├── analyze_records.py # Record 分析 CLI 工具
+├── ragas/           # RAGAS 框架集成模块（包含所有评估相关代码）
+│   ├── __init__.py  # RAGAS 评估器与核心类型导出
+│   ├── base.py      # 评估器基类：BaseEvaluator
+│   ├── types.py     # 数据类型：EvalSample, EvalDataset, EvalResult
+│   ├── generator.py # 数据集生成器
+│   ├── pipeline.py  # RAG 查询流水线
+│   ├── playback.py  # Playback 回放器
+│   ├── record_analysis.py  # Record 分析器
+│   ├── rag_eval.py  # CLI 评估工具
+│   ├── play_recorder.py # Playback CLI 工具
+│   └── analyze_records.py # Record 分析 CLI 工具
 ├── recorder/        # IO 录制器模块
 │   ├── __init__.py  # IORecorder 录制器
 │   ├── wrapper.py   # 存储层包装器
@@ -112,7 +113,7 @@ asyncio.run(main())
 ```bash
 # 基础评估
 # --docs_dir 评估前会将指定的路径加载到 OpenViking 中
-python -m openviking.eval.rag_eval \
+python -m openviking.eval.ragas.rag_eval \
     --docs_dir ./docs \
     --question_file ./questions.jsonl \
     --config ./ov.conf \
@@ -120,13 +121,13 @@ python -m openviking.eval.rag_eval \
 
 # 直接评估，不加载文档库
 # 启用 RAGAS 指标
-python -m openviking.eval.rag_eval \
+python -m openviking.eval.ragas.rag_eval \
     --question_file ./questions.jsonl \
     --ragas \
     --output ./results.json
 
 # 启用 IO 录制（用于存储层评估）
-python -m openviking.eval.rag_eval \
+python -m openviking.eval.ragas.rag_eval \
     --docs_dir ./docs \
     --question_file ./questions.jsonl \
     --recorder \
@@ -139,7 +140,7 @@ python -m openviking.eval.rag_eval \
 
 ```bash
 # 评估文档检索效果
-python -m openviking.eval.rag_eval \
+python -m openviking.eval.ragas.rag_eval \
     --docs_dir ./docs \
     --docs_dir ./README.md \
     --question_file ./openviking/eval/datasets/local_doc_example_glm5.jsonl \
@@ -175,27 +176,27 @@ Record Analysis 用于分析录制的 IO 操作，提供全面的统计信息。
 
 ```bash
 # 分析所有记录
-python -m openviking.eval.analyze_records \
+python -m openviking.eval.ragas.analyze_records \
     --record_file ./records/io_recorder_20260214.jsonl
 
 # 只分析 FS 操作
-python -m openviking.eval.analyze_records \
+python -m openviking.eval.ragas.analyze_records \
     --record_file ./records/io_recorder_20260223.jsonl \
     --fs
 
 # 只分析 VikingDB 操作
-python -m openviking.eval.analyze_records \
+python -m openviking.eval.ragas.analyze_records \
     --record_file ./records/io_recorder_20260214.jsonl \
     --vikingdb
 
 # 过滤特定操作类型
-python -m openviking.eval.analyze_records \
+python -m openviking.eval.ragas.analyze_records \
     --record_file ./records/io_recorder_20260214.jsonl \
     --io-type fs \
     --operation read
 
 # 保存结果到文件
-python -m openviking.eval.analyze_records \
+python -m openviking.eval.ragas.analyze_records \
     --record_file ./records/io_recorder_20260214.jsonl \
     --output analysis.json
 ```
@@ -206,25 +207,25 @@ Playback 用于回放录制的 IO 操作，对比不同存储后端的性能差�
 
 ```bash
 # 使用远程配置回放
-python -m openviking.eval.play_recorder \
+python -m openviking.eval.ragas.play_recorder \
     --record_file ./records/io_recorder_20260223.jsonl \
     --config_file ./.local/s3/ov-local.conf \
     --output ./records/playback_results.json
 
 # 只测试 FS 操作
-python -m openviking.eval.play_recorder \
+python -m openviking.eval.ragas.play_recorder \
     --record_file ./records/io_recorder_20260214.jsonl \
     --config_file ./ov.conf \
     --fs
 
 # 只测试 VikingDB 操作
-python -m openviking.eval.play_recorder \
+python -m openviking.eval.ragas.play_recorder \
     --record_file ./records/io_recorder_20260214.jsonl \
     --config_file ./ov.conf \
     --vikingdb
 
 # 过滤特定操作类型
-python -m openviking.eval.play_recorder \
+python -m openviking.eval.ragas.play_recorder \
     --record_file ./records/io_recorder_20260214.jsonl \
     --config_file ./ov.conf \
     --io-type fs \
@@ -240,18 +241,18 @@ python -m openviking.eval.play_recorder \
 
 ```bash
 # 步骤 1：使用本地存储录制
-python -m openviking.eval.rag_eval \
+python -m openviking.eval.ragas.rag_eval \
     --docs_dir ./docs \
     --question_file ./questions.jsonl \
     --recorder \
     --config ./ov-local.conf
 
 # 步骤 2：分析录制的记录
-python -m openviking.eval.analyze_records \
+python -m openviking.eval.ragas.analyze_records \
     --record_file ./records/io_recorder_20260215.jsonl
 
 # 步骤 3：使用远程存储回放
-python -m openviking.eval.play_recorder \
+python -m openviking.eval.ragas.play_recorder \
     --record_file ./records/io_recorder_20260215.jsonl \
     --config_file ./ov.conf
 
@@ -308,17 +309,21 @@ export RAGAS_BATCH_SIZE=5
 export RAGAS_TIMEOUT=120
 export RAGAS_MAX_RETRIES=2
 
-python -m openviking.eval.rag_eval --docs_dir ./docs --question_file ./questions.jsonl --ragas
+python -m openviking.eval.ragas.rag_eval --docs_dir ./docs --question_file ./questions.jsonl --ragas
 ```
 
 ## 相关文件
 
-- CLI 工具：[rag_eval.py](./rag_eval.py)
-- RAGAS 集成：[ragas.py](./ragas.py)
+- CLI 工具：[rag_eval.py](./ragas/rag_eval.py)
+- RAGAS 集成：[ragas/__init__.py](./ragas/__init__.py)
+- 评估器基类：[ragas/base.py](./ragas/base.py)
+- 数据类型：[ragas/types.py](./ragas/types.py)
+- 数据集生成器：[ragas/generator.py](./ragas/generator.py)
+- RAG 查询流水线：[ragas/pipeline.py](./ragas/pipeline.py)
+- 记录分析器：[ragas/record_analysis.py](./ragas/record_analysis.py)
+- 分析 CLI：[ragas/analyze_records.py](./ragas/analyze_records.py)
+- 回放器：[ragas/playback.py](./ragas/playback.py)
+- 回放 CLI：[ragas/play_recorder.py](./ragas/play_recorder.py)
 - IO 录制器：[recorder/__init__.py](./recorder/__init__.py)
-- 回放器：[playback.py](./playback.py)
-- 记录分析器：[record_analysis.py](./record_analysis.py)
-- 回放 CLI：[play_recorder.py](./play_recorder.py)
-- 分析 CLI：[analyze_records.py](./analyze_records.py)
 - 示例数据：[datasets/local_doc_example_glm5.jsonl](./datasets/local_doc_example_glm5.jsonl)
 - 测试文件：[tests/eval/](../../tests/eval/)、[tests/storage/test_recorder.py](../../tests/storage/test_recorder.py)

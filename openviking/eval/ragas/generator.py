@@ -7,9 +7,10 @@ Dataset generator for OpenViking evaluation.
 import uuid
 from typing import Any, Optional
 
-from openviking.eval.types import EvalDataset, EvalSample
 from openviking.storage.viking_fs import get_viking_fs
 from openviking_cli.utils.logger import get_logger
+
+from .types import EvalDataset, EvalSample
 
 logger = get_logger(__name__)
 

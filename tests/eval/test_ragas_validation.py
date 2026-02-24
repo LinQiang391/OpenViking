@@ -57,7 +57,7 @@ def test_eval_types():
     jsonl_path = Path.cwd() / "openviking" / "eval" / "datasets" / "local_doc_example_glm5.jsonl"
     data = load_jsonl(jsonl_path)
     
-    from openviking.eval.types import EvalSample, EvalDataset
+    from openviking.eval.ragas.types import EvalSample, EvalDataset
     
     samples = []
     for i, item in enumerate(data[:3]):
@@ -102,7 +102,7 @@ def test_pipeline_initialization():
     """Test RAGQueryPipeline initialization."""
     print("\n🔧 Testing RAGQueryPipeline initialization...")
     
-    from openviking.eval.pipeline import RAGQueryPipeline
+    from openviking.eval.ragas.pipeline import RAGQueryPipeline
     
     pipeline = RAGQueryPipeline(config_path="./test.conf", data_path="./test_data")
     

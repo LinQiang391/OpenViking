@@ -303,8 +303,9 @@ def save_report(eval_results: Dict[str, Any], output_path: str):
 async def run_ragas_evaluation(eval_results: Dict[str, Any]):
     """Run RAGAS evaluation if available."""
     try:
-        from openviking.eval.ragas import RagasEvaluator
-        from openviking.eval.types import EvalDataset, EvalSample
+        from openviking.eval.ragas.types import EvalDataset, EvalSample
+
+        from . import RagasEvaluator
 
         print("\nRunning RAGAS evaluation...")
         ragas_eval = RagasEvaluator()

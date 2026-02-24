@@ -6,9 +6,9 @@ import tempfile
 import json
 from pathlib import Path
 
-from openviking.eval.types import EvalSample, EvalDataset
-from openviking.eval.generator import DatasetGenerator
-from openviking.eval.pipeline import RAGQueryPipeline
+from openviking.eval.ragas.types import EvalSample, EvalDataset
+from openviking.eval.ragas.generator import DatasetGenerator
+from openviking.eval.ragas.pipeline import RAGQueryPipeline
 
 
 def test_eval_types():

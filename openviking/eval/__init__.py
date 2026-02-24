@@ -4,24 +4,38 @@
 Evaluation module for OpenViking.
 """
 
-from openviking.eval.base import BaseEvaluator
-from openviking.eval.generator import DatasetGenerator
-from openviking.eval.pipeline import RAGQueryPipeline
-from openviking.eval.ragas import RagasEvaluator
-from openviking.eval.types import (
+from openviking.eval.ragas import (
+    BaseEvaluator,
+    DatasetGenerator,
     EvalDataset,
     EvalResult,
     EvalSample,
+    IOPlayback,
+    PlaybackResult,
+    PlaybackStats,
+    RagasConfig,
+    RagasEvaluator,
+    RAGQueryPipeline,
+    RecordAnalysisStats,
     SummaryResult,
+    analyze_records,
+    print_analysis_stats,
 )
 
 __all__ = [
     "BaseEvaluator",
     "RagasEvaluator",
+    "RagasConfig",
     "DatasetGenerator",
     "RAGQueryPipeline",
     "EvalSample",
     "EvalResult",
     "EvalDataset",
     "SummaryResult",
+    "IOPlayback",
+    "PlaybackResult",
+    "PlaybackStats",
+    "RecordAnalysisStats",
+    "analyze_records",
+    "print_analysis_stats",
 ]

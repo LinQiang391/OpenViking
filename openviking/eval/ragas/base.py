@@ -7,7 +7,7 @@ Base evaluator class for OpenViking.
 from abc import ABC, abstractmethod
 from typing import Dict, List
 
-from openviking.eval.types import EvalDataset, EvalResult, EvalSample, SummaryResult
+from .types import EvalDataset, EvalResult, EvalSample, SummaryResult
 
 
 class BaseEvaluator(ABC):

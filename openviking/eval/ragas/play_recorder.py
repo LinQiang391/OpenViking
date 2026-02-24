@@ -19,15 +19,16 @@ import json
 import sys
 from pathlib import Path
 
-from openviking.eval.playback import (
+from openviking_cli.utils.logger import get_logger
+
+from .playback import (
     IOPlayback,
     PlaybackStats,
 )
-from openviking.eval.record_analysis import (
+from .record_analysis import (
     analyze_records,
     print_analysis_stats,
 )
-from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

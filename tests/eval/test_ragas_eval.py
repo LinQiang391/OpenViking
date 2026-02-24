@@ -5,10 +5,11 @@ import json
 import pytest
 from pathlib import Path
 
-from openviking.eval.types import EvalSample, EvalDataset
 from openviking.eval.ragas import (
     RagasEvaluator,
     RagasConfig,
+    EvalSample,
+    EvalDataset,
     _create_ragas_llm_from_config,
 )
 
