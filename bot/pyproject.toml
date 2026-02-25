@@ -52,6 +52,7 @@ dependencies = [
     "openviking>=0.1.18",
     "tos>=2.9.0",
     "gradio>=6.6.0",
+    "fusepy>=3.0.1",
 ]
 
 [project.optional-dependencies]

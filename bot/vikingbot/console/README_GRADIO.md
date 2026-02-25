@@ -1,70 +1,41 @@
+
 # Vikingbot Console - Gradio 版本
 
 使用 Gradio 实现的纯 Python 控制台界面。
 
-## 安装依赖
-
-```bash
-pip install gradio
-```
-
 ## 运行
 
 ```bash
-python -m vikingbot.console.console_gradio
+vikingbot gateway
 ```
 
-然后访问: http://localhost:8351
+这会自动在 http://localhost:18791 启动控制台 Web UI！
 
 ## 功能
 
 ### 1. Dashboard
 - 显示系统状态
 - 版本信息
-- 会话统计
+- 配置路径和工作区路径
 
 ### 2. Config
-- **Skills**: 复选框选择启用的技能
-  - github-proxy
-  - github
-  - memory
-  - cron
-  - weather
-  - tmux
-  - skill-creator
-  - summarize
-
-- **Hooks**: 文本框配置 hook 路径（每行一个）
-  - 示例: `vikingbot.hooks.builtins.openviking_hooks.hooks`
-
-- **Full Configuration**: JSON 编辑器，完整配置
+- **Skills & Hooks**: 独立标签页
+- **Agents / Providers / Channels / Gateway / Tools / Sandbox / Heartbeat**: 每个在自己的标签页中
+  - Agents: 展开 AgentDefaults
+  - Providers: 每个 provider 在自己的子标签页中
+  - Sandbox: backends 在自己的子标签页中
+  - Channels: JSON 编辑器（可配置多个 channel）
+  - Enums: 使用下拉框（SandboxBackend, SandboxMode）
 
 ### 3. Sessions
-- （待实现）
+- 刷新按钮：加载会话列表
+- 会话选择：选择会话查看内容
+- 会话内容显示：
+  - 用户消息：绿色
+  - 助手消息：红色
+  - 其他消息：黑色
 
 ### 4. Workspace
-- 工作区选择
-- 文件浏览
-
-## 与现有服务器集成
-
-### 选项 1: 独立运行（推荐）
-```bash
-# 终端 1: 运行主服务
-python -m vikingbot.console.server
-
-# 终端 2: 运行 Gradio 控制台
-python -m vikingbot.console.console_gradio
-```
-
-### 选项 2: 集成到 server.py
-修改 `vikingbot/console/server.py`，添加 Gradio 挂载。
-
-## 优势
-
-| 特性 | 说明 |
-|------|------|
-| 纯 Python | 无需前端框架知识 |
-| 代码量少 | ~250 行 vs 原 1400+ 行 |
-| 组件丰富 | Gradio 提供大量现成组件 |
-| 易维护 | 逻辑清晰，修改简单 |
+- 使用 Gradio 的 FileExplorer 组件
+- 显示工作区文件树
+- 选择文件查看内容

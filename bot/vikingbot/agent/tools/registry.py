@@ -4,6 +4,9 @@ from loguru import logger
 from typing import Any
 
 from vikingbot.agent.tools.base import Tool
+from vikingbot.config.schema import SessionKey
+from vikingbot.hooks import HookContext
+from vikingbot.hooks.manager import hook_manager
 
 
 class ToolRegistry:
@@ -36,7 +39,7 @@ class ToolRegistry:
         """Get all tool definitions in OpenAI format."""
         return [tool.to_schema() for tool in self._tools.values()]
     
-    async def execute(self, name: str, params: dict[str, Any]) -> str:
+    async def execute(self, name: str, params: dict[str, Any], session_key: SessionKey) -> str:
         """
         Execute a tool by name with given parameters.
         
@@ -53,15 +56,30 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             return f"Error: Tool '{name}' not found"
-
+        result = None
         try:
             errors = tool.validate_params(params)
             if errors:
                 return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors)
-            return await tool.execute(**params)
+            result =  await tool.execute(**params)
         except Exception as e:
+            result = e
             logger.exception('Tool call fail: ', e)
-            return f"Error executing {name}: {str(e)}"
+
+        hook_result  = await hook_manager.execute_hooks(
+            context=HookContext(
+                event_type="tool.post_call",
+                session_id=session_key.safe_name()
+            ),
+            tool_name=name,
+            params=params,
+            result=result
+        )
+        result = hook_result.get('result')
+        if isinstance(result, Exception):
+            return f"Error executing {name}: {str(result)}"
+        else:
+            return result
     
     @property
     def tool_names(self) -> list[str]:

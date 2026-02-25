@@ -1,26 +1,32 @@
+
 import json
 import sys
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
 
 from vikingbot.config.loader import load_config, save_config
-from vikingbot.config.schema import Config
+from vikingbot.config.schema import (
+    Config, 
+    ChannelType,
+    SandboxBackend,
+    SandboxMode
+)
 
 
-def get_available_skills() -> List[str]:
-    return [
-        "github-proxy",
-        "github", 
-        "memory",
-        "cron",
-        "weather",
-        "tmux",
-        "skill-creator",
-        "summarize"
-    ]
+def resolve_schema_ref(schema: Dict[str, Any], ref: str, root_schema: Dict[str, Any]) -> Dict[str, Any]:
+    if ref.startswith("#/$defs/"):
+        def_name = ref[len("#/$defs/"):]
+        return root_schema["$defs"].get(def_name, {})
+    return schema
+
+
+def get_effective_schema(field_info: Dict[str, Any], root_schema: Dict[str, Any]) -> Dict[str, Any]:
+    if "$ref" in field_info:
+        return get_effective_schema(resolve_schema_ref(field_info, field_info["$ref"], root_schema), root_schema)
+    return field_info
 
 
 def create_dashboard_tab():
@@ -38,90 +44,167 @@ def create_dashboard_tab():
         """)
 
 
-def create_config_field(field_name: str, field_info: Dict[str, Any], current_value: Any, parent_path: str = "") -> List:
+def create_field_group(
+    field_name: str,
+    field_info: Dict[str, Any],
+    current_value: Any,
+    parent_path: str = "",
+    root_schema: Optional[Dict[str, Any]] = None
+) -> Tuple[List, Dict[str, Any]]:
+    if root_schema is None:
+        root_schema = Config.model_json_schema()
+        
     field_path = f"{parent_path}.{field_name}" if parent_path else field_name
     
-    description = field_info.get("description", "")
-    title = field_info.get("title", field_name.replace("_", " ").title())
-    label = f"{title}" + (f" ({description})" if description else "")
+    tab_paths = {
+        "providers",
+        "sandbox.backends"
+    }
     
+    effective_field_info = get_effective_schema(field_info, root_schema)
+    description = effective_field_info.get("description", "")
+    title = effective_field_info.get("title", field_name.replace("_", " ").title())
     components = []
+    field_metadata = {}
     
-    field_type = field_info.get("type", "string")
-    if field_type == "object" and "properties" in field_info:
-        with gr.Group():
-            gr.Markdown(f"### {title}")
-            if description:
-                gr.Markdown(f"*{description}*")
-            for nested_field_name, nested_field_info in field_info["properties"].items():
-                nested_value = current_value.get(nested_field_name, None) if current_value else None
-                components.extend(create_config_field(nested_field_name, nested_field_info, nested_value, field_path))
+    field_type = effective_field_info.get("type", "string")
+    enum_values = effective_field_info.get("enum")
+    
+    if enum_values:
+        dropdown = gr.Dropdown(
+            choices=enum_values,
+            value=current_value,
+            label=title,
+            elem_id=f"field_{field_path.replace('.', '_')}"
+        )
+        components.append(dropdown)
+        field_metadata[field_path] = {"type": "enum"}
+    elif field_type == "object" and "properties" in effective_field_info:
+        properties = list(effective_field_info["properties"].items())
+        if field_path in tab_paths and len(properties) > 1:
+            with gr.Tab(title):
+                if description:
+                    gr.Markdown(f"*{description}*")
+                with gr.Tabs():
+                    for nested_field_name, nested_field_info in properties:
+                        with gr.Tab(nested_field_info.get("title", nested_field_name.replace("_", " ").title())):
+                            nested_value = current_value.get(nested_field_name, None) if current_value else None
+                            nested_components, nested_metadata = create_field_group(
+                                nested_field_name,
+                                nested_field_info,
+                                nested_value,
+                                field_path,
+                                root_schema
+                            )
+                            components.extend(nested_components)
+                            field_metadata.update(nested_metadata)
+        else:
+            with gr.Group():
+                gr.Markdown(f"### {title}")
+                if description:
+                    gr.Markdown(f"*{description}*")
+                for nested_field_name, nested_field_info in properties:
+                    nested_value = current_value.get(nested_field_name, None) if current_value else None
+                    nested_components, nested_metadata = create_field_group(
+                        nested_field_name,
+                        nested_field_info,
+                        nested_value,
+                        field_path,
+                        root_schema
+                    )
+                    components.extend(nested_components)
+                    field_metadata.update(nested_metadata)
     elif field_type == "array":
-        items_info = field_info.get("items", {})
-        items_type = items_info.get("type", "string")
-        # If items type isn't a simple type (has properties or is an object), use JSON editor
+        items_info = effective_field_info.get("items", {})
+        effective_items_info = get_effective_schema(items_info, root_schema)
+        items_type = effective_items_info.get("type", "string")
         use_textbox = False
-        if items_type == "string" and not ("properties" in items_info or items_type == "object"):
+        if items_type == "string" and not ("properties" in effective_items_info or items_type == "object"):
             current_list = current_value or []
-            # Check if all items are strings before joining
             if all(isinstance(item, str) for item in current_list):
                 use_textbox = True
         
         if use_textbox:
             current_list = current_value or []
             value = "\n".join(current_list) if current_list else ""
-            components.append(gr.Textbox(
+            textbox = gr.Textbox(
                 value=value,
-                label=f"{label} (one per line)",
+                label=f"{title} (one per line)",
                 lines=3,
                 elem_id=f"field_{field_path.replace('.', '_')}"
-            ))
+            )
+            components.append(textbox)
+            field_metadata[field_path] = {"type": "array", "items_type": "string"}
         else:
             value = json.dumps(current_value, indent=2) if current_value else ""
-            components.append(gr.Code(
+            code = gr.Code(
                 value=value,
-                label=label,
+                label=title,
                 language="json",
                 elem_id=f"field_{field_path.replace('.', '_')}"
-            ))
+            )
+            components.append(code)
+            field_metadata[field_path] = {"type": "array", "items_type": "json"}
     elif field_type == "integer":
-        components.append(gr.Number(
+        number = gr.Number(
             value=current_value,
-            label=label,
+            label=title,
             elem_id=f"field_{field_path.replace('.', '_')}"
-        ))
+        )
+        components.append(number)
+        field_metadata[field_path] = {"type": "integer"}
     elif field_type == "number":
-        components.append(gr.Number(
+        number = gr.Number(
             value=current_value,
-            label=label,
+            label=title,
             elem_id=f"field_{field_path.replace('.', '_')}"
-        ))
+        )
+        components.append(number)
+        field_metadata[field_path] = {"type": "number"}
     elif field_type == "boolean":
-        components.append(gr.Checkbox(
+        checkbox = gr.Checkbox(
             value=current_value or False,
-            label=label,
+            label=title,
             elem_id=f"field_{field_path.replace('.', '_')}"
-        ))
+        )
+        components.append(checkbox)
+        field_metadata[field_path] = {"type": "boolean"}
     else:
-        components.append(gr.Textbox(
+        textbox = gr.Textbox(
             value=current_value or "",
-            label=label,
+            label=title,
             elem_id=f"field_{field_path.replace('.', '_')}"
-        ))
+        )
+        components.append(textbox)
+        field_metadata[field_path] = {"type": "string"}
     
-    return components
+    return components, field_metadata
 
 
-def collect_field_values(components, schema, parent_path: str = ""):
+def collect_values_from_components(
+    components,
+    schema,
+    parent_path: str = "",
+    root_schema: Optional[Dict[str, Any]] = None
+) -> Tuple[Dict[str, Any], int]:
+    if root_schema is None:
+        root_schema = Config.model_json_schema()
+        
     result = {}
     comp_idx = 0
     
     for field_name, field_info in schema.get("properties", {}).items():
         field_path = f"{parent_path}.{field_name}" if parent_path else field_name
-        field_type = field_info.get("type", "string")
+        effective_field_info = get_effective_schema(field_info, root_schema)
+        field_type = effective_field_info.get("type", "string")
         
-        if field_type == "object" and "properties" in field_info:
-            nested_result, num_consumed = collect_field_values(components[comp_idx:], field_info, field_path)
+        if field_type == "object" and "properties" in effective_field_info:
+            nested_result, num_consumed = collect_values_from_components(
+                components[comp_idx:],
+                effective_field_info,
+                field_path,
+                root_schema
+            )
             result[field_name] = nested_result
             comp_idx += num_consumed
         else:
@@ -132,7 +215,9 @@ def collect_field_values(components, schema, parent_path: str = ""):
                 value = component.value
                 
                 if field_type == "array":
-                    items_type = field_info.get("items", {}).get("type", "string")
+                    items_info = effective_field_info.get("items", {})
+                    effective_items_info = get_effective_schema(items_info, root_schema)
+                    items_type = effective_items_info.get("type", "string")
                     if items_type == "string" and isinstance(value, str):
                         value = [line.strip() for line in value.split("\n") if line.strip()]
                     elif isinstance(value, str):
@@ -146,150 +231,64 @@ def collect_field_values(components, schema, parent_path: str = ""):
     return result, comp_idx
 
 
-def create_config_tab():
-    with gr.Tab("Config"):
-        config = load_config()
-        config_dict = config.model_dump()
-        schema = Config.model_json_schema()
-        
-        gr.Markdown("## Configuration")
-        
-        # Skills & Hooks section
-        gr.Markdown("### Skills & Hooks")
-        
-        with gr.Row():
-            with gr.Column():
-                skills_choices = get_available_skills()
-                selected_skills = config_dict.get("skills", [])
-                skills = gr.CheckboxGroup(
-                    choices=skills_choices,
-                    value=selected_skills,
-                    label="Enabled Skills",
-                    info="Select the skills you want to enable"
-                )
-            
-            with gr.Column():
-                hooks_list = config_dict.get("hooks", [])
-                hooks_text = "\n".join(hooks_list) if hooks_list else ""
-                hooks = gr.Textbox(
-                    value=hooks_text,
-                    label="Hook Paths",
-                    info="Enter hook paths, one per line",
-                    lines=5
-                )
-        
-        gr.Markdown("---")
-        
-        # Dynamic config fields from schema
-        all_components = [skills, hooks]
-        
-        # Create sections for each top-level config field except skills and hooks
-        sections = [
-            ("agents", "Agents Config"),
-            ("providers", "Providers Config"),
-            ("channels", "Channels Config"),
-            ("gateway", "Gateway Config"),
-            ("tools", "Tools Config"),
-            ("sandbox", "Sandbox Config"),
-            ("heartbeat", "Heartbeat Config")
-        ]
-        
-        for field_name, section_title in sections:
+def create_config_tabs():
+    config = load_config()
+    config_dict = config.model_dump()
+    schema = Config.model_json_schema()
+    
+    all_components = []
+    component_metadata = {}
+    
+    top_level_fields = list(schema["properties"].keys())
+    
+    with gr.Tabs():
+        for field_name in top_level_fields:
             if field_name in schema["properties"]:
-                gr.Markdown(f"### {section_title}")
-                field_info = schema["properties"][field_name]
-                current_value = config_dict.get(field_name, None)
-                new_components = create_config_field(field_name, field_info, current_value)
-                all_components.extend(new_components)
-                gr.Markdown("---")
-        
-        save_btn = gr.Button("Save Config")
-        status_msg = gr.Markdown("")
-        
-        def save_config_fn(*args):
-            try:
-                config_dict = load_config().model_dump()
-                
-                # First two args are skills and hooks
-                skills_val = args[0]
-                hooks_val = args[1]
-                
-                config_dict["skills"] = skills_val or []
-                if hooks_val:
-                    config_dict["hooks"] = [h.strip() for h in hooks_val.split("\n") if h.strip()]
-                else:
-                    config_dict["hooks"] = []
-                
-                # Collect values from dynamic components
-                remaining_args = args[2:]
-                comp_idx = 0
-                
-                for field_name, _ in sections:
-                    if field_name in schema["properties"]:
-                        field_info = schema["properties"][field_name]
-                        field_result, num_consumed = collect_field_values(remaining_args[comp_idx:], field_info)
-                        config_dict[field_name] = field_result
-                        comp_idx += num_consumed
-                
-                config = Config(**config_dict)
-                save_config(config)
-                return "✓ Config saved successfully! Please restart the gateway service for changes to take effect."
-            except Exception as e:
-                return f"✗ Error: {str(e)}"
-        
-        save_btn.click(
-            fn=save_config_fn,
-            inputs=all_components,
-            outputs=status_msg
-        )
-
-
-def list_sessions() -> List[Dict[str, Any]]:
-    """List all available sessions."""
-    config = load_config()
-    sessions_dir = config.workspace_path.parent / "sessions"
+                with gr.Tab(schema["properties"][field_name].get("title", field_name.replace("_", " ").title())):
+                    gr.Markdown(f"## {schema['properties'][field_name].get('title', field_name.replace('_', ' ').title())}")
+                    field_info = schema["properties"][field_name]
+                    current_value = config_dict.get(field_name, None)
+                    components, metadata = create_field_group(
+                        field_name,
+                        field_info,
+                        current_value,
+                        root_schema=schema
+                    )
+                    all_components.extend(components)
+                    component_metadata.update(metadata)
     
-    if not sessions_dir.exists():
-        return []
+    save_btn = gr.Button("Save Config", variant="primary")
+    status_msg = gr.Markdown("")
     
-    sessions = []
-    for session_file in sessions_dir.glob("*.json"):
+    def save_config_fn(*args):
         try:
-            with open(session_file, "r") as f:
-                session_data = json.load(f)
-                sessions.append({
-                    "name": session_file.stem,
-                    "path": str(session_file),
-                    "data": session_data
-                })
-        except:
-            pass
+            config_dict = load_config().model_dump()
+            
+            remaining_args = list(args)
+            comp_idx = 0
+            
+            for field_name in top_level_fields:
+                if field_name in schema["properties"]:
+                    field_info = schema["properties"][field_name]
+                    field_result, num_consumed = collect_values_from_components(
+                        remaining_args[comp_idx:],
+                        field_info,
+                        root_schema=schema
+                    )
+                    config_dict[field_name] = field_result
+                    comp_idx += num_consumed
+            
+            config = Config(**config_dict)
+            save_config(config)
+            return "✓ Config saved successfully! Please restart the gateway service for changes to take effect."
+        except Exception as e:
+            return f"✗ Error: {str(e)}"
     
-    return sorted(sessions, key=lambda x: x["name"])
-
-
-def get_session_content(session_name: str) -> str:
-    """Get the content of a specific session."""
-    config = load_config()
-    sessions_dir = config.workspace_path.parent / "sessions"
-    session_file = sessions_dir / f"{session_name}.json"
-    
-    if session_file.exists():
-        with open(session_file, "r") as f:
-            return json.dumps(json.load(f), indent=2)
-    return "Session not found"
-
-
-def delete_session(session_name: str) -> str:
-    """Delete a specific session."""
-    config = load_config()
-    sessions_dir = config.workspace_path.parent / "sessions"
-    session_file = sessions_dir / f"{session_name}.json"
-    
-    if session_file.exists():
-        session_file.unlink()
-        return f"Session '{session_name}' deleted successfully"
-    return "Session not found"
+    save_btn.click(
+        fn=save_config_fn,
+        inputs=all_components,
+        outputs=status_msg
+    )
 
 
 def create_sessions_tab():
@@ -301,37 +300,58 @@ def create_sessions_tab():
                 session_list = gr.Dropdown(
                     choices=[],
                     label="Select Session",
-                    info="Choose a session to view or delete"
+                    info="Click Refresh to load sessions",
+                    allow_custom_value=True
                 )
                 refresh_btn = gr.Button("Refresh Sessions")
-                delete_btn = gr.Button("Delete Session", variant="stop")
             
             with gr.Column(scale=2):
-                session_content = gr.Code(
+                session_content = gr.HTML(
                     value="",
-                    label="Session Content",
-                    language="json",
-                    interactive=False
+                    label="Session Content"
                 )
                 status_msg = gr.Markdown("")
         
         def refresh_sessions():
-            sessions = list_sessions()
-            session_names = [s["name"] for s in sessions]
+            sessions_dir = Path.home() / ".vikingbot" / "sessions"
+            if not sessions_dir.exists():
+                return gr.Dropdown(choices=[], value=None), ""
+            session_files = list(sessions_dir.glob("*.jsonl")) + list(sessions_dir.glob("*.json"))
+            session_names = [f.stem for f in session_files]
             return gr.Dropdown(choices=session_names, value=None), ""
         
         def load_session(session_name):
-            if session_name:
-                return get_session_content(session_name), ""
-            return "", "Please select a session"
-        
-        def remove_session(session_name):
-            if session_name:
-                result = delete_session(session_name)
-                sessions = list_sessions()
-                session_names = [s["name"] for s in sessions]
-                return gr.Dropdown(choices=session_names, value=None), "", result
-            return gr.Dropdown(), "", "Please select a session"
+            if not session_name:
+                return "", "Please select a session"
+            sessions_dir = Path.home() / ".vikingbot" / "sessions"
+            session_file_jsonl = sessions_dir / f"{session_name}.jsonl"
+            session_file_json = sessions_dir / f"{session_name}.json"
+            
+            lines = []
+            if session_file_jsonl.exists():
+                with open(session_file_jsonl, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            role = data.get("role", "")
+                            content = data.get("content", "")
+                            if role == "user":
+                                lines.append(f'<div style="color: green;"><b>User:</b> {content}</div>')
+                            elif role == "assistant":
+                                lines.append(f'<div style="color: red;"><b>Assistant:</b> {content}</div>')
+                            else:
+                                lines.append(f'<div style="color: black;"><b>{role}:</b> {content}</div>')
+                        except:
+                            lines.append(f'<div style="color: black;">{line}</div>')
+            elif session_file_json.exists():
+                with open(session_file_json, "r") as f:
+                    return f.read(), ""
+            else:
+                return "Session not found", ""
+            return "<br>".join(lines), ""
         
         refresh_btn.click(
             fn=refresh_sessions,
@@ -343,230 +363,57 @@ def create_sessions_tab():
             inputs=session_list,
             outputs=[session_content, status_msg]
         )
-        
-        delete_btn.click(
-            fn=remove_session,
-            inputs=session_list,
-            outputs=[session_list, session_content, status_msg]
-        )
-        
-        # Initial load
-        refresh_btn.click(fn=refresh_sessions, outputs=[session_list, status_msg])
-
-
-def list_workspace_files(path: str = "") -> List[Dict[str, Any]]:
-    """List files and directories in the workspace."""
-    config = load_config()
-    workspace_path = config.workspace_path
-    
-    if path:
-        current_path = workspace_path / path
-    else:
-        current_path = workspace_path
-    
-    if not current_path.exists() or not current_path.is_dir():
-        return []
-    
-    files = []
-    for item in current_path.iterdir():
-        files.append({
-            "name": item.name,
-            "path": str(item.relative_to(workspace_path)),
-            "is_dir": item.is_dir()
-        })
-    
-    return sorted(files, key=lambda x: (not x["is_dir"], x["name"]))
-
-
-def read_workspace_file(file_path: str) -> str:
-    """Read a file from the workspace."""
-    config = load_config()
-    full_path = config.workspace_path / file_path
-    
-    if full_path.exists() and full_path.is_file():
-        try:
-            with open(full_path, "r") as f:
-                return f.read()
-        except:
-            return "Cannot read file (binary or encoding error)"
-    return "File not found"
-
-
-def write_workspace_file(file_path: str, content: str) -> str:
-    """Write content to a file in the workspace."""
-    config = load_config()
-    full_path = config.workspace_path / file_path
-    
-    try:
-        # Ensure parent directory exists
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(full_path, "w") as f:
-            f.write(content)
-        
-        return f"File '{file_path}' saved successfully"
-    except Exception as e:
-        return f"Error saving file: {str(e)}"
-
-
-def delete_workspace_file(file_path: str) -> str:
-    """Delete a file from the workspace."""
-    config = load_config()
-    full_path = config.workspace_path / file_path
-    
-    if full_path.exists():
-        if full_path.is_file():
-            full_path.unlink()
-            return f"File '{file_path}' deleted successfully"
-        elif full_path.is_dir():
-            try:
-                full_path.rmdir()
-                return f"Directory '{file_path}' deleted successfully"
-            except:
-                return f"Cannot delete directory '{file_path}' (not empty)"
-    return "Path not found"
 
 
 def create_workspace_tab():
     with gr.Tab("Workspace"):
         gr.Markdown("## Workspace")
-        
-        current_path = gr.State("")
+        config = load_config()
+        workspace_path_str = str(config.workspace_path)
         
         with gr.Row():
             with gr.Column(scale=1):
-                path_display = gr.Textbox(
-                    value="",
-                    label="Current Path",
-                    interactive=False
+                file_explorer = gr.FileExplorer(
+                    root_dir=workspace_path_str,
+                    label="Workspace File Explorer",
+                    file_count="single"
                 )
-                file_list = gr.Dropdown(
-                    choices=[],
-                    label="Files & Directories",
-                    info="Select a file to view/edit or a directory to navigate"
-                )
-                refresh_btn = gr.Button("Refresh")
-                navigate_up_btn = gr.Button("⬆️ Go Up")
-                delete_btn = gr.Button("Delete", variant="stop")
             
             with gr.Column(scale=2):
                 file_content = gr.Code(
                     value="",
                     label="File Content",
-                    language="python"
+                    language="python",
+                    interactive=False
                 )
-                save_btn = gr.Button("Save File")
                 status_msg = gr.Markdown("")
         
-        def update_file_list(path):
-            config = load_config()
-            files = list_workspace_files(path)
-            choices = []
-            for f in files:
-                icon = "📁" if f["is_dir"] else "📄"
-                choices.append(f"{icon} {f['name']}")
+        def load_file_content(selected_file):
+            if not selected_file:
+                return "", "Please select a file to view"
             
-            return gr.Dropdown(choices=choices, value=None), path or "/"
+            if Path(selected_file).is_file():
+                try:
+                    with open(selected_file, "r") as f:
+                        return f.read(), f"Loaded {Path(selected_file).name}"
+                except:
+                    return "Cannot read file (binary or encoding error)", ""
+            elif Path(selected_file).is_dir():
+                return "", f"{Path(selected_file).name} is a directory"
+            return "", "File not found"
         
-        def handle_selection(selection, current_path_val):
-            if not selection:
-                return "", current_path_val, "", ""
-            
-            # Extract filename without icon
-            filename = selection[2:] if len(selection) > 2 else selection
-            
-            config = load_config()
-            full_path = config.workspace_path / current_path_val / filename
-            
-            if full_path.is_dir():
-                # Navigate into directory
-                new_path = str(Path(current_path_val) / filename) if current_path_val else filename
-                files = list_workspace_files(new_path)
-                choices = []
-                for f in files:
-                    icon = "📁" if f["is_dir"] else "📄"
-                    choices.append(f"{icon} {f['name']}")
-                
-                return new_path, gr.Dropdown(choices=choices, value=None), "", f"Navigated to {new_path}"
-            else:
-                # Read file
-                file_path = str(Path(current_path_val) / filename) if current_path_val else filename
-                content = read_workspace_file(file_path)
-                return current_path_val, gr.Dropdown(), content, f"Loaded {file_path}"
-        
-        def go_up(current_path_val):
-            if current_path_val:
-                parent = str(Path(current_path_val).parent)
-                if parent == ".":
-                    parent = ""
-                return update_file_list(parent) + ("",)
-            return "", gr.Dropdown(), "", "", "Already at root"
-        
-        def save_file(current_path_val, selection, content):
-            if not selection:
-                return "Please select a file first"
-            
-            filename = selection[2:] if len(selection) > 2 else selection
-            file_path = str(Path(current_path_val) / filename) if current_path_val else filename
-            
-            return write_workspace_file(file_path, content)
-        
-        def delete_item(current_path_val, selection):
-            if not selection:
-                return "Please select a file or directory first"
-            
-            filename = selection[2:] if len(selection) > 2 else selection
-            file_path = str(Path(current_path_val) / filename) if current_path_val else filename
-            
-            result = delete_workspace_file(file_path)
-            # Refresh list
-            files = list_workspace_files(current_path_val)
-            choices = []
-            for f in files:
-                icon = "📁" if f["is_dir"] else "📄"
-                choices.append(f"{icon} {f['name']}")
-            
-            return gr.Dropdown(choices=choices, value=None), "", result
-        
-        # Initial load
-        refresh_btn.click(
-            fn=update_file_list,
-            inputs=current_path,
-            outputs=[file_list, path_display]
+        file_explorer.change(
+            fn=load_file_content,
+            inputs=file_explorer,
+            outputs=[file_content, status_msg]
         )
-        
-        file_list.change(
-            fn=handle_selection,
-            inputs=[file_list, current_path],
-            outputs=[current_path, file_list, file_content, status_msg]
-        )
-        
-        navigate_up_btn.click(
-            fn=go_up,
-            inputs=current_path,
-            outputs=[current_path, file_list, file_content, path_display, status_msg]
-        )
-        
-        save_btn.click(
-            fn=save_file,
-            inputs=[current_path, file_list, file_content],
-            outputs=status_msg
-        )
-        
-        delete_btn.click(
-            fn=delete_item,
-            inputs=[current_path, file_list],
-            outputs=[file_list, file_content, status_msg]
-        )
-        
-        # Initial load on tab open
-        refresh_btn.click(fn=update_file_list, inputs=current_path, outputs=[file_list, path_display])
 
 
 with gr.Blocks(title="Vikingbot Console") as demo:
     with gr.Tabs():
         create_dashboard_tab()
-        create_config_tab()
+        with gr.Tab("Config"):
+            create_config_tabs()
         create_sessions_tab()
         create_workspace_tab()
 
@@ -579,3 +426,4 @@ if __name__ == "__main__":
         except ValueError:
             pass
     demo.launch(server_name="0.0.0.0", server_port=port, share=False)
+

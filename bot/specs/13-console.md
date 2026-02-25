@@ -1,3 +1,4 @@
+
 # Vikingbot Console Specification
 
 ## 1. Overview
@@ -12,8 +13,7 @@ Vikingbot Console 是一个轻量级的Web管理界面，用于：
 ## 2. Architecture
 
 ### 2.1 Tech Stack
-- **Backend**: Python + FastAPI (async)
-- **Frontend**: 简单的HTML/JS
+- **Web UI**: Gradio (纯 Python 实现)
 - **集成方式**: 作为 gateway/tui 的子服务启动
 
 ### 2.2 Directory Structure
@@ -21,254 +21,47 @@ Vikingbot Console 是一个轻量级的Web管理界面，用于：
 vikingbot/
 ├── console/
 │   ├── __init__.py
-│   ├── server.py          # FastAPI app 定义
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── config.py      # 配置相关API
-│   │   ├── sessions.py    # 会话相关API
-│   │   ├── workspace.py   # 工作区相关API
-│   │   └── partials.py    # 前端部分模板API
-│   └── static/            # 静态文件 (HTML/CSS/JS)
-│       └── index.html
+│   ├── README_GRADIO.md    # Gradio 控制台文档
+│   └── console_gradio_simple.py  # Gradio 实现
 ```
 
-## 3. API Design
+## 3. Web UI Design
 
-### 3.1 Base URL
-- 默认端口: `18791` (与 gateway 的 18790 区分)
-- 基础路径: `/api/v1`
+### 3.1 Pages
+1. **Dashboard** - 概览页面
+   - 系统状态（运行中）
+   - 版本信息
+   - 配置路径
+   - 工作区路径
 
-### 3.2 Configuration API
+2. **Config** - 配置页面
+   - **Skills & Hooks** - 独立标签页
+   - **Agents** - 展开 AgentDefaults
+   - **Providers** - 每个 provider 在自己的子标签页中
+   - **Channels** - JSON 编辑器（可配置多个 channel）
+   - **Gateway** - 网关配置
+   - **Tools** - 工具配置
+   - **Sandbox** - Sandbox 配置，backends 在自己的子标签页中
+   - **Heartbeat** - 心跳配置
+   - **Enums**: SandboxBackend, SandboxMode 使用下拉框
 
-#### GET /api/v1/config
-获取当前配置
+3. **Sessions** - 会话页面
+   - 刷新按钮：加载会话列表
+   - 会话选择：选择会话查看内容
+   - 会话内容显示：
+     - 用户消息：绿色
+     - 助手消息：红色
+     - 其他消息：黑色
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "providers": {...},
-    "agents": {...},
-    "channels": [...],
-    "tools": {...},
-    "sandbox": {...}
-  }
-}
-```
+4. **Workspace** - 工作区页面
+   - Gradio 的 FileExplorer 组件
+   - 显示工作区文件树
+   - 选择文件查看内容
 
-#### PUT /api/v1/config
-更新配置
-
-**Request Body:**
-```json
-{
-  "config": {
-    "providers": {...},
-    "agents": {...},
-    "channels": [...],
-    "tools": {...},
-    "sandbox": {...}
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Config updated"
-}
-```
-
-#### GET /api/v1/config/schema
-获取配置 schema（用于前端表单生成）
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "type": "object",
-    "properties": {...},
-    "required": [...]
-  }
-}
-```
-
-#### GET /api/v1/config/path
-获取配置文件路径
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "path": "/Users/user/.vikingbot/config.json"
-  }
-}
-```
-
-### 3.3 Sessions API
-
-#### GET /api/v1/sessions
-列出所有会话
-
-**Query Parameters:**
-- `limit`: 数量限制 (default: 50)
-- `offset`: 偏移量 (default: 0)
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "key": "telegram:123456789",
-      "created_at": "2024-01-15T10:30:00",
-      "updated_at": "2024-01-15T14:20:00",
-      "message_count": 42
-    }
-  ],
-  "total": 100
-}
-```
-
-#### GET /api/v1/sessions/{session_key}
-获取单个会话详情
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "key": "telegram:123456789",
-    "created_at": "2024-01-15T10:30:00",
-    "updated_at": "2024-01-15T14:20:00",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Hello!",
-        "timestamp": "2024-01-15T10:30:01"
-      },
-      {
-        "role": "assistant",
-        "content": "Hi there!",
-        "timestamp": "2024-01-15T10:30:02"
-      }
-    ],
-    "metadata": {...}
-  }
-}
-```
-
-#### DELETE /api/v1/sessions/{session_key}
-删除会话
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Session deleted"
-}
-```
-
-### 3.4 Workspace API
-
-#### GET /api/v1/workspace/files
-列出工作区文件
-
-**Query Parameters:**
-- `path`: 目录路径 (default: "/")
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "path": "/",
-    "files": [
-      {
-        "name": "AGENTS.md",
-        "type": "file",
-        "size": 1024,
-        "modified_at": "2024-01-15T10:30:00"
-      },
-      {
-        "name": "memory",
-        "type": "directory",
-        "size": 0,
-        "modified_at": "2024-01-15T10:30:00"
-      }
-    ]
-  }
-}
-```
-
-#### GET /api/v1/workspace/files/{file_path}
-读取文件内容
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "path": "AGENTS.md",
-    "content": "# Agent Instructions\n...",
-    "size": 1024,
-    "modified_at": "2024-01-15T10:30:00"
-  }
-}
-```
-
-#### PUT /api/v1/workspace/files/{file_path}
-写入文件内容
-
-**Request Body:**
-```json
-{
-  "content": "# New content"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "File written"
-}
-```
-
-#### DELETE /api/v1/workspace/files/{file_path}
-删除文件/目录
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "File deleted"
-}
-```
-
-### 3.5 System API
-
-#### GET /api/v1/status
-服务状态
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "version": "1.0.0",
-    "uptime": 3600,
-    "config_path": "/Users/user/.vikingbot/config.json",
-    "workspace_path": "/Users/user/.vikingbot/workspace",
-    "sessions_count": 10,
-    "gateway_running": true
-  }
-}
-```
+### 3.2 Design Principles
+- 简洁实用
+- 纯 Python，无需前端框架知识
+- 无需认证（本地使用）
 
 ## 4. Integration with Gateway/TUI
 
@@ -285,10 +78,19 @@ def gateway(
 ):
     # ... 现有代码 ...
     
-    # 启动console服务
+    # 启动 Gradio 控制台服务
     if enable_console:
-        from vikingbot.console.server import start_console_server
-        tasks.append(start_console_server(port=console_port))
+        import subprocess
+        import sys
+        from pathlib import Path
+        script_path = os.path.join(os.path.dirname(__file__), "..", "console", "console_gradio_simple.py")
+        tasks.append(asyncio.create_task(
+            asyncio.to_thread(
+                subprocess.run,
+                [sys.executable, script_path, str(console_port)],
+                check=False
+            )
+        ))
         console.print(f"[green]✓[/green] Console: http://localhost:{console_port}")
     
     # ... 现有代码 ...
@@ -297,63 +99,35 @@ def gateway(
 ### 4.2 TUI Integration
 在 `vikingbot/cli/commands.py` 的 `tui()` 函数中添加类似逻辑。
 
-## 5. Web UI Design
+## 5. Security Considerations
 
-### 5.1 Pages
-1. **Dashboard** - 概览页面
-   - 活跃会话数
-   - 最近会话
-   - 快捷操作
-
-2. **Configuration** - 配置页面
-   - 表单编辑配置
-   - JSON 编辑器（高级模式）
-   - 验证和保存
-
-3. **Sessions** - 会话页面
-   - 会话列表
-   - 会话详情（消息历史）
-   - 删除会话
-
-4. **Workspace** - 工作区页面
-   - 文件浏览器
-   - 文件编辑器
-   - 上传/下载
-
-### 5.2 Design Principles
-- 简洁实用
-- 响应式设计
-- 深色/浅色主题
-- 无需认证（本地使用）
-
-## 6. Security Considerations
-
-1. **绑定地址**: 默认绑定 `127.0.0.1`，仅本地访问
+1. **绑定地址**: 默认绑定 `0.0.0.0`，可通过防火墙限制访问
 2. **认证**: 可选的基本认证（生产环境）
 3. **路径限制**: workspace API 限制在工作区目录内
 4. **配置备份**: 更新配置前自动备份
 
-## 7. Implementation Phases
+## 6. Implementation Phases
 
 ### Phase 1: Foundation
-- 创建 web 服务基础结构
-- 实现 FastAPI app
+- 创建 Gradio 基础结构
 - 集成到 gateway/tui
+- Dashboard 页面
 
-### Phase 2: Configuration API
-- 实现配置读写 API
+### Phase 2: Configuration UI
+- 实现配置读写
 - 配置验证
-- 简单的配置编辑 UI
+- 配置编辑 UI（分标签页）
 
-### Phase 3: Sessions API
-- 实现会话列表和详情 API
-- 会话 UI
+### Phase 3: Sessions UI
+- 实现会话列表和详情 UI
+- 会话内容显示（彩色）
 
-### Phase 4: Workspace API
-- 实现文件浏览器 API
-- 文件编辑器 UI
+### Phase 4: Workspace UI
+- Gradio FileExplorer 集成
+- 文件内容查看
 
 ### Phase 5: Polish
 - UI/UX 优化
 - 错误处理
 - 文档
+
