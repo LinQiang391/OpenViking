@@ -1,3 +1,5 @@
+import asyncio
+
 import openviking as ov
 from openviking.message import TextPart
 import tos
@@ -18,10 +20,9 @@ class VikingClient:
         if openviking_config.mode == "local":
             ov_data_path = get_data_dir() / "ov_data"
             ov_data_path.mkdir(parents=True, exist_ok=True)
-            self.client = ov.SyncOpenViking(path=str(ov_data_path))
+            self.client = ov.AsyncOpenViking(path=str(ov_data_path))
         else:
-            self.client = ov.SyncHTTPClient(url=openviking_config.server_url)
-        self.client.initialize()
+            self.client = ov.AsyncHTTPClient(url=openviking_config.server_url)
         self.tos_client = tos.TosClientV2(
             openviking_config.tos_ak,
             openviking_config.tos_sk,
@@ -29,6 +30,17 @@ class VikingClient:
             openviking_config.tos_region,
         )
         self.viking_path = viking_path
+
+    async def _initialize(self):
+        """Initialize the client (must be called after construction)"""
+        await self.client.initialize()
+
+    @classmethod
+    async def create(cls, viking_path: str = "/"):
+        """Factory method to create and initialize a VikingClient instance"""
+        instance = cls(viking_path)
+        await instance._initialize()
+        return instance
 
     def _matched_context_to_dict(self, matched_context: Any) -> Dict[str, Any]:
         """将 MatchedContext 对象转换为字典"""
@@ -55,13 +67,13 @@ class VikingClient:
             "reason": getattr(relation, "reason", ""),
         }
 
-    def find(self, query: str, target_uri: Optional[str] = None) -> List[Any]:
+    async def find(self, query: str, target_uri: Optional[str] = None):
         """搜索资源"""
         if target_uri:
-            return self.client.find(query, target_uri=target_uri)
-        return self.client.find(query)
+            return await self.client.find(query, target_uri=target_uri)
+        return await self.client.find(query)
 
-    def add_resource(
+    async def add_resource(
         self, local_path: str, desc: str, target_path: Optional[str] = None, wait: bool = False
     ) -> Optional[Dict[str, Any]]:
         """添加资源到 Viking"""
@@ -94,23 +106,21 @@ class VikingClient:
             print(f"Failed to generate pre-signed URL for {object_key}: {e}")
             return None
 
-        result = self.client.add_resource(
+        result = await self.client.add_resource(
             path=pre_signed_url, target=viking_target, reason=desc, wait=wait
         )
         return result
 
-    def read_source(self, viking_path: str) -> List[Any]:
-        """读取源数据"""
-        return self.client.find(viking_path)
-
-    def list_resources(
+    async def list_resources(
         self, path: Optional[str] = None, recursive: bool = False
     ) -> List[Dict[str, Any]]:
         """列出资源"""
-        entries = self.client.ls(path, recursive=recursive)
+        if path is None or path == "":
+            path = f"{viking_resource_prefix}{self.viking_path}"
+        entries = await self.client.ls(path, recursive=recursive)
         return entries
 
-    def read_content(self, uri: str, level: str = "abstract") -> str:
+    async def read_content(self, uri: str, level: str = "abstract") -> str:
         """读取内容
 
         Args:
@@ -118,18 +128,18 @@ class VikingClient:
             level: 读取级别 ("abstract" - L0摘要, "overview" - L1概览, "read" - L2完整内容)
         """
         if level == "abstract":
-            return self.client.abstract(uri)
+            return await self.client.abstract(uri)
         elif level == "overview":
-            return self.client.overview(uri)
+            return await self.client.overview(uri)
         elif level == "read":
-            return self.client.read(uri)
+            return await self.client.read(uri)
         else:
             raise ValueError(f"Unsupported level: {level}")
 
-    def search(self, query: str, target_uri: Optional[str] = None) -> Dict[str, Any]:
+    async def search(self, query: str, target_uri: Optional[str] = "") -> Dict[str, Any]:
         # session = self.client.session()
 
-        result = self.client.search(query, target_uri=target_uri)
+        result = await self.client.search(query, target_uri=target_uri)
 
         # 将 FindResult 对象转换为 JSON map
         return {
@@ -147,21 +157,21 @@ class VikingClient:
             "target_uri": target_uri,
         }
 
-    def search_user_memory(self, query: str) -> list[Any]:
-        result = self.client.search(query, target_uri=uri_user_memory)
+    async def search_user_memory(self, query: str) -> list[Any]:
+        result = await self.client.search(query, target_uri=uri_user_memory)
         return (
             [self._matched_context_to_dict(m) for m in result.memories]
             if hasattr(result, "memories")
             else []
         )
 
-    def grep(self, uri: str, pattern: str, case_insensitive: bool = False) -> Dict[str, Any]:
+    async def grep(self, uri: str, pattern: str, case_insensitive: bool = False) -> Dict[str, Any]:
         """通过模式（正则表达式）搜索内容"""
-        return self.client.grep(uri, pattern, case_insensitive=case_insensitive)
+        return await self.client.grep(uri, pattern, case_insensitive=case_insensitive)
 
-    def glob(self, pattern: str, uri: Optional[str] = None) -> Dict[str, Any]:
+    async def glob(self, pattern: str, uri: Optional[str] = None) -> Dict[str, Any]:
         """通过 glob 模式匹配文件"""
-        return self.client.glob(pattern, uri=uri)
+        return await self.client.glob(pattern, uri=uri)
 
     async def commit(self, session_id: str, messages: list[dict[str, Any]]):
         """提交会话"""
@@ -173,41 +183,32 @@ class VikingClient:
         logger.debug(f"Message add ed to OpenViking session {session_id}")
         return {"success": result["status"]}
 
-    def move_resource(self, from_uri: str, to_uri: str) -> None:
-        """移动资源"""
-        return self.client.mv(from_uri, to_uri)
-
-    def delete_resource(self, uri: str, recursive: bool = False) -> None:
-        """删除资源"""
-        return self.client.rm(uri, recursive=recursive)
-
-    def create_link(self, from_uri: str, to_uris: List[str], reason: str = "") -> None:
-        """创建资源链接"""
-        return self.client.link(from_uri, to_uris, reason=reason)
-
-    def get_relations(self, uri: str) -> List[Dict[str, str]]:
-        """获取资源关联"""
-        return self.client.relations(uri)
-
-    def delete_link(self, from_uri: str, to_uri: str) -> None:
-        """删除资源链接"""
-        return self.client.unlink(from_uri, to_uri)
-
-    def wait_processed(self) -> Dict[str, Any]:
-        """等待处理完成"""
-        return self.client.wait_processed()
-
     def close(self):
         """关闭客户端"""
         self.client.close()
 
 
-if __name__ == "__main__":
-    client = VikingClient("")
+async def main_test():
+    client = await VikingClient.create()
     # res = client.list_resources()
-    # res = client.search("头有点疼")
-    res = client.search_user_memory("头有点疼")
+    res = await client.search("头有点疼")
+    # res = client.search_user_memory("头有点疼")
+    # res = client.list_resources()
+    # result = []
+    # for entry in res:
+    #     item = {
+    #         "name": entry["name"],
+    #         "size": entry["uri"],
+    #         "uri": entry["uri"],
+    #         "isDir": entry["isDir"]
+    #     }
+    #     result.append(str(item))
+    # print("\n".join(result))
     # res = client.read_content("viking://resources/bot_test/dutao/test/")
     # res = client.add_resource("/Users/bytedance/.openviking/test.py", "一段代码")
     print(res)
     client.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main_test())
