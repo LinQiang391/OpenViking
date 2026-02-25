@@ -135,7 +135,7 @@ class MemoryDeduplicator:
         # Build filter by memory scope + uri prefix (schema does not have category field yet).
         filter_conds = [
             {"field": "context_type", "op": "must", "conds": ["memory"]},
-            {"field": "is_leaf", "op": "must", "conds": [True]},
+            {"field": "level", "op": "must", "conds": [2]},
         ]
         owner = candidate.user
         if hasattr(owner, "account_id"):
@@ -148,7 +148,7 @@ class MemoryDeduplicator:
             )
             filter_conds.append({"field": "owner_space", "op": "must", "conds": [owner_space]})
         if category_uri_prefix:
-            filter_conds.append({"field": "uri", "op": "prefix", "prefix": category_uri_prefix})
+            filter_conds.append({"field": "uri", "op": "must", "conds": [category_uri_prefix]})
         dedup_filter = {"op": "and", "conds": filter_conds}
         logger.debug(
             "Dedup prefilter candidate category=%s filter=%s",

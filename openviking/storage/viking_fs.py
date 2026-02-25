@@ -23,6 +23,7 @@ from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pyagfs import AGFSClient
+from pyagfs.exceptions import AGFSHTTPError
 
 from openviking.server.identity import RequestContext, Role
 from openviking.storage.vikingdb_interface import VikingDBInterface
@@ -253,13 +254,18 @@ class VikingFS:
     async def rm(
         self, uri: str, recursive: bool = False, ctx: Optional[RequestContext] = None
     ) -> Dict[str, Any]:
-        """Delete file/directory + recursively update vector index."""
+        """Delete file/directory + recursively update vector index.
+
+        This method is idempotent: deleting a non-existent file succeeds
+        after cleaning up any orphan index records.
+        """
         self._ensure_access(uri, ctx)
         path = self._uri_to_path(uri, ctx=ctx)
+        target_uri = self._path_to_uri(path, ctx=ctx)
         uris_to_delete = await self._collect_uris(path, recursive, ctx=ctx)
-        result = self.agfs.rm(path, recursive)
-        if uris_to_delete:
-            await self._delete_from_vector_store(uris_to_delete, ctx=ctx)
+        uris_to_delete.append(target_uri)
+        result = self.agfs.rm(path, recursive=recursive)
+        await self._delete_from_vector_store(uris_to_delete, ctx=ctx)
         return result
 
     async def mv(
@@ -273,11 +279,19 @@ class VikingFS:
         self._ensure_access(new_uri, ctx)
         old_path = self._uri_to_path(old_uri, ctx=ctx)
         new_path = self._uri_to_path(new_uri, ctx=ctx)
+        target_uri = self._path_to_uri(old_path, ctx=ctx)
         uris_to_move = await self._collect_uris(old_path, recursive=True, ctx=ctx)
-        result = self.agfs.mv(old_path, new_path)
-        if uris_to_move:
+        uris_to_move.append(target_uri)
+
+        try:
+            result = self.agfs.mv(old_path, new_path)
             await self._update_vector_store_uris(uris_to_move, old_uri, new_uri, ctx=ctx)
-        return result
+            return result
+        except AGFSHTTPError as e:
+            if e.status_code == 404:
+                await self._delete_from_vector_store(uris_to_move, ctx=ctx)
+                logger.info(f"[VikingFS] mv source not found, cleaned orphan index: {old_uri}")
+            raise
 
     async def grep(
         self,
@@ -1017,7 +1031,7 @@ class VikingFS:
                         "op": "or",
                         "conds": [
                             {"op": "must", "field": "uri", "conds": [uri]},
-                            {"op": "prefix", "field": "uri", "prefix": f"{uri}/"},
+                            {"op": "must", "field": "uri", "conds": [f"{uri}/"]},
                         ],
                     },
                 ]
