@@ -178,7 +178,7 @@ class VikingClient:
         session = self.client.session(session_id)
 
         for message in messages:
-            session.add_message(message.get("role"), [TextPart(text=message.get("content"))])
+            await session.add_message(role=message.get("role"), content=message.get("content"))
         result = await session.commit()
         logger.debug(f"Message add ed to OpenViking session {session_id}")
         return {"success": result["status"]}
