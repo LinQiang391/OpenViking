@@ -21,7 +21,6 @@ from openviking.server.routers import (
     filesystem_router,
     observer_router,
     pack_router,
-    register_router,
     relations_router,
     resources_router,
     search_router,
@@ -143,7 +142,6 @@ def create_app(
     # Register routers
     app.include_router(system_router)
     app.include_router(admin_router)
-    app.include_router(register_router)
     app.include_router(resources_router)
     app.include_router(filesystem_router)
     app.include_router(content_router)

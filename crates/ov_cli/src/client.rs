@@ -480,38 +480,4 @@ impl HttpClient {
         self.post(&path, &serde_json::json!({})).await
     }
 
-    pub async fn admin_create_invitation_token(
-        &self,
-        max_uses: Option<i64>,
-        expires_at: Option<&str>,
-    ) -> Result<Value> {
-        let body = serde_json::json!({
-            "max_uses": max_uses,
-            "expires_at": expires_at,
-        });
-        self.post("/api/v1/admin/invitation-tokens", &body).await
-    }
-
-    pub async fn admin_list_invitation_tokens(&self) -> Result<Value> {
-        self.get("/api/v1/admin/invitation-tokens", &[]).await
-    }
-
-    pub async fn admin_revoke_invitation_token(&self, token_id: &str) -> Result<Value> {
-        let path = format!("/api/v1/admin/invitation-tokens/{}", token_id);
-        self.delete(&path, &[]).await
-    }
-
-    pub async fn register_account(
-        &self,
-        invitation_token: &str,
-        account_id: &str,
-        admin_user_id: &str,
-    ) -> Result<Value> {
-        let body = serde_json::json!({
-            "invitation_token": invitation_token,
-            "account_id": account_id,
-            "admin_user_id": admin_user_id,
-        });
-        self.post("/api/v1/register/account", &body).await
-    }
 }

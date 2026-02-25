@@ -421,33 +421,6 @@ enum AdminCommands {
         /// User ID
         user_id: String,
     },
-    /// Create an invitation token for self-service registration (ROOT only)
-    CreateInvitationToken {
-        /// Maximum number of uses (unlimited if not set)
-        #[arg(long)]
-        max_uses: Option<i64>,
-        /// Expiration time in ISO 8601 format (never expires if not set)
-        #[arg(long)]
-        expires_at: Option<String>,
-    },
-    /// List all invitation tokens (ROOT only)
-    ListInvitationTokens,
-    /// Revoke an invitation token (ROOT only)
-    RevokeInvitationToken {
-        /// Invitation token ID to revoke
-        token_id: String,
-    },
-    /// Register a new account using an invitation token
-    RegisterAccount {
-        /// Account ID to create
-        account_id: String,
-        /// Invitation token
-        #[arg(long = "token")]
-        invitation_token: String,
-        /// First admin user ID
-        #[arg(long = "admin")]
-        admin_user_id: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -764,24 +737,6 @@ async fn handle_admin(cmd: AdminCommands, ctx: CliContext) -> Result<()> {
         AdminCommands::RegenerateKey { account_id, user_id } => {
             commands::admin::regenerate_key(
                 &client, &account_id, &user_id, ctx.output_format, ctx.compact,
-            ).await
-        }
-        AdminCommands::CreateInvitationToken { max_uses, expires_at } => {
-            commands::admin::create_invitation_token(
-                &client, max_uses, expires_at.as_deref(), ctx.output_format, ctx.compact,
-            ).await
-        }
-        AdminCommands::ListInvitationTokens => {
-            commands::admin::list_invitation_tokens(&client, ctx.output_format, ctx.compact).await
-        }
-        AdminCommands::RevokeInvitationToken { token_id } => {
-            commands::admin::revoke_invitation_token(
-                &client, &token_id, ctx.output_format, ctx.compact,
-            ).await
-        }
-        AdminCommands::RegisterAccount { account_id, invitation_token, admin_user_id } => {
-            commands::admin::register_account(
-                &client, &invitation_token, &account_id, &admin_user_id, ctx.output_format, ctx.compact,
             ).await
         }
     }

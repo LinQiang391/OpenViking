@@ -7,14 +7,13 @@ import json
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 from pyagfs import AGFSClient
 
 from openviking.server.identity import ResolvedIdentity, Role
 from openviking_cli.exceptions import (
     AlreadyExistsError,
-    InvalidArgumentError,
     NotFoundError,
     UnauthenticatedError,
 )
@@ -24,7 +23,6 @@ logger = get_logger(__name__)
 
 ACCOUNTS_PATH = "/local/_system/accounts.json"
 USERS_PATH_TEMPLATE = "/local/{account_id}/_system/users.json"
-INVITATION_TOKENS_PATH = "/local/_system/invitation_tokens.json"
 
 
 @dataclass
@@ -59,7 +57,6 @@ class APIKeyManager:
         self._agfs = AGFSClient(agfs_url)
         self._accounts: Dict[str, AccountInfo] = {}
         self._user_keys: Dict[str, UserKeyEntry] = {}
-        self._invitation_tokens: Dict[str, dict] = {}
 
     async def load(self) -> None:
         """Load accounts and user keys from AGFS into memory."""
@@ -89,16 +86,10 @@ class APIKeyManager:
                         role=Role(user_info.get("role", "user")),
                     )
 
-        # Load invitation tokens
-        tokens_data = self._read_json(INVITATION_TOKENS_PATH)
-        if tokens_data:
-            self._invitation_tokens = tokens_data.get("tokens", {})
-
         logger.info(
-            "APIKeyManager loaded: %d accounts, %d user keys, %d invitation tokens",
+            "APIKeyManager loaded: %d accounts, %d user keys",
             len(self._accounts),
             len(self._user_keys),
-            len(self._invitation_tokens),
         )
 
     def resolve(self, api_key: str) -> ResolvedIdentity:
@@ -263,95 +254,6 @@ class APIKeyManager:
             )
         return result
 
-    # ---- invitation token methods ----
-
-    async def create_invitation_token(
-        self,
-        created_by: str,
-        max_uses: Optional[int] = None,
-        expires_at: Optional[str] = None,
-    ) -> dict:
-        """Create an invitation token for self-service account registration.
-
-        Args:
-            created_by: User who created this token.
-            max_uses: Maximum number of uses (None = unlimited).
-            expires_at: Expiration ISO timestamp (None = never expires).
-
-        Returns:
-            Token info dict.
-        """
-        token_id = f"inv_{secrets.token_hex(16)}"
-        now = datetime.now(timezone.utc).isoformat()
-
-        token_info = {
-            "max_uses": max_uses,
-            "used_count": 0,
-            "expires_at": expires_at,
-            "created_at": now,
-            "created_by": created_by,
-        }
-
-        self._invitation_tokens[token_id] = token_info
-        self._save_invitation_tokens()
-
-        return {"token_id": token_id, **token_info}
-
-    def list_invitation_tokens(self) -> List[dict]:
-        """List all invitation tokens."""
-        result = []
-        for token_id, info in self._invitation_tokens.items():
-            result.append({"token_id": token_id, **info})
-        return result
-
-    async def revoke_invitation_token(self, token_id: str) -> None:
-        """Revoke (delete) an invitation token."""
-        if token_id not in self._invitation_tokens:
-            raise NotFoundError(token_id, "invitation token")
-
-        del self._invitation_tokens[token_id]
-        self._save_invitation_tokens()
-
-    async def create_account_with_token(
-        self,
-        token: str,
-        account_id: str,
-        admin_user_id: str,
-    ) -> Tuple[str, str]:
-        """Create an account using an invitation token.
-
-        Args:
-            token: The invitation token ID.
-            account_id: Desired account ID for the new account.
-            admin_user_id: Admin user ID for the new account.
-
-        Returns:
-            Tuple of (account_id, admin_key).
-        """
-        token_info = self._invitation_tokens.get(token)
-        if not token_info:
-            raise InvalidArgumentError("Invalid invitation token")
-
-        # Check expiration
-        if token_info.get("expires_at"):
-            expires = datetime.fromisoformat(token_info["expires_at"])
-            if datetime.now(timezone.utc) > expires:
-                raise InvalidArgumentError("Invitation token has expired")
-
-        # Check usage limit
-        if token_info.get("max_uses") is not None:
-            if token_info["used_count"] >= token_info["max_uses"]:
-                raise InvalidArgumentError("Invitation token has reached maximum uses")
-
-        # Create the account
-        admin_key = await self.create_account(account_id, admin_user_id)
-
-        # Increment used_count
-        token_info["used_count"] += 1
-        self._save_invitation_tokens()
-
-        return (account_id, admin_key)
-
     # ---- internal helpers ----
 
     def _read_json(self, path: str) -> Optional[dict]:
@@ -399,8 +301,3 @@ class APIKeyManager:
         data = {"users": account.users}
         path = USERS_PATH_TEMPLATE.format(account_id=account_id)
         self._write_json(path, data)
-
-    def _save_invitation_tokens(self) -> None:
-        """Persist invitation tokens."""
-        data = {"tokens": self._invitation_tokens}
-        self._write_json(INVITATION_TOKENS_PATH, data)
