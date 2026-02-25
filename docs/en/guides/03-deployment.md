@@ -52,8 +52,9 @@ The `server` section in `ov.conf` controls server behavior:
     "cors_origins": ["*"]
   },
   "storage": {
-    "agfs": { "backend": "local", "path": "/data/openviking" },
-    "vectordb": { "backend": "local", "path": "/data/openviking" }
+    "workspace": "/data/openviking",
+    "agfs": { "backend": "local" },
+    "vectordb": { "backend": "local" }
   }
 }
 ```
@@ -62,13 +63,14 @@ The `server` section in `ov.conf` controls server behavior:
 
 ### Standalone (Embedded Storage)
 
-Server manages local AGFS and VectorDB. Configure the storage path in `ov.conf`:
+Server manages local AGFS and VectorDB. Configure the workspace path in `ov.conf`:
 
 ```json
 {
   "storage": {
-    "agfs": { "backend": "local", "path": "/data/openviking" },
-    "vectordb": { "backend": "local", "path": "/data/openviking" }
+    "workspace": "/data/openviking",
+    "agfs": { "backend": "local" },
+    "vectordb": { "backend": "local" }
   }
 }
 ```

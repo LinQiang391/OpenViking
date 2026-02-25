@@ -52,8 +52,9 @@ python -m openviking serve --config /path/to/ov.conf --host 127.0.0.1 --port 800
     "cors_origins": ["*"]
   },
   "storage": {
-    "agfs": { "backend": "local", "path": "/data/openviking" },
-    "vectordb": { "backend": "local", "path": "/data/openviking" }
+    "workspace": "/data/openviking",
+    "agfs": { "backend": "local" },
+    "vectordb": { "backend": "local" }
   }
 }
 ```
@@ -62,13 +63,14 @@ python -m openviking serve --config /path/to/ov.conf --host 127.0.0.1 --port 800
 
 ### 独立模式（嵌入存储）
 
-服务器管理本地 AGFS 和 VectorDB。在 `ov.conf` 中配置本地存储路径：
+服务器管理本地 AGFS 和 VectorDB。在 `ov.conf` 中配置 workspace 路径：
 
 ```json
 {
   "storage": {
-    "agfs": { "backend": "local", "path": "./data" },
-    "vectordb": { "backend": "local", "path": "./data" }
+    "workspace": "./data",
+    "agfs": { "backend": "local" },
+    "vectordb": { "backend": "local" }
   }
 }
 ```

@@ -324,7 +324,7 @@ OpenViking 提供三种接口，面向不同使用场景：
     "api_key": "your-api-key"
   },
   "storage": {
-    "path": "~/.openviking/data"
+    "workspace": "~/.openviking/data"
   },
   "embedding": {
     "dense": {
