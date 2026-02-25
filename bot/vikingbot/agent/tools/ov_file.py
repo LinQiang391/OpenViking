@@ -1,11 +1,11 @@
 """OpenViking file system tools: read, write, list, search resources."""
 from abc import ABC
-from typing import Any, Optional
 from pathlib import Path
-from loguru import logger
+from typing import Any, Optional
 
 from vikingbot.agent.tools.base import Tool
 from vikingbot.openviking_mount.ov_server import VikingClient
+
 
 class OVFileTool(Tool, ABC):
     def __init__(self):

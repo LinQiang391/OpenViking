@@ -1,13 +1,13 @@
 import asyncio
-
-import openviking as ov
-from openviking.message import TextPart
-import tos
 import os
 from typing import List, Dict, Any, Optional
+
+import openviking as ov
+import tos
 from loguru import logger
-from vikingbot.config.loader import load_config
+
 from vikingbot.config.loader import get_data_dir
+from vikingbot.config.loader import load_config
 
 viking_resource_prefix = "viking://resources"
 uri_user_memory = "viking://user/memories/"
