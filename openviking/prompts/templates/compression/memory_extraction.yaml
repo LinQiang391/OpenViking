@@ -30,6 +30,11 @@ variables:
     description: "Target language for extracted memory fields (abstract, overview, content)"
     required: false
     default: "auto"
+  - name: "tool_calls"
+    type: "string"
+    description: "Tool/Skill call records from session"
+    required: false
+    default: ""
 
 template: |
   Analyze the following session context and extract memories worth long-term preservation.
@@ -59,6 +64,17 @@ template: |
   {{ feedback }}
   {% endif %}
 
+  {% if tool_calls %}
+  ## Tool/Skill Call Records
+  {{ tool_calls }}
+
+  **Tool/Skill Memory 提取规则**：
+  1. 从 Tool Call 记录中提取有价值的使用经验
+  2. **tool_name 必须从输入复制，不可修改**（避免名称不一致）
+  3. 统计数据需要累加（成功率、耗时、Token）
+  4. 提取 Good/Bad Cases
+  {% endif %}
+
   # Memory Extraction Criteria
 
   ## What is worth remembering?
@@ -85,6 +101,8 @@ template: |
   | What happened? | Decision, milestone | events |
   | How was it solved? | Problem + solution | cases |
   | What is the process? | Reusable steps | patterns |
+  | How to use a tool? | Tool optimization, parameters | tools |
+  | How to execute a skill? | Workflow, strategy | skills |
 
   ## Precise Definition of Each Category
 
@@ -131,6 +149,24 @@ template: |
   - Core: Describes "what process to follow in what situation"
   - Characteristics: Reusable across multiple scenarios
   - Test: Can it be used for "similar situations"
+
+  **tools** - Tool usage memories (optimization insights)
+  - Core: Describes "how to best use a specific tool"
+  - Characteristics: Parameter optimization, success/failure patterns
+  - Test: Does it contain tool-specific usage insights
+  - Examples:
+    - "web_search works best with specific multi-word queries"
+    - "read_file should check file size first for large files"
+    - "execute_code timeout can be avoided by splitting large scripts"
+
+  **skills** - Skill execution memories (workflow insights)
+  - Core: Describes "how to best execute a specific skill"
+  - Characteristics: Process optimization, context adaptation
+  - Test: Does it contain skill-specific execution strategies
+  - Examples:
+    - "create_ppt works best when collecting materials first"
+    - "analyze_code should start with understanding project structure"
+    - "write_document benefits from outline-first approach"
 
   ## Common Confusion Clarification
 
@@ -269,16 +305,42 @@ template: |
   }
   ```
 
+  ## tools Example (Merge type)
+  ✅ **Good**:
+  ```json
+  {
+    "category": "tools",
+    "tool_name": "web_search",
+    "abstract": "web_search: Technical docs search optimal, needs specific query terms",
+    "overview": "## Tool Info\\n- **Name**: web_search\\n- **Type**: external_api\\n\\n## Statistics\\n- **Success Rate**: 92%\\n- **Avg Time**: 2.3s\\n\\n## Best Scenarios\\n- Technical documentation (95%)\\n- Tutorials (90%)\\n\\n## Optimal Parameters\\n- max_results: 5-20\\n- language: 'en'",
+    "content": "## Recommendations\\n\\n### Query Optimization\\n- Use specific multi-word queries\\n- Add qualifiers like 'tutorial', 'guide'\\n\\n## Good Cases\\n- 'Python asyncio tutorial' → 3 high-quality results\\n\\n## Bad Cases\\n- 'programming' → timeout (too broad)"
+  }
+  ```
+
+  ## skills Example (Merge type)
+  ✅ **Good**:
+  ```json
+  {
+    "category": "skills",
+    "skill_uri": "viking://agent/skills/create_presentation",
+    "abstract": "create_presentation: Collect materials first for better efficiency",
+    "overview": "## Skill Info\\n- **Name**: create_presentation\\n- **Type**: workflow\\n\\n## Statistics\\n- **Success Rate**: 85%\\n- **Avg Time**: 120s\\n\\n## Recommended Flow\\n1. Collect materials\\n2. Generate outline\\n3. Create slides\\n4. Refine content\\n\\n## Key Dependencies\\n- Clear topic\\n- Target audience",
+    "content": "## Execution Strategy\\n\\n### Preparation\\n1. Confirm topic and audience\\n2. Collect reference materials\\n\\n## Good Cases\\n- Tech sharing: collected asyncio docs first → 90s, high quality\\n\\n## Bad Cases\\n- 'Make a PPT' without topic → multiple reworks needed"
+  }
+  ```
+
   # Output Format
 
   Please return JSON format:
   {
     "memories": [
       {
-        "category": "profile|preferences|entities|events|cases|patterns",
+        "category": "profile|preferences|entities|events|cases|patterns|tools|skills",
         "abstract": "Merge types use `[Merge key]: [Description]`, independent types use specific description",
         "overview": "Structured Markdown, use different heading templates by category",
-        "content": "Free Markdown, complete narrative"
+        "content": "Free Markdown, complete narrative",
+        "tool_name": "Only for tools category: the tool name from input (must copy exactly)",
+        "skill_uri": "Only for skills category: the skill URI from input (must copy exactly)"
       }
     ]
   }
@@ -288,6 +350,8 @@ template: |
   - Only extract truly valuable personalized information
   - If nothing worth recording, return {"memories": []}
   - For preferences, keep each memory as one independently updatable facet; do not combine unrelated facets in one memory
+  - For tools category, tool_name MUST be copied from the input Tool Call Records exactly, do NOT modify it
+  - For skills category, skill_uri MUST be copied from the input Tool Call Records exactly, do NOT modify it
 
 llm_config:
   temperature: 0.0

@@ -19,7 +19,12 @@ from openviking_cli.session.user_id import UserIdentifier
 from openviking_cli.utils import get_logger
 
 from .memory_deduplicator import DedupDecision, MemoryActionDecision, MemoryDeduplicator
-from .memory_extractor import CandidateMemory, MemoryCategory, MemoryExtractor
+from .memory_extractor import (
+    CandidateMemory,
+    MemoryCategory,
+    MemoryExtractor,
+    ToolSkillCandidateMemory,
+)
 
 logger = get_logger(__name__)
 
@@ -31,6 +36,12 @@ MERGE_SUPPORTED_CATEGORIES = {
     MemoryCategory.PREFERENCES,
     MemoryCategory.ENTITIES,
     MemoryCategory.PATTERNS,
+}
+
+# Tool/Skill Memory categories
+TOOL_SKILL_CATEGORIES = {
+    MemoryCategory.TOOLS,
+    MemoryCategory.SKILLS,
 }
 
 
@@ -142,6 +153,8 @@ class SessionCompressor:
         stats = ExtractionStats()
         viking_fs = get_viking_fs()
 
+        tool_parts = self._extract_tool_parts(messages)
+
         for candidate in candidates:
             # Profile: skip dedup, always merge
             if candidate.category in ALWAYS_MERGE_CATEGORIES:
@@ -152,6 +165,29 @@ class SessionCompressor:
                     await self._index_memory(memory)
                 else:
                     stats.skipped += 1
+                continue
+
+            # Tool/Skill Memory: 特殊合并逻辑
+            if candidate.category in TOOL_SKILL_CATEGORIES:
+                if isinstance(candidate, ToolSkillCandidateMemory):
+                    tool_name, skill_uri = self._get_tool_skill_info(candidate, tool_parts)
+                    if skill_uri:
+                        skill_name = self._extract_skill_name_from_uri(skill_uri)
+                        memory = await self.extractor._merge_skill_memory(
+                            skill_name, candidate, ctx=ctx
+                        )
+                    elif tool_name:
+                        memory = await self.extractor._merge_tool_memory(
+                            tool_name, candidate, ctx=ctx
+                        )
+                    else:
+                        logger.warning("No tool_name or skill_uri found, skipping")
+                        stats.skipped += 1
+                        continue
+                    if memory:
+                        memories.append(memory)
+                        stats.merged += 1
+                        await self._index_memory(memory)
                 continue
 
             # Dedup check for other categories
@@ -229,6 +265,39 @@ class SessionCompressor:
         )
         return memories
 
+    def _extract_tool_parts(self, messages: List[Message]) -> List:
+        """Extract all ToolPart from messages."""
+        from openviking.message.part import ToolPart
+
+        tool_parts = []
+        for msg in messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, ToolPart):
+                    tool_parts.append(part)
+        return tool_parts
+
+    def _get_tool_skill_info(
+        self, candidate: "ToolSkillCandidateMemory", tool_parts: List
+    ) -> tuple:
+        """Get tool_name and skill_uri from ToolPart, not from LLM.
+
+        Returns:
+            (tool_name, skill_uri) tuple
+        """
+        for part in tool_parts:
+            if part.skill_uri:
+                return ("", part.skill_uri)
+            if part.tool_name:
+                return (part.tool_name, "")
+        return ("", "")
+
+    def _extract_skill_name_from_uri(self, skill_uri: str) -> str:
+        """从 skill_uri 提取 skill_name
+
+        例如: viking://agent/skills/create_presentation -> create_presentation
+        """
+        return skill_uri.rstrip("/").split("/")[-1]
+
     def _extract_used_uris(self, messages: List[Message]) -> Dict[str, List[str]]:
         """Extract URIs used in messages."""
         uris = {"memories": set(), "resources": set(), "skills": set()}
@@ -260,29 +329,37 @@ class SessionCompressor:
             resource_uris = used_uris.get("resources", [])
             skill_uris = used_uris.get("skills", [])
 
-            # Memory -> resources/skills
+            valid_resource_uris = []
+            for uri in resource_uris:
+                if await self._uri_exists(uri, viking_fs, ctx):
+                    valid_resource_uris.append(uri)
+
+            valid_skill_uris = []
+            for uri in skill_uris:
+                if await self._uri_exists(uri, viking_fs, ctx):
+                    valid_skill_uris.append(uri)
+
             for memory_uri in memory_uris:
-                if resource_uris:
+                if valid_resource_uris:
                     await viking_fs.link(
                         memory_uri,
-                        resource_uris,
+                        valid_resource_uris,
                         reason="Memory extracted from session using these resources",
                         ctx=ctx,
                     )
-                if skill_uris:
+                if valid_skill_uris:
                     await viking_fs.link(
                         memory_uri,
-                        skill_uris,
+                        valid_skill_uris,
                         reason="Memory extracted from session calling these skills",
                         ctx=ctx,
                     )
 
-            # Resources/skills -> memories (reverse)
-            for resource_uri in resource_uris:
+            for resource_uri in valid_resource_uris:
                 await viking_fs.link(
                     resource_uri, memory_uris, reason="Referenced by these memories", ctx=ctx
                 )
-            for skill_uri in skill_uris:
+            for skill_uri in valid_skill_uris:
                 await viking_fs.link(
                     skill_uri, memory_uris, reason="Called by these memories", ctx=ctx
                 )
@@ -290,3 +367,11 @@ class SessionCompressor:
             logger.info(f"Created bidirectional relations for {len(memories)} memories")
         except Exception as e:
             logger.error(f"Error creating memory relations: {e}")
+
+    async def _uri_exists(self, uri: str, viking_fs, ctx: RequestContext) -> bool:
+        """Check if a URI exists."""
+        try:
+            await viking_fs.read_file(uri, ctx=ctx)
+            return True
+        except Exception:
+            return False

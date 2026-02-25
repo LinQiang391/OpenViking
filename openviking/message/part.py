@@ -45,6 +45,9 @@ class ToolPart:
     tool_input: Optional[dict] = None
     tool_output: str = ""
     tool_status: str = "pending"  # pending | running | completed | error
+    duration_ms: Optional[int] = None  # 执行耗时（毫秒）
+    prompt_tokens: Optional[int] = None  # 输入 Token
+    completion_tokens: Optional[int] = None  # 输出 Token
 
 
 Part = Union[TextPart, ContextPart, ToolPart]

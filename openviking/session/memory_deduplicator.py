@@ -66,7 +66,7 @@ class MemoryDeduplicator:
     MAX_PROMPT_SIMILAR_MEMORIES = 5  # Number of similar memories sent to LLM
 
     _USER_CATEGORIES = {"preferences", "entities", "events"}
-    _AGENT_CATEGORIES = {"cases", "patterns"}
+    _AGENT_CATEGORIES = {"cases", "patterns", "tools", "skills"}
 
     @staticmethod
     def _category_uri_prefix(category: str, user) -> str:

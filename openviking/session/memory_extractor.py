@@ -38,6 +38,10 @@ class MemoryCategory(str, Enum):
     CASES = "cases"  # Cases (specific problems + solutions)
     PATTERNS = "patterns"  # Patterns (reusable processes/methods)
 
+    # Tool/Skill Memory categories
+    TOOLS = "tools"  # Tool usage memories (optimization, statistics)
+    SKILLS = "skills"  # Skill execution memories (workflow, strategy)
+
 
 @dataclass
 class CandidateMemory:
@@ -50,6 +54,14 @@ class CandidateMemory:
     source_session: str
     user: str
     language: str = "auto"
+
+
+@dataclass
+class ToolSkillCandidateMemory(CandidateMemory):
+    """Tool/Skill Memory 专用候选，扩展名称字段。"""
+
+    tool_name: str = ""  # Tool 名称（用于 tools 类别）
+    skill_uri: str = ""  # Skill URI（用于 skills 类别）
 
 
 @dataclass
@@ -73,6 +85,9 @@ class MemoryExtractor:
         MemoryCategory.EVENTS: "memories/events",
         MemoryCategory.CASES: "memories/cases",
         MemoryCategory.PATTERNS: "memories/patterns",
+        # Tool/Skill Memory categories
+        MemoryCategory.TOOLS: "memories/tools",
+        MemoryCategory.SKILLS: "memories/skills",
     }
 
     # Categories that belong to user space
@@ -146,6 +161,32 @@ class MemoryExtractor:
 
         return fallback
 
+    def _format_tool_calls_for_prompt(self, messages: List) -> str:
+        """格式化 Tool Call 数据供 LLM 分析"""
+        import json
+
+        from openviking.message.part import ToolPart
+
+        tool_calls = []
+
+        for msg in messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, ToolPart):
+                    call_data = {
+                        "tool_name": part.tool_name,
+                        "skill_uri": part.skill_uri,
+                        "tool_input": part.tool_input,
+                        "tool_output": part.tool_output[:500] if part.tool_output else "",
+                        "tool_status": part.tool_status,
+                        "duration_ms": part.duration_ms,
+                    }
+                    tool_calls.append(call_data)
+
+        if not tool_calls:
+            return ""
+
+        return json.dumps(tool_calls, ensure_ascii=False, indent=2)
+
     async def extract(
         self,
         context: dict,
@@ -174,6 +215,7 @@ class MemoryExtractor:
         )
 
         # Call LLM to extract memories
+        tool_calls_str = self._format_tool_calls_for_prompt(messages)
         prompt = render_prompt(
             "compression.memory_extraction",
             {
@@ -182,6 +224,7 @@ class MemoryExtractor:
                 "user": user._user_id,
                 "feedback": "",
                 "output_language": output_language,
+                "tool_calls": tool_calls_str,
             },
         )
 
@@ -208,17 +251,34 @@ class MemoryExtractor:
                 except ValueError:
                     category = MemoryCategory.PATTERNS
 
-                candidates.append(
-                    CandidateMemory(
-                        category=category,
-                        abstract=mem.get("abstract", ""),
-                        overview=mem.get("overview", ""),
-                        content=mem.get("content", ""),
-                        source_session=session_id,
-                        user=user,
-                        language=output_language,
+                # 只在 tools/skills 时使用 ToolSkillCandidateMemory
+                if category in (MemoryCategory.TOOLS, MemoryCategory.SKILLS):
+                    candidates.append(
+                        ToolSkillCandidateMemory(
+                            category=category,
+                            abstract=mem.get("abstract", ""),
+                            overview=mem.get("overview", ""),
+                            content=mem.get("content", ""),
+                            source_session=session_id,
+                            user=user,
+                            language=output_language,
+                            tool_name=mem.get("tool_name", ""),
+                            skill_uri=mem.get("skill_uri", ""),
+                        )
                     )
-                )
+                else:
+                    # 现有逻辑不变，前向兼容
+                    candidates.append(
+                        CandidateMemory(
+                            category=category,
+                            abstract=mem.get("abstract", ""),
+                            overview=mem.get("overview", ""),
+                            content=mem.get("content", ""),
+                            source_session=session_id,
+                            user=user,
+                            language=output_language,
+                        )
+                    )
 
             logger.info(
                 f"Extracted {len(candidates)} candidate memories (language={output_language})"
@@ -412,3 +472,282 @@ class MemoryExtractor:
         except Exception as e:
             logger.error(f"Memory merge bundle failed: {e}")
             return None
+
+    async def _merge_tool_memory(
+        self, tool_name: str, candidate: CandidateMemory, ctx: "RequestContext"
+    ) -> Optional[Context]:
+        """合并 Tool Memory，统计数据用 Python 累加"""
+        if not tool_name or not tool_name.strip():
+            logger.warning("Tool name is empty, skipping tool memory merge")
+            return None
+
+        agent_space = ctx.user.agent_space_name()
+        uri = f"viking://agent/{agent_space}/memories/tools/{tool_name}.md"
+        viking_fs = get_viking_fs()
+
+        if not viking_fs:
+            logger.warning("VikingFS not available, skipping tool memory merge")
+            return None
+
+        existing = ""
+        try:
+            existing = await viking_fs.read_file(uri, ctx=ctx) or ""
+        except Exception:
+            pass
+
+        new_stats = self._parse_tool_statistics(candidate.content)
+        if new_stats["total_calls"] == 0:
+            new_stats["total_calls"] = 1
+            if "error" in candidate.content.lower() or "fail" in candidate.content.lower():
+                new_stats["fail_count"] = 1
+                new_stats["success_count"] = 0
+            else:
+                new_stats["success_count"] = 1
+                new_stats["fail_count"] = 0
+
+        if not existing.strip():
+            merged_stats = self._compute_statistics_derived(new_stats)
+            merged_content = self._generate_tool_memory_content(tool_name, merged_stats, candidate)
+            await viking_fs.write_file(uri=uri, content=merged_content, ctx=ctx)
+            await self._enqueue_semantic_for_parent(uri, ctx)
+            return self._create_tool_context(uri, candidate, ctx)
+
+        existing_stats = self._parse_tool_statistics(existing)
+        merged_stats = self._merge_tool_statistics(existing_stats, new_stats)
+        merged_content = self._generate_tool_memory_content(tool_name, merged_stats, candidate)
+        await viking_fs.write_file(uri=uri, content=merged_content, ctx=ctx)
+        await self._enqueue_semantic_for_parent(uri, ctx)
+        return self._create_tool_context(uri, candidate, ctx)
+
+    async def _enqueue_semantic_for_parent(self, file_uri: str, ctx: "RequestContext") -> None:
+        """Enqueue semantic generation for parent directory."""
+        try:
+            from openviking.storage.queuefs import get_queue_manager
+            from openviking.storage.queuefs.semantic_msg import SemanticMsg
+
+            parent_uri = "/".join(file_uri.rsplit("/", 1)[:-1])
+            queue_manager = get_queue_manager()
+            semantic_queue = queue_manager.get_queue(queue_manager.SEMANTIC, allow_create=True)
+            msg = SemanticMsg(
+                uri=parent_uri,
+                context_type="memory",
+                account_id=ctx.account_id,
+                user_id=ctx.user.user_id,
+                agent_id=ctx.user.agent_id,
+                role=ctx.role.value,
+            )
+            await semantic_queue.enqueue(msg)
+            logger.debug(f"Enqueued semantic generation for: {parent_uri}")
+        except Exception as e:
+            logger.warning(f"Failed to enqueue semantic generation for {file_uri}: {e}")
+
+    def _compute_statistics_derived(self, stats: dict) -> dict:
+        """计算派生统计数据（平均值、成功率）"""
+        if stats["total_calls"] > 0:
+            stats["avg_time_ms"] = stats["total_time_ms"] / stats["total_calls"]
+            stats["avg_tokens"] = stats["total_tokens"] / stats["total_calls"]
+            stats["success_rate"] = stats["success_count"] / stats["total_calls"]
+        else:
+            stats["avg_time_ms"] = 0
+            stats["avg_tokens"] = 0
+            stats["success_rate"] = 0
+        return stats
+
+    def _parse_tool_statistics(self, content: str) -> dict:
+        """从 Markdown 内容中解析统计数据"""
+        stats = {
+            "total_calls": 0,
+            "success_count": 0,
+            "fail_count": 0,
+            "total_time_ms": 0,
+            "total_tokens": 0,
+        }
+
+        match = re.search(r"总调用次数:\s*(\d+)", content)
+        if match:
+            stats["total_calls"] = int(match.group(1))
+
+        match = re.search(r"成功率:\s*([\d.]+)%", content)
+        if match:
+            success_rate = float(match.group(1)) / 100
+            stats["success_count"] = int(stats["total_calls"] * success_rate)
+            stats["fail_count"] = stats["total_calls"] - stats["success_count"]
+
+        match = re.search(r"平均耗时:\s*([\d.]+)s", content)
+        if match and stats["total_calls"] > 0:
+            stats["total_time_ms"] = int(float(match.group(1)) * 1000 * stats["total_calls"])
+
+        return stats
+
+    def _merge_tool_statistics(self, existing: dict, new: dict) -> dict:
+        """累加统计数据（Python 计算）"""
+        merged = {
+            "total_calls": existing["total_calls"] + new["total_calls"],
+            "success_count": existing["success_count"] + new["success_count"],
+            "fail_count": existing["fail_count"] + new["fail_count"],
+            "total_time_ms": existing["total_time_ms"] + new["total_time_ms"],
+            "total_tokens": existing["total_tokens"] + new["total_tokens"],
+        }
+        if merged["total_calls"] > 0:
+            merged["avg_time_ms"] = merged["total_time_ms"] / merged["total_calls"]
+            merged["avg_tokens"] = merged["total_tokens"] / merged["total_calls"]
+            merged["success_rate"] = merged["success_count"] / merged["total_calls"]
+        return merged
+
+    def _generate_tool_memory_content(
+        self, tool_name: str, stats: dict, candidate: CandidateMemory
+    ) -> str:
+        """生成合并后的 Tool Memory 内容"""
+        return f"""## 工具信息
+- **名称**: {tool_name}
+
+## 调用统计
+- **总调用次数**: {stats["total_calls"]}
+- **成功率**: {stats["success_rate"] * 100:.1f}%（{stats["success_count"]} 成功，{stats["fail_count"]} 失败）
+- **平均耗时**: {stats["avg_time_ms"] / 1000:.1f}s
+
+{candidate.content}
+"""
+
+    def _create_tool_context(
+        self, uri: str, candidate: CandidateMemory, ctx: "RequestContext"
+    ) -> Context:
+        """创建 Tool Memory 的 Context 对象"""
+        agent_space = ctx.user.agent_space_name()
+        return Context(
+            uri=uri,
+            parent_uri=f"viking://agent/{agent_space}/memories/tools",
+            is_leaf=True,
+            abstract=candidate.abstract,
+            context_type=ContextType.MEMORY.value,
+            category=candidate.category.value,
+            session_id=candidate.source_session,
+            user=candidate.user,
+            account_id=ctx.account_id,
+            owner_space=agent_space,
+        )
+
+    async def _merge_skill_memory(
+        self, skill_name: str, candidate: CandidateMemory, ctx: "RequestContext"
+    ) -> Optional[Context]:
+        """合并 Skill Memory，统计数据用 Python 累加"""
+        if not skill_name or not skill_name.strip():
+            logger.warning("Skill name is empty, skipping skill memory merge")
+            return None
+
+        agent_space = ctx.user.agent_space_name()
+        uri = f"viking://agent/{agent_space}/memories/skills/{skill_name}.md"
+        viking_fs = get_viking_fs()
+
+        if not viking_fs:
+            logger.warning("VikingFS not available, skipping skill memory merge")
+            return None
+
+        existing = ""
+        try:
+            existing = await viking_fs.read_file(uri, ctx=ctx) or ""
+        except Exception:
+            pass
+
+        new_stats = self._parse_skill_statistics(candidate.content)
+        if new_stats["total_executions"] == 0:
+            new_stats["total_executions"] = 1
+            if "error" in candidate.content.lower() or "fail" in candidate.content.lower():
+                new_stats["fail_count"] = 1
+                new_stats["success_count"] = 0
+            else:
+                new_stats["success_count"] = 1
+                new_stats["fail_count"] = 0
+
+        if not existing.strip():
+            merged_stats = self._compute_skill_statistics_derived(new_stats)
+            merged_content = self._generate_skill_memory_content(
+                skill_name, merged_stats, candidate
+            )
+            await viking_fs.write_file(uri=uri, content=merged_content, ctx=ctx)
+            await self._enqueue_semantic_for_parent(uri, ctx)
+            return self._create_skill_context(uri, candidate, ctx)
+
+        existing_stats = self._parse_skill_statistics(existing)
+        merged_stats = self._merge_skill_statistics(existing_stats, new_stats)
+        merged_content = self._generate_skill_memory_content(skill_name, merged_stats, candidate)
+        await viking_fs.write_file(uri=uri, content=merged_content, ctx=ctx)
+        await self._enqueue_semantic_for_parent(uri, ctx)
+        return self._create_skill_context(uri, candidate, ctx)
+
+    def _compute_skill_statistics_derived(self, stats: dict) -> dict:
+        """计算 Skill 派生统计数据（平均值、成功率）"""
+        if stats["total_executions"] > 0:
+            stats["avg_time_ms"] = stats["total_time_ms"] / stats["total_executions"]
+            stats["success_rate"] = stats["success_count"] / stats["total_executions"]
+        else:
+            stats["avg_time_ms"] = 0
+            stats["success_rate"] = 0
+        return stats
+
+    def _parse_skill_statistics(self, content: str) -> dict:
+        """从 Markdown 内容中解析 Skill 统计数据"""
+        stats = {
+            "total_executions": 0,
+            "success_count": 0,
+            "fail_count": 0,
+            "total_time_ms": 0,
+        }
+
+        match = re.search(r"总执行次数:\s*(\d+)", content)
+        if match:
+            stats["total_executions"] = int(match.group(1))
+
+        match = re.search(r"成功率:\s*([\d.]+)%", content)
+        if match:
+            success_rate = float(match.group(1)) / 100
+            stats["success_count"] = int(stats["total_executions"] * success_rate)
+            stats["fail_count"] = stats["total_executions"] - stats["success_count"]
+
+        return stats
+
+    def _merge_skill_statistics(self, existing: dict, new: dict) -> dict:
+        """累加 Skill 统计数据"""
+        merged = {
+            "total_executions": existing["total_executions"] + new["total_executions"],
+            "success_count": existing["success_count"] + new["success_count"],
+            "fail_count": existing["fail_count"] + new["fail_count"],
+            "total_time_ms": existing["total_time_ms"] + new["total_time_ms"],
+        }
+        if merged["total_executions"] > 0:
+            merged["avg_time_ms"] = merged["total_time_ms"] / merged["total_executions"]
+            merged["success_rate"] = merged["success_count"] / merged["total_executions"]
+        return merged
+
+    def _generate_skill_memory_content(
+        self, skill_name: str, stats: dict, candidate: CandidateMemory
+    ) -> str:
+        """生成合并后的 Skill Memory 内容"""
+        return f"""## 技能信息
+- **名称**: {skill_name}
+
+## 执行统计
+- **总执行次数**: {stats["total_executions"]}
+- **成功率**: {stats["success_rate"] * 100:.1f}%（{stats["success_count"]} 成功，{stats["fail_count"]} 失败）
+- **平均耗时**: {stats["avg_time_ms"] / 1000:.1f}s
+
+{candidate.content}
+"""
+
+    def _create_skill_context(
+        self, uri: str, candidate: CandidateMemory, ctx: "RequestContext"
+    ) -> Context:
+        """创建 Skill Memory 的 Context 对象"""
+        agent_space = ctx.user.agent_space_name()
+        return Context(
+            uri=uri,
+            parent_uri=f"viking://agent/{agent_space}/memories/skills",
+            is_leaf=True,
+            abstract=candidate.abstract,
+            context_type=ContextType.MEMORY.value,
+            category=candidate.category.value,
+            session_id=candidate.source_session,
+            user=candidate.user,
+            account_id=ctx.account_id,
+            owner_space=agent_space,
+        )
