@@ -20,8 +20,6 @@ from datetime import datetime
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from pyagfs import AGFSClient
-
 from openviking.storage.vikingdb_interface import VikingDBInterface
 from openviking.utils.time_utils import format_simplified, get_current_timestamp, parse_iso_datetime
 from openviking_cli.utils.logger import get_logger
@@ -64,30 +62,29 @@ _instance: Optional["VikingFS"] = None
 
 
 def init_viking_fs(
-    agfs_url: str = "http://localhost:8080",
+    agfs: Any,
     query_embedder: Optional[Any] = None,
     rerank_config: Optional["RerankConfig"] = None,
     vector_store: Optional["VikingDBInterface"] = None,
-    timeout: int = 10,
     enable_recorder: bool = False,
 ) -> "VikingFS":
     """Initialize VikingFS singleton.
 
     Args:
-        agfs_url: AGFS service URL
+        agfs: Pre-initialized AGFS client (HTTP or Binding)
+        agfs_config: AGFS configuration object for backend settings
         query_embedder: Embedder instance
         rerank_config: Rerank configuration
         vector_store: Vector store instance
-        timeout: Request timeout in seconds
         enable_recorder: Whether to enable IO recording
     """
     global _instance
+
     _instance = VikingFS(
-        agfs_url=agfs_url,
+        agfs=agfs,
         query_embedder=query_embedder,
         rerank_config=rerank_config,
         vector_store=vector_store,
-        timeout=timeout,
     )
 
     if enable_recorder:
@@ -148,21 +145,23 @@ class VikingFS:
     APIs are divided into two categories:
     - AGFS basic commands (direct forwarding): read, ls, write, mkdir, rm, mv, grep, stat
     - VikingFS specific capabilities: abstract, overview, find, search, relations, link, unlink
+
+    Supports two modes:
+    - HTTP mode: Use AGFSClient to connect to AGFS server via HTTP
+    - Binding mode: Use AGFSBindingClient to directly use AGFS implementation
     """
 
     def __init__(
         self,
-        agfs_url: str = "http://localhost:8080",
+        agfs: Any,
         query_embedder: Optional[Any] = None,
         rerank_config: Optional["RerankConfig"] = None,
         vector_store: Optional["VikingDBInterface"] = None,
-        timeout: int = 10,
     ):
-        self.agfs = AGFSClient(api_base_url=agfs_url, timeout=timeout)
+        self.agfs = agfs
         self.query_embedder = query_embedder
         self.rerank_config = rerank_config
         self.vector_store = vector_store
-        logger.info(f"[VikingFS] Initialized with agfs_url={agfs_url}")
 
     # ========== AGFS Basic Commands ==========
 
@@ -717,14 +716,8 @@ class VikingFS:
     _ROOT_PATH = "/local"
 
     def _ls_entries(self, path: str) -> List[Dict[str, Any]]:
-        """List directory entries, filtering out internal directories.
-
-        At root level (/local), uses VALID_SCOPES whitelist.
-        At other levels, uses _INTERNAL_DIRS blacklist.
-        """
+        """List directory entries, filtering out internal directories."""
         entries = self.agfs.ls(path)
-        if path == self._ROOT_PATH:
-            return [e for e in entries if e.get("name") in VikingURI.VALID_SCOPES]
         return [e for e in entries if e.get("name") not in self._INTERNAL_DIRS]
 
     def _path_to_uri(self, path: str) -> str:

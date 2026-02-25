@@ -72,11 +72,16 @@ def s3_client():
 @pytest.fixture(scope="module")
 async def viking_fs_instance():
     """Initialize AGFS Manager and VikingFS singleton."""
+    from openviking.utils.agfs_utils import create_agfs_client
+
     manager = AGFSManager(config=AGFS_CONF)
     manager.start()
 
-    # Initialize VikingFS with agfs_url (only basic IO needed)
-    vfs = init_viking_fs(agfs_url=AGFS_CONF.url, timeout=AGFS_CONF.timeout)
+    # Create AGFS client
+    agfs_client = create_agfs_client(AGFS_CONF)
+
+    # Initialize VikingFS with client
+    vfs = init_viking_fs(agfs=agfs_client)
 
     yield vfs
 

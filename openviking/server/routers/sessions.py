@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, model_validator
 
-from openviking.message.part import Part, TextPart, part_from_dict
+from openviking.message.part import TextPart, part_from_dict
 from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext

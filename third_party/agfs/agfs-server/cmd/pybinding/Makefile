@@ -1,0 +1,39 @@
+.PHONY: all build-macos build-linux clean install test
+
+GO=go
+BUILD_DIR=build
+LIB_NAME=libagfsbinding
+BIN_DIR=../../../bin
+
+all: build-macos
+
+build-macos:
+	@echo "Building shared library for macOS..."
+	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=1 $(GO) build -buildmode=c-shared -o $(BUILD_DIR)/$(LIB_NAME).dylib .
+	@cp $(BUILD_DIR)/$(LIB_NAME).dylib $(BIN_DIR)/
+	@echo "Build complete: $(BIN_DIR)/$(LIB_NAME).dylib"
+
+build-linux:
+	@echo "Building shared library for Linux..."
+	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=1 $(GO) build -buildmode=c-shared -o $(BUILD_DIR)/$(LIB_NAME).so .
+	@cp $(BUILD_DIR)/$(LIB_NAME).so $(BIN_DIR)/
+	@echo "Build complete: $(BIN_DIR)/$(LIB_NAME).so"
+
+clean:
+	@echo "Cleaning..."
+	@rm -rf $(BUILD_DIR)
+	@rm -f *.so *.dylib *.h
+	@rm -f $(BIN_DIR)/$(LIB_NAME).so $(BIN_DIR)/$(LIB_NAME).dylib
+	@echo "Clean complete"
+
+install: build-macos
+	@echo "Installing..."
+	@cp $(BUILD_DIR)/$(LIB_NAME).dylib /usr/local/lib/ 2>/dev/null || true
+	@echo "Install complete"
+
+test:
+	$(GO) test -v ./...

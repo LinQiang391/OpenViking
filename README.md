@@ -349,6 +349,31 @@ set "OPENVIKING_CONFIG_FILE=%USERPROFILE%\.openviking\ov.conf"
 
 > 💡 **Tip**: You can also place the configuration file in other locations, just specify the correct path in the environment variable.
 
+#### AGFS Binding Mode (High Performance)
+
+For better performance, you can use the Python Binding mode to bypass HTTP overhead by directly calling the AGFS core.
+
+1. **Build the shared library**:
+   ```bash
+   # For macOS
+   make -C third_party/agfs/agfs-server/cmd/pybinding build-macos
+   # For Linux
+   make -C third_party/agfs/agfs-server/cmd/pybinding build-linux
+   ```
+
+2. **Update your `ov.conf`**:
+   Add `mode` to the `agfs` section:
+   ```json
+   {
+     "storage": {
+       "agfs": {
+         "mode": "binding-client",
+         "backend": "local"
+       }
+     }
+   }
+   ```
+
 ### 4. Run Your First Example
 
 > 📝 **Prerequisite**: Ensure you have completed the environment configuration in the previous step.

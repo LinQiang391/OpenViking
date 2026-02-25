@@ -3,10 +3,8 @@
 
 """AGFS Local Backend Tests for VikingFS interface"""
 
-import json
 import os
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -14,52 +12,28 @@ from openviking.agfs_manager import AGFSManager
 from openviking.storage.viking_fs import init_viking_fs
 from openviking_cli.utils.config.agfs_config import AGFSConfig
 
-# 1. Config loading logic
-# Try to load from environment variable or default ov.conf
-CONFIG_FILE = os.getenv("OPENVIKING_CONFIG_FILE")
-if not CONFIG_FILE:
-    # Try default ov.conf in tests/agfs
-    default_conf = Path(__file__).parent / "ov.conf"
-    if default_conf.exists():
-        CONFIG_FILE = str(default_conf)
-
-
-def load_agfs_config() -> AGFSConfig:
-    """Load only AGFS configuration from the config file."""
-    if not CONFIG_FILE or not Path(CONFIG_FILE).exists():
-        return None
-
-    try:
-        with open(CONFIG_FILE, "r") as f:
-            full_config = json.load(f)
-
-        # Support both 'storage.agfs' and top-level 'agfs' structures
-        agfs_data = full_config.get("storage", {}).get("agfs") or full_config.get("agfs")
-        if not agfs_data:
-            return None
-
-        return AGFSConfig(**agfs_data)
-    except Exception:
-        return None
-
-
-AGFS_CONF = load_agfs_config()
-
-# 2. Skip tests if no local config found or backend is not local
-pytestmark = pytest.mark.skipif(
-    AGFS_CONF is None or AGFS_CONF.backend != "local",
-    reason="AGFS local configuration not found in ov.conf or backend is not local",
+# 1. Direct configuration for testing
+AGFS_CONF = AGFSConfig(
+    path="/tmp/ov-test", backend="local", port=1833, url="http://localhost:1833", timeout=10
 )
+
+# 2. Ensure test directory exists
+os.makedirs(AGFS_CONF.path, exist_ok=True)
 
 
 @pytest.fixture(scope="module")
 async def viking_fs_instance():
     """Initialize AGFS Manager and VikingFS singleton."""
+    from openviking.utils.agfs_utils import create_agfs_client
+
     manager = AGFSManager(config=AGFS_CONF)
     manager.start()
 
-    # Initialize VikingFS with agfs_url
-    vfs = init_viking_fs(agfs_url=AGFS_CONF.url, timeout=AGFS_CONF.timeout)
+    # Create AGFS client
+    agfs_client = create_agfs_client(AGFS_CONF)
+
+    # Initialize VikingFS with client
+    vfs = init_viking_fs(agfs=agfs_client)
 
     yield vfs
 
