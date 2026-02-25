@@ -275,6 +275,7 @@ class AsyncHTTPClient(BaseClient):
         instruction: str = "",
         wait: bool = False,
         timeout: Optional[float] = None,
+        trace: bool = False,
     ) -> Dict[str, Any]:
         """Add resource to OpenViking."""
         request_data = {
@@ -283,6 +284,7 @@ class AsyncHTTPClient(BaseClient):
             "instruction": instruction,
             "wait": wait,
             "timeout": timeout,
+            "trace": trace,
         }
 
         path_obj = Path(path)
@@ -307,6 +309,7 @@ class AsyncHTTPClient(BaseClient):
         data: Any,
         wait: bool = False,
         timeout: Optional[float] = None,
+        trace: bool = False,
     ) -> Dict[str, Any]:
         """Add skill to OpenViking."""
         response = await self._http.post(
@@ -315,6 +318,7 @@ class AsyncHTTPClient(BaseClient):
                 "data": data,
                 "wait": wait,
                 "timeout": timeout,
+                "trace": trace,
             },
         )
         return self._handle_response(response)
@@ -459,6 +463,7 @@ class AsyncHTTPClient(BaseClient):
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict[str, Any]] = None,
+        trace: bool = False,
     ) -> FindResult:
         """Semantic search without session context."""
         if target_uri:
@@ -471,6 +476,7 @@ class AsyncHTTPClient(BaseClient):
                 "limit": limit,
                 "score_threshold": score_threshold,
                 "filter": filter,
+                "trace": trace,
             },
         )
         return FindResult.from_dict(self._handle_response(response))
@@ -484,6 +490,7 @@ class AsyncHTTPClient(BaseClient):
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict[str, Any]] = None,
+        trace: bool = False,
     ) -> FindResult:
         """Semantic search with optional session context."""
         if target_uri:
@@ -498,6 +505,7 @@ class AsyncHTTPClient(BaseClient):
                 "limit": limit,
                 "score_threshold": score_threshold,
                 "filter": filter,
+                "trace": trace,
             },
         )
         return FindResult.from_dict(self._handle_response(response))
@@ -584,9 +592,12 @@ class AsyncHTTPClient(BaseClient):
         response = await self._http.delete(f"/api/v1/sessions/{session_id}")
         self._handle_response(response)
 
-    async def commit_session(self, session_id: str) -> Dict[str, Any]:
+    async def commit_session(self, session_id: str, trace: bool = False) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
-        response = await self._http.post(f"/api/v1/sessions/{session_id}/commit")
+        response = await self._http.post(
+            f"/api/v1/sessions/{session_id}/commit",
+            json={"trace": trace},
+        )
         return self._handle_response(response)
 
     async def add_message(

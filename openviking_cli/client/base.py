@@ -38,6 +38,7 @@ class BaseClient(ABC):
         instruction: str = "",
         wait: bool = False,
         timeout: Optional[float] = None,
+        trace: bool = False,
     ) -> Dict[str, Any]:
         """Add resource to OpenViking."""
         ...
@@ -48,6 +49,7 @@ class BaseClient(ABC):
         data: Any,
         wait: bool = False,
         timeout: Optional[float] = None,
+        trace: bool = False,
     ) -> Dict[str, Any]:
         """Add skill to OpenViking."""
         ...
@@ -138,6 +140,7 @@ class BaseClient(ABC):
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict] = None,
+        trace: bool = False,
     ) -> Any:
         """Semantic search without session context."""
         ...
@@ -151,6 +154,7 @@ class BaseClient(ABC):
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict] = None,
+        trace: bool = False,
     ) -> Any:
         """Semantic search with optional session context."""
         ...
@@ -205,7 +209,7 @@ class BaseClient(ABC):
         ...
 
     @abstractmethod
-    async def commit_session(self, session_id: str) -> Dict[str, Any]:
+    async def commit_session(self, session_id: str, trace: bool = False) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
         ...
 

@@ -80,6 +80,14 @@ class VLMBase(ABC):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )
+        # Request-level trace aggregation (no-op when tracing is disabled).
+        try:
+            from openviking.trace import get_trace_collector
+
+            get_trace_collector().add_token_usage(prompt_tokens, completion_tokens)
+        except Exception:
+            # Tracing must never break model inference.
+            pass
 
     def get_token_usage(self) -> Dict[str, Any]:
         """Get token usage

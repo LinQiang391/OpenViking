@@ -14,6 +14,8 @@ from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext
 from openviking.server.models import Response
+from openviking.server.trace import create_collector, inject_trace
+from openviking.trace import bind_trace_collector
 from openviking_cli.utils.config.open_viking_config import get_openviking_config
 
 router = APIRouter(prefix="/api/v1", tags=["resources"])
@@ -29,6 +31,7 @@ class AddResourceRequest(BaseModel):
     instruction: str = ""
     wait: bool = False
     timeout: Optional[float] = None
+    trace: bool = False
 
 
 class AddSkillRequest(BaseModel):
@@ -37,6 +40,7 @@ class AddSkillRequest(BaseModel):
     data: Any
     wait: bool = False
     timeout: Optional[float] = None
+    trace: bool = False
 
 
 def _cleanup_temp_files(temp_dir: Path, max_age_hours: int = 1):
@@ -85,19 +89,22 @@ async def add_resource(
     """Add resource to OpenViking."""
     service = get_service()
 
-    path = request.path
-    if request.temp_path:
-        path = request.temp_path
+    collector = create_collector("resources.add_resource", request.trace)
+    with bind_trace_collector(collector):
+        path = request.path
+        if request.temp_path:
+            path = request.temp_path
 
-    result = await service.resources.add_resource(
-        path=path,
-        ctx=_ctx,
-        target=request.target,
-        reason=request.reason,
-        instruction=request.instruction,
-        wait=request.wait,
-        timeout=request.timeout,
-    )
+        result = await service.resources.add_resource(
+            path=path,
+            ctx=_ctx,
+            target=request.target,
+            reason=request.reason,
+            instruction=request.instruction,
+            wait=request.wait,
+            timeout=request.timeout,
+        )
+        result = inject_trace(result, collector, status="ok")
     return Response(status="ok", result=result)
 
 
@@ -108,10 +115,13 @@ async def add_skill(
 ):
     """Add skill to OpenViking."""
     service = get_service()
-    result = await service.resources.add_skill(
-        data=request.data,
-        ctx=_ctx,
-        wait=request.wait,
-        timeout=request.timeout,
-    )
+    collector = create_collector("resources.add_skill", request.trace)
+    with bind_trace_collector(collector):
+        result = await service.resources.add_skill(
+            data=request.data,
+            ctx=_ctx,
+            wait=request.wait,
+            timeout=request.timeout,
+        )
+        result = inject_trace(result, collector, status="ok")
     return Response(status="ok", result=result)

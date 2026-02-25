@@ -4,7 +4,7 @@
 
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Body, Depends, Path
 from pydantic import BaseModel, model_validator
 
 from openviking.message.part import TextPart, part_from_dict
@@ -12,6 +12,8 @@ from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext
 from openviking.server.models import Response
+from openviking.server.trace import create_collector, inject_trace
+from openviking.trace import bind_trace_collector
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
@@ -67,6 +69,12 @@ class AddMessageRequest(BaseModel):
         if self.content is None and self.parts is None:
             raise ValueError("Either 'content' or 'parts' must be provided")
         return self
+
+
+class CommitSessionRequest(BaseModel):
+    """Request model for session commit."""
+
+    trace: bool = False
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -140,12 +148,16 @@ async def delete_session(
 
 @router.post("/{session_id}/commit")
 async def commit_session(
+    request: CommitSessionRequest = Body(default_factory=CommitSessionRequest),
     session_id: str = Path(..., description="Session ID"),
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Commit a session (archive and extract memories)."""
     service = get_service()
-    result = await service.sessions.commit(session_id, _ctx)
+    collector = create_collector("session.commit", request.trace)
+    with bind_trace_collector(collector):
+        result = await service.sessions.commit(session_id, _ctx)
+        result = inject_trace(result, collector, status="ok")
     return Response(status="ok", result=result)
 
 

@@ -334,6 +334,7 @@ class FindResult:
     skills: List[MatchedContext]
     query_plan: Optional[QueryPlan] = None
     query_results: Optional[List[QueryResult]] = None
+    trace: Optional[Dict[str, Any]] = None
     total: int = 0
 
     def __iter__(self):
@@ -359,6 +360,8 @@ class FindResult:
                 "reasoning": self.query_plan.reasoning,
                 "queries": [self._query_to_dict(q) for q in self.query_plan.queries],
             }
+        if self.trace is not None:
+            result["trace"] = self.trace
 
         return result
 
@@ -409,4 +412,5 @@ class FindResult:
             memories=[_parse_context(m) for m in data.get("memories", [])],
             resources=[_parse_context(r) for r in data.get("resources", [])],
             skills=[_parse_context(s) for s in data.get("skills", [])],
+            trace=data.get("trace"),
         )

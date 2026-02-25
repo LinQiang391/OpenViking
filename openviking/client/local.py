@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from openviking.server.identity import RequestContext, Role
 from openviking.service import OpenVikingService
+from openviking.trace import RequestTraceCollector, bind_trace_collector
 from openviking_cli.client.base import BaseClient
 from openviking_cli.session.user_id import UserIdentifier
 
@@ -60,33 +61,47 @@ class LocalClient(BaseClient):
         instruction: str = "",
         wait: bool = False,
         timeout: Optional[float] = None,
+        trace: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """Add resource to OpenViking."""
-        return await self._service.resources.add_resource(
-            path=path,
-            ctx=self._ctx,
-            target=target,
-            reason=reason,
-            instruction=instruction,
-            wait=wait,
-            timeout=timeout,
-            **kwargs,
-        )
+        collector = RequestTraceCollector("resources.add_resource", enabled=trace)
+        with bind_trace_collector(collector):
+            result = await self._service.resources.add_resource(
+                path=path,
+                ctx=self._ctx,
+                target=target,
+                reason=reason,
+                instruction=instruction,
+                wait=wait,
+                timeout=timeout,
+                **kwargs,
+            )
+        trace_result = collector.finish(status="ok")
+        if trace_result:
+            result["trace"] = trace_result.to_dict()
+        return result
 
     async def add_skill(
         self,
         data: Any,
         wait: bool = False,
         timeout: Optional[float] = None,
+        trace: bool = False,
     ) -> Dict[str, Any]:
         """Add skill to OpenViking."""
-        return await self._service.resources.add_skill(
-            data=data,
-            ctx=self._ctx,
-            wait=wait,
-            timeout=timeout,
-        )
+        collector = RequestTraceCollector("resources.add_skill", enabled=trace)
+        with bind_trace_collector(collector):
+            result = await self._service.resources.add_skill(
+                data=data,
+                ctx=self._ctx,
+                wait=wait,
+                timeout=timeout,
+            )
+        trace_result = collector.finish(status="ok")
+        if trace_result:
+            result["trace"] = trace_result.to_dict()
+        return result
 
     async def wait_processed(self, timeout: Optional[float] = None) -> Dict[str, Any]:
         """Wait for all processing to complete."""
@@ -177,16 +192,23 @@ class LocalClient(BaseClient):
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict[str, Any]] = None,
+        trace: bool = False,
     ) -> Any:
         """Semantic search without session context."""
-        return await self._service.search.find(
-            query=query,
-            ctx=self._ctx,
-            target_uri=target_uri,
-            limit=limit,
-            score_threshold=score_threshold,
-            filter=filter,
-        )
+        collector = RequestTraceCollector("search.find", enabled=trace)
+        with bind_trace_collector(collector):
+            result = await self._service.search.find(
+                query=query,
+                ctx=self._ctx,
+                target_uri=target_uri,
+                limit=limit,
+                score_threshold=score_threshold,
+                filter=filter,
+            )
+        trace_result = collector.finish(status="ok")
+        if trace_result and hasattr(result, "trace"):
+            result.trace = trace_result.to_dict()
+        return result
 
     async def search(
         self,
@@ -196,21 +218,28 @@ class LocalClient(BaseClient):
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict[str, Any]] = None,
+        trace: bool = False,
     ) -> Any:
         """Semantic search with optional session context."""
+        collector = RequestTraceCollector("search.search", enabled=trace)
         session = None
-        if session_id:
-            session = self._service.sessions.session(self._ctx, session_id)
-            await session.load()
-        return await self._service.search.search(
-            query=query,
-            ctx=self._ctx,
-            target_uri=target_uri,
-            session=session,
-            limit=limit,
-            score_threshold=score_threshold,
-            filter=filter,
-        )
+        with bind_trace_collector(collector):
+            if session_id:
+                session = self._service.sessions.session(self._ctx, session_id)
+                await session.load()
+            result = await self._service.search.search(
+                query=query,
+                ctx=self._ctx,
+                target_uri=target_uri,
+                session=session,
+                limit=limit,
+                score_threshold=score_threshold,
+                filter=filter,
+            )
+        trace_result = collector.finish(status="ok")
+        if trace_result and hasattr(result, "trace"):
+            result.trace = trace_result.to_dict()
+        return result
 
     async def grep(self, uri: str, pattern: str, case_insensitive: bool = False) -> Dict[str, Any]:
         """Content search with pattern."""
@@ -263,9 +292,15 @@ class LocalClient(BaseClient):
         """Delete a session."""
         await self._service.sessions.delete(session_id, self._ctx)
 
-    async def commit_session(self, session_id: str) -> Dict[str, Any]:
+    async def commit_session(self, session_id: str, trace: bool = False) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
-        return await self._service.sessions.commit(session_id, self._ctx)
+        collector = RequestTraceCollector("session.commit", enabled=trace)
+        with bind_trace_collector(collector):
+            result = await self._service.sessions.commit(session_id, self._ctx)
+        trace_result = collector.finish(status="ok")
+        if trace_result:
+            result["trace"] = trace_result.to_dict()
+        return result
 
     async def add_message(
         self,

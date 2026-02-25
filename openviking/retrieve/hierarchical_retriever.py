@@ -14,6 +14,7 @@ from openviking.models.embedder.base import EmbedResult
 from openviking.server.identity import RequestContext, Role
 from openviking.storage import VikingDBInterface
 from openviking.storage.viking_fs import get_viking_fs
+from openviking.trace import get_trace_collector
 from openviking_cli.retrieve.types import (
     ContextType,
     MatchedContext,
@@ -94,6 +95,15 @@ class HierarchicalRetriever:
             grep_patterns: Keyword match pattern list
             metadata_filter: Additional metadata filter conditions
         """
+        trace = get_trace_collector()
+        trace.event(
+            "retriever.retrieve",
+            "retrieve_start",
+            {
+                "context_type": query.context_type.value if query.context_type else "all",
+                "limit": limit,
+            },
+        )
 
         # Use custom threshold or default threshold
         effective_threshold = score_threshold if score_threshold is not None else self.threshold
@@ -130,6 +140,7 @@ class HierarchicalRetriever:
 
         if not await self.storage.collection_exists(collection):
             logger.warning(f"[RecursiveSearch] Collection {collection} does not exist")
+            trace.event("retriever.retrieve", "collection_missing", {"collection": collection})
             return QueryResult(
                 query=query,
                 matched_contexts=[],
@@ -158,9 +169,19 @@ class HierarchicalRetriever:
             limit=self.GLOBAL_SEARCH_TOPK,
             filter=final_metadata_filter,
         )
+        trace.event(
+            "retriever.global_search",
+            "global_search_done",
+            {"hits": len(global_results)},
+        )
 
         # Step 3: Merge starting points
         starting_points = self._merge_starting_points(query.query, root_uris, global_results)
+        trace.event(
+            "retriever.starting_points",
+            "starting_points_merged",
+            {"count": len(starting_points)},
+        )
 
         # Step 4: Recursive search
         candidates = await self._recursive_search(
@@ -175,9 +196,19 @@ class HierarchicalRetriever:
             score_gte=score_gte,
             metadata_filter=final_metadata_filter,
         )
+        trace.event(
+            "retriever.recursive",
+            "recursive_search_done",
+            {"candidates": len(candidates)},
+        )
 
         # Step 6: Convert results
         matched = await self._convert_to_matched_contexts(candidates, ctx=ctx)
+        trace.event(
+            "retriever.retrieve",
+            "retrieve_done",
+            {"matched_contexts": len(matched[:limit])},
+        )
 
         return QueryResult(
             query=query,
@@ -237,6 +268,10 @@ class HierarchicalRetriever:
             filter=global_filter,
             limit=limit,
         )
+        trace = get_trace_collector()
+        trace.count("vector.search_calls", 1)
+        trace.count("vector.candidates_scored", len(results))
+        trace.count("vector.vectors_scanned", len(results))
         return results
 
     def _merge_starting_points(
@@ -335,6 +370,12 @@ class HierarchicalRetriever:
                 continue
             visited.add(current_uri)
             logger.info(f"[RecursiveSearch] Entering URI: {current_uri}")
+            trace = get_trace_collector()
+            trace.event(
+                "retriever.directory",
+                "directory_entered",
+                {"uri": current_uri, "queue_size": len(dir_queue)},
+            )
 
             pre_filter_limit = max(limit * 2, 20)
 
@@ -346,6 +387,14 @@ class HierarchicalRetriever:
                     {"op": "must", "field": "parent_uri", "conds": [current_uri]}, metadata_filter
                 ),
                 limit=pre_filter_limit,
+            )
+            trace.count("vector.search_calls", 1)
+            trace.count("vector.candidates_scored", len(results))
+            trace.count("vector.vectors_scanned", len(results))
+            trace.event(
+                "retriever.directory",
+                "directory_results",
+                {"uri": current_uri, "hits": len(results)},
             )
 
             if not results:
@@ -380,6 +429,7 @@ class HierarchicalRetriever:
                 # Always collect results that pass threshold, even if already
                 # visited as a directory starting point. The visited set only
                 # prevents re-entering directories for child search.
+                trace.count("vector.candidates_after_threshold", 1)
                 if not any(c.get("uri") == uri for c in collected):
                     r["_final_score"] = final_score
                     collected.append(r)

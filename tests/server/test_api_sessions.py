@@ -145,6 +145,31 @@ async def test_compress_session(client: httpx.AsyncClient):
     assert resp.json()["status"] == "ok"
 
 
+async def test_compress_session_with_trace(client: httpx.AsyncClient):
+    create_resp = await client.post("/api/v1/sessions", json={})
+    session_id = create_resp.json()["result"]["session_id"]
+    await client.post(
+        f"/api/v1/sessions/{session_id}/messages",
+        json={"role": "user", "content": "Trace this commit"},
+    )
+
+    resp = await client.post(
+        f"/api/v1/sessions/{session_id}/commit",
+        json={"trace": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    summary = body["result"]["trace"]["summary"]
+    assert summary["operation"] == "session.commit"
+    assert set(summary["token_usage"].keys()) == {
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    }
+    assert summary["memory"]["memories_extracted"] is not None
+
+
 async def test_extract_session_jsonable_regression(client: httpx.AsyncClient, service, monkeypatch):
     """Regression: extract endpoint should serialize internal objects."""
 

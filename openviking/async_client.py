@@ -145,10 +145,10 @@ class AsyncOpenViking:
             session_id=session_id, role=role, content=content, parts=parts
         )
 
-    async def commit_session(self, session_id: str) -> Dict[str, Any]:
+    async def commit_session(self, session_id: str, trace: bool = False) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
         await self._ensure_initialized()
-        return await self._client.commit_session(session_id)
+        return await self._client.commit_session(session_id, trace=trace)
 
     # ============= Resource methods =============
 
@@ -160,6 +160,7 @@ class AsyncOpenViking:
         instruction: str = "",
         wait: bool = False,
         timeout: float = None,
+        trace: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """Add resource to OpenViking (only supports resources scope).
@@ -178,6 +179,7 @@ class AsyncOpenViking:
             instruction=instruction,
             wait=wait,
             timeout=timeout,
+            trace=trace,
             **kwargs,
         )
 
@@ -191,6 +193,7 @@ class AsyncOpenViking:
         data: Any,
         wait: bool = False,
         timeout: float = None,
+        trace: bool = False,
     ) -> Dict[str, Any]:
         """Add skill to OpenViking.
 
@@ -203,6 +206,7 @@ class AsyncOpenViking:
             data=data,
             wait=wait,
             timeout=timeout,
+            trace=trace,
         )
 
     # ============= Search methods =============
@@ -216,6 +220,7 @@ class AsyncOpenViking:
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict] = None,
+        trace: bool = False,
     ):
         """
         Complex search with session context.
@@ -240,6 +245,7 @@ class AsyncOpenViking:
             limit=limit,
             score_threshold=score_threshold,
             filter=filter,
+            trace=trace,
         )
 
     async def find(
@@ -249,6 +255,7 @@ class AsyncOpenViking:
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter: Optional[Dict] = None,
+        trace: bool = False,
     ):
         """Semantic search"""
         await self._ensure_initialized()
@@ -258,6 +265,7 @@ class AsyncOpenViking:
             limit=limit,
             score_threshold=score_threshold,
             filter=filter,
+            trace=trace,
         )
 
     # ============= FS methods =============

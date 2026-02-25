@@ -35,6 +35,7 @@ class SemanticMsg:
     user_id: str = "default"
     agent_id: str = "default"
     role: str = "root"
+    trace_id: str = ""
 
     def __init__(
         self,
@@ -45,6 +46,7 @@ class SemanticMsg:
         user_id: str = "default",
         agent_id: str = "default",
         role: str = "root",
+        trace_id: str = "",
     ):
         self.id = str(uuid4())
         self.uri = uri
@@ -54,6 +56,7 @@ class SemanticMsg:
         self.user_id = user_id
         self.agent_id = agent_id
         self.role = role
+        self.trace_id = trace_id
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert object to dictionary."""
@@ -88,6 +91,7 @@ class SemanticMsg:
             user_id=data.get("user_id", "default"),
             agent_id=data.get("agent_id", "default"),
             role=data.get("role", "root"),
+            trace_id=data.get("trace_id", ""),
         )
         if "id" in data and data["id"]:
             obj.id = data["id"]

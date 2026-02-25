@@ -121,6 +121,18 @@ async def test_sdk_find(http_client):
     assert hasattr(result, "total")
 
 
+async def test_sdk_find_trace(http_client):
+    client, _ = http_client
+    f = TEST_TMP_DIR / "sdk_search_trace.md"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(SAMPLE_MD_CONTENT)
+    await client.add_resource(path=str(f), reason="trace search test", wait=True, trace=True)
+
+    result = await client.find(query="sample document", limit=5, trace=True)
+    assert result.trace is not None
+    assert result.trace["summary"]["operation"] == "search.find"
+
+
 # ===================================================================
 # Full workflow
 # ===================================================================

@@ -44,13 +44,13 @@ class Session:
         """
         return await self._client.add_message(self.session_id, role, content)
 
-    async def commit(self) -> Dict[str, Any]:
+    async def commit(self, trace: bool = False) -> Dict[str, Any]:
         """Commit the session (archive messages and extract memories).
 
         Returns:
             Commit result
         """
-        return await self._client.commit_session(self.session_id)
+        return await self._client.commit_session(self.session_id, trace=trace)
 
     async def delete(self) -> None:
         """Delete the session."""

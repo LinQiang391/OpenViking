@@ -66,9 +66,7 @@ async def test_search_basic(client_with_resource):
 async def test_search_with_session(client_with_resource):
     client, uri = client_with_resource
     # Create a session first
-    sess_resp = await client.post(
-        "/api/v1/sessions", json={"user": "test"}
-    )
+    sess_resp = await client.post("/api/v1/sessions", json={"user": "test"})
     session_id = sess_resp.json()["result"]["session_id"]
 
     resp = await client.post(
@@ -81,6 +79,39 @@ async def test_search_with_session(client_with_resource):
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+async def test_find_trace_metrics(client_with_resource):
+    client, _ = client_with_resource
+    resp = await client.post(
+        "/api/v1/search/find",
+        json={"query": "sample document", "limit": 5, "trace": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    summary = body["result"]["trace"]["summary"]
+    assert summary["operation"] == "search.find"
+    assert "total_duration_ms" in summary
+    assert set(summary["token_usage"].keys()) == {
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    }
+    assert "vector" in summary
+    assert summary["vector"]["search_calls"] >= 0
+
+
+async def test_search_trace_metrics(client_with_resource):
+    client, _ = client_with_resource
+    resp = await client.post(
+        "/api/v1/search/search",
+        json={"query": "sample document", "limit": 5, "trace": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    summary = body["result"]["trace"]["summary"]
+    assert summary["operation"] == "search.search"
+    assert summary["vector"]["returned"] >= 0
 
 
 async def test_grep(client_with_resource):

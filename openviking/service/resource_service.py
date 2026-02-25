@@ -6,12 +6,14 @@ Resource Service for OpenViking.
 Provides resource management operations: add_resource, add_skill, wait_processed.
 """
 
+import time
 from typing import Any, Dict, Optional
 
 from openviking.server.identity import RequestContext
 from openviking.storage import VikingDBManager
 from openviking.storage.queuefs import get_queue_manager
 from openviking.storage.viking_fs import VikingFS
+from openviking.trace import get_trace_collector
 from openviking.utils.resource_processor import ResourceProcessor
 from openviking.utils.skill_processor import SkillProcessor
 from openviking_cli.exceptions import (
@@ -90,6 +92,12 @@ class ResourceService:
             Processing result
         """
         self._ensure_initialized()
+        trace = get_trace_collector()
+        trace.event(
+            "resource_service.add_resource",
+            "start",
+            {"wait": wait, "has_target": bool(target)},
+        )
 
         # add_resource only supports resources scope
         if target and target.startswith("viking://"):
@@ -108,13 +116,25 @@ class ResourceService:
             target=target,
             **kwargs,
         )
+        trace.event(
+            "resource_service.add_resource",
+            "resource_processed",
+            {"status": result.get("status", "")},
+        )
 
         if wait:
             qm = get_queue_manager()
+            wait_start = time.perf_counter()
             try:
                 status = await qm.wait_complete(timeout=timeout)
             except TimeoutError as exc:
+                trace.set_error("resource_service.wait_complete", "DEADLINE_EXCEEDED", str(exc))
                 raise DeadlineExceededError("queue processing", timeout) from exc
+            trace.event(
+                "resource_service.add_resource",
+                "queue_wait_complete",
+                {"duration_ms": round((time.perf_counter() - wait_start) * 1000, 3)},
+            )
             result["queue_status"] = {
                 name: {
                     "processed": s.processed,
@@ -123,6 +143,28 @@ class ResourceService:
                 }
                 for name, s in status.items()
             }
+            if "Semantic" in status:
+                semantic_status = status["Semantic"]
+                trace.set("queue.semantic.processed", semantic_status.processed)
+                trace.set("queue.semantic.error_count", semantic_status.error_count)
+
+            # Request-level semantic DAG stats (if available).
+            if trace.enabled:
+                try:
+                    from openviking.storage.queuefs.semantic_processor import SemanticProcessor
+
+                    dag_stats = SemanticProcessor.consume_dag_stats(
+                        trace_id=trace.trace_id,
+                        uri=result.get("root_uri"),
+                    )
+                    if dag_stats:
+                        trace.set("semantic_nodes.total_nodes", dag_stats.total_nodes)
+                        trace.set("semantic_nodes.done_nodes", dag_stats.done_nodes)
+                        trace.set("semantic_nodes.pending_nodes", dag_stats.pending_nodes)
+                        trace.set("semantic_nodes.in_progress_nodes", dag_stats.in_progress_nodes)
+                except Exception:
+                    # Trace collection should never break business flow.
+                    pass
 
         return result
 
@@ -144,19 +186,37 @@ class ResourceService:
             Processing result
         """
         self._ensure_initialized()
+        trace = get_trace_collector()
+        trace.event(
+            "resource_service.add_skill",
+            "start",
+            {"wait": wait},
+        )
 
         result = await self._skill_processor.process_skill(
             data=data,
             viking_fs=self._viking_fs,
             ctx=ctx,
         )
+        trace.event(
+            "resource_service.add_skill",
+            "skill_processed",
+            {"status": result.get("status", "")},
+        )
 
         if wait:
             qm = get_queue_manager()
+            wait_start = time.perf_counter()
             try:
                 status = await qm.wait_complete(timeout=timeout)
             except TimeoutError as exc:
+                trace.set_error("resource_service.wait_complete", "DEADLINE_EXCEEDED", str(exc))
                 raise DeadlineExceededError("queue processing", timeout) from exc
+            trace.event(
+                "resource_service.add_skill",
+                "queue_wait_complete",
+                {"duration_ms": round((time.perf_counter() - wait_start) * 1000, 3)},
+            )
             result["queue_status"] = {
                 name: {
                     "processed": s.processed,

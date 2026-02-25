@@ -13,6 +13,7 @@ from openviking.session import Session
 from openviking.session.compressor import SessionCompressor
 from openviking.storage import VikingDBManager
 from openviking.storage.viking_fs import VikingFS
+from openviking.trace import get_trace_collector
 from openviking_cli.exceptions import NotFoundError, NotInitializedError
 from openviking_cli.utils import get_logger
 
@@ -141,8 +142,16 @@ class SessionService:
             Commit result
         """
         self._ensure_initialized()
+        trace = get_trace_collector()
+        trace.event("session_service.commit", "start", {"session_id": session_id})
         session = await self.get(session_id, ctx)
-        return session.commit()
+        result = session.commit()
+        trace.event(
+            "session_service.commit",
+            "done",
+            {"memories_extracted": result.get("memories_extracted", 0)},
+        )
+        return result
 
     async def extract(self, session_id: str, ctx: RequestContext) -> List[Any]:
         """Extract memories from a session.

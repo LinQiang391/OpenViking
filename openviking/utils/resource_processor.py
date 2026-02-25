@@ -7,12 +7,14 @@ Handles coordinated writes and self-iteration processes
 as described in the OpenViking design document.
 """
 
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from openviking.parse.tree_builder import TreeBuilder
 from openviking.server.identity import RequestContext
 from openviking.storage import VikingDBManager
 from openviking.storage.viking_fs import get_viking_fs
+from openviking.trace import get_trace_collector
 from openviking_cli.utils import get_logger
 from openviking_cli.utils.storage import StoragePath
 
@@ -93,9 +95,12 @@ class ResourceProcessor:
             "errors": [],
             "source_path": None,
         }
+        trace = get_trace_collector()
+        trace.event("resource_processor", "process_start", {"path": path, "scope": scope})
 
         # ============ Phase 1: Parse source (Parser generates L0/L1 and writes to temp) ============
         try:
+            parse_start = time.perf_counter()
             media_processor = self._get_media_processor()
             viking_fs = get_viking_fs()
             # Use reason as instruction fallback so it influences L0/L1
@@ -123,10 +128,22 @@ class ResourceProcessor:
             if parse_result.warnings:
                 result["errors"].extend(parse_result.warnings)
 
+            trace.event(
+                "resource_processor.parse",
+                "parse_done",
+                {
+                    "duration_ms": round((time.perf_counter() - parse_start) * 1000, 3),
+                    "warnings_count": len(parse_result.warnings or []),
+                    "has_temp_dir": bool(parse_result.temp_dir_path),
+                },
+            )
+            trace.set("resource.parse.warnings_count", len(parse_result.warnings or []))
+
         except Exception as e:
             result["status"] = "error"
             result["errors"].append(f"Parse error: {e}")
             logger.error(f"[ResourceProcessor] Parse error: {e}")
+            trace.set_error("resource_processor.parse", "PROCESSING_ERROR", str(e))
             import traceback
 
             traceback.print_exc()
@@ -148,6 +165,7 @@ class ResourceProcessor:
 
         # ============ Phase 3: TreeBuilder finalizes from temp (scan + move to AGFS) ============
         try:
+            finalize_start = time.perf_counter()
             with get_viking_fs().bind_request_context(ctx):
                 context_tree = await self.tree_builder.finalize_from_temp(
                     temp_dir_path=parse_result.temp_dir_path,
@@ -157,9 +175,18 @@ class ResourceProcessor:
                     source_path=parse_result.source_path,
                     source_format=parse_result.source_format,
                 )
+            trace.event(
+                "resource_processor.finalize",
+                "finalize_done",
+                {
+                    "duration_ms": round((time.perf_counter() - finalize_start) * 1000, 3),
+                    "root_uri": context_tree._root_uri,
+                },
+            )
         except Exception as e:
             result["status"] = "error"
             result["errors"].append(f"Finalize from temp error: {e}")
+            trace.set_error("resource_processor.finalize", "PROCESSING_ERROR", str(e))
 
             # Cleanup temporary directory on error (via VikingFS)
             try:
@@ -173,4 +200,9 @@ class ResourceProcessor:
         # Check media strategy
 
         result["root_uri"] = context_tree._root_uri
+        trace.event(
+            "resource_processor",
+            "process_done",
+            {"root_uri": context_tree._root_uri},
+        )
         return result

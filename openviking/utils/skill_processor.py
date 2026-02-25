@@ -6,6 +6,7 @@ Skill Processor for OpenViking.
 Handles skill parsing, LLM generation, and storage operations.
 """
 
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,7 @@ from openviking.server.identity import RequestContext
 from openviking.storage import VikingDBManager
 from openviking.storage.queuefs.embedding_msg_converter import EmbeddingMsgConverter
 from openviking.storage.viking_fs import VikingFS
+from openviking.trace import get_trace_collector
 from openviking_cli.utils import get_logger
 from openviking_cli.utils.config import get_openviking_config
 
@@ -57,8 +59,20 @@ class SkillProcessor:
         """
 
         config = get_openviking_config()
+        trace = get_trace_collector()
+        trace.event("skill_processor", "process_start", {})
 
+        parse_start = time.perf_counter()
         skill_dict, auxiliary_files, base_path = self._parse_skill(data)
+        trace.event(
+            "skill_processor.parse",
+            "parse_done",
+            {
+                "duration_ms": round((time.perf_counter() - parse_start) * 1000, 3),
+                "name": skill_dict.get("name", ""),
+                "auxiliary_files": len(auxiliary_files),
+            },
+        )
 
         context = Context(
             uri=f"viking://agent/skills/{skill_dict['name']}",
@@ -79,10 +93,17 @@ class SkillProcessor:
         )
         context.set_vectorize(Vectorize(text=context.abstract))
 
+        overview_start = time.perf_counter()
         overview = await self._generate_overview(skill_dict, config)
+        trace.event(
+            "skill_processor.overview",
+            "overview_done",
+            {"duration_ms": round((time.perf_counter() - overview_start) * 1000, 3)},
+        )
 
         skill_dir_uri = f"viking://agent/skills/{context.meta['name']}"
 
+        write_start = time.perf_counter()
         await self._write_skill_content(
             viking_fs=viking_fs,
             skill_dict=skill_dict,
@@ -98,12 +119,24 @@ class SkillProcessor:
             skill_dir_uri=skill_dir_uri,
             ctx=ctx,
         )
+        trace.event(
+            "skill_processor.write",
+            "write_done",
+            {"duration_ms": round((time.perf_counter() - write_start) * 1000, 3)},
+        )
 
+        index_start = time.perf_counter()
         await self._index_skill(
             context=context,
             skill_dir_uri=skill_dir_uri,
         )
+        trace.event(
+            "skill_processor.index",
+            "enqueue_done",
+            {"duration_ms": round((time.perf_counter() - index_start) * 1000, 3)},
+        )
 
+        trace.event("skill_processor", "process_done", {"uri": skill_dir_uri})
         return {
             "status": "success",
             "uri": skill_dir_uri,

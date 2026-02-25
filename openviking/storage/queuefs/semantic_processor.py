@@ -3,6 +3,7 @@
 """SemanticProcessor: Processes messages from SemanticQueue, generates .abstract.md and .overview.md."""
 
 import asyncio
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from openviking.core.context import Context, ResourceContentType, Vectorize
@@ -44,6 +45,12 @@ class SemanticProcessor(DequeueHandlerBase):
     4. Enqueue to EmbeddingQueue for vectorization
     """
 
+    _dag_stats_lock = threading.Lock()
+    _dag_stats_by_trace_id: Dict[str, DagStats] = {}
+    _dag_stats_by_uri: Dict[str, DagStats] = {}
+    _dag_stats_order: List[Tuple[str, str]] = []
+    _max_cached_stats = 256
+
     def __init__(self, max_concurrent_llm: int = 100):
         """
         Initialize SemanticProcessor.
@@ -54,6 +61,32 @@ class SemanticProcessor(DequeueHandlerBase):
         self.max_concurrent_llm = max_concurrent_llm
         self._dag_executor: Optional[SemanticDagExecutor] = None
         self._current_ctx = RequestContext(user=UserIdentifier.the_default_user(), role=Role.ROOT)
+
+    @classmethod
+    def _cache_dag_stats(cls, trace_id: str, uri: str, stats: DagStats) -> None:
+        with cls._dag_stats_lock:
+            if trace_id:
+                cls._dag_stats_by_trace_id[trace_id] = stats
+            cls._dag_stats_by_uri[uri] = stats
+            cls._dag_stats_order.append((trace_id, uri))
+            if len(cls._dag_stats_order) > cls._max_cached_stats:
+                old_trace_id, old_uri = cls._dag_stats_order.pop(0)
+                if old_trace_id:
+                    cls._dag_stats_by_trace_id.pop(old_trace_id, None)
+                cls._dag_stats_by_uri.pop(old_uri, None)
+
+    @classmethod
+    def consume_dag_stats(cls, trace_id: str = "", uri: Optional[str] = None) -> Optional[DagStats]:
+        """Consume cached request-level DAG stats if available."""
+        with cls._dag_stats_lock:
+            if trace_id and trace_id in cls._dag_stats_by_trace_id:
+                stats = cls._dag_stats_by_trace_id.pop(trace_id, None)
+                if uri:
+                    cls._dag_stats_by_uri.pop(uri, None)
+                return stats
+            if uri and uri in cls._dag_stats_by_uri:
+                return cls._dag_stats_by_uri.pop(uri, None)
+        return None
 
     @staticmethod
     def _owner_space_for_uri(uri: str, ctx: RequestContext) -> str:
@@ -178,6 +211,8 @@ class SemanticProcessor(DequeueHandlerBase):
                 )
                 self._dag_executor = executor
                 await executor.run(msg.uri)
+                stats = executor.get_stats()
+                self._cache_dag_stats(msg.trace_id, msg.uri, stats)
                 logger.info(f"Completed semantic generation for: {msg.uri}")
                 self.report_success()
                 return None
@@ -210,6 +245,12 @@ class SemanticProcessor(DequeueHandlerBase):
                     context_type=msg.context_type,
                     children_uris=children_uris,
                     file_paths=file_paths,
+                )
+                # Non-recursive branch still has one logical node.
+                self._cache_dag_stats(
+                    msg.trace_id,
+                    msg.uri,
+                    DagStats(total_nodes=1, pending_nodes=0, in_progress_nodes=0, done_nodes=1),
                 )
 
                 logger.info(f"Completed semantic generation for: {msg.uri}")

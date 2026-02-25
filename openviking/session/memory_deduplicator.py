@@ -16,6 +16,7 @@ from openviking.core.context import Context
 from openviking.models.embedder.base import EmbedResult
 from openviking.prompts import render_prompt
 from openviking.storage import VikingDBManager
+from openviking.trace import get_trace_collector
 from openviking_cli.utils import get_logger
 from openviking_cli.utils.config import get_openviking_config
 
@@ -119,6 +120,7 @@ class MemoryDeduplicator:
         candidate: CandidateMemory,
     ) -> List[Context]:
         """Find similar existing memories using vector search."""
+        trace = get_trace_collector()
         if not self.embedder:
             return []
 
@@ -164,6 +166,14 @@ class MemoryDeduplicator:
                 limit=5,
                 filter=dedup_filter,
             )
+            trace.count("vector.search_calls", 1)
+            trace.count("vector.candidates_scored", len(results))
+            trace.count("vector.vectors_scanned", len(results))
+            trace.event(
+                "session.memory_dedup",
+                "vector_search_done",
+                {"hits": len(results), "category": candidate.category.value},
+            )
 
             # Filter by similarity threshold
             similar = []
@@ -181,6 +191,7 @@ class MemoryDeduplicator:
                     result.get("abstract", ""),
                 )
                 if score >= self.SIMILARITY_THRESHOLD:
+                    trace.count("vector.candidates_after_threshold", 1)
                     # Reconstruct Context object
                     context = Context.from_dict(result)
                     if context:
