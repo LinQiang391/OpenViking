@@ -31,8 +31,9 @@ class SyncHTTPClient:
         self,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
-        self._async_client = AsyncHTTPClient(url=url, api_key=api_key)
+        self._async_client = AsyncHTTPClient(url=url, api_key=api_key, agent_id=agent_id)
         self._initialized = False
 
     # ============= Lifecycle =============
@@ -69,9 +70,24 @@ class SyncHTTPClient:
         """Delete a session."""
         run_async(self._async_client.delete_session(session_id))
 
-    def add_message(self, session_id: str, role: str, content: str) -> Dict[str, Any]:
-        """Add a message to a session."""
-        return run_async(self._async_client.add_message(session_id, role, content))
+    def add_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str | None = None,
+        parts: list[dict] | None = None,
+    ) -> Dict[str, Any]:
+        """Add a message to a session.
+
+        Args:
+            session_id: Session ID
+            role: Message role ("user" or "assistant")
+            content: Text content (simple mode)
+            parts: Parts array (full Part support: TextPart, ContextPart, ToolPart)
+
+        If both content and parts are provided, parts takes precedence.
+        """
+        return run_async(self._async_client.add_message(session_id, role, content, parts))
 
     def commit_session(self, session_id: str) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
@@ -160,6 +176,7 @@ class SyncHTTPClient:
         output: str = "original",
         abs_limit: int = 256,
         show_all_hidden: bool = False,
+        node_limit: int = 1000,
     ) -> List[Any]:
         """List directory contents."""
         return run_async(
@@ -170,6 +187,7 @@ class SyncHTTPClient:
                 output=output,
                 abs_limit=abs_limit,
                 show_all_hidden=show_all_hidden,
+                node_limit=node_limit,
             )
         )
 
@@ -179,11 +197,16 @@ class SyncHTTPClient:
         output: str = "original",
         abs_limit: int = 128,
         show_all_hidden: bool = False,
-    ) -> Dict:
+        node_limit: int = 1000,
+    ) -> List[Dict[str, Any]]:
         """Get directory tree."""
         return run_async(
             self._async_client.tree(
-                uri, output=output, abs_limit=abs_limit, show_all_hidden=show_all_hidden
+                uri,
+                output=output,
+                abs_limit=abs_limit,
+                show_all_hidden=show_all_hidden,
+                node_limit=node_limit,
             )
         )
 
@@ -205,9 +228,9 @@ class SyncHTTPClient:
 
     # ============= Content =============
 
-    def read(self, uri: str) -> str:
+    def read(self, uri: str, offset: int = 0, limit: int = -1) -> str:
         """Read file content."""
-        return run_async(self._async_client.read(uri))
+        return run_async(self._async_client.read(uri, offset=offset, limit=limit))
 
     def abstract(self, uri: str) -> str:
         """Read L0 abstract."""
@@ -242,6 +265,42 @@ class SyncHTTPClient:
     ) -> str:
         """Import .ovpack file."""
         return run_async(self._async_client.import_ovpack(file_path, target, force, vectorize))
+
+    # ============= Admin =============
+
+    def admin_create_account(self, account_id: str, admin_user_id: str) -> Dict[str, Any]:
+        """Create a new account with its first admin user."""
+        return run_async(self._async_client.admin_create_account(account_id, admin_user_id))
+
+    def admin_list_accounts(self) -> List[Any]:
+        """List all accounts."""
+        return run_async(self._async_client.admin_list_accounts())
+
+    def admin_delete_account(self, account_id: str) -> Dict[str, Any]:
+        """Delete an account and all associated users."""
+        return run_async(self._async_client.admin_delete_account(account_id))
+
+    def admin_register_user(
+        self, account_id: str, user_id: str, role: str = "user"
+    ) -> Dict[str, Any]:
+        """Register a new user in an account."""
+        return run_async(self._async_client.admin_register_user(account_id, user_id, role))
+
+    def admin_list_users(self, account_id: str) -> List[Any]:
+        """List all users in an account."""
+        return run_async(self._async_client.admin_list_users(account_id))
+
+    def admin_remove_user(self, account_id: str, user_id: str) -> Dict[str, Any]:
+        """Remove a user from an account."""
+        return run_async(self._async_client.admin_remove_user(account_id, user_id))
+
+    def admin_set_role(self, account_id: str, user_id: str, role: str) -> Dict[str, Any]:
+        """Change a user's role."""
+        return run_async(self._async_client.admin_set_role(account_id, user_id, role))
+
+    def admin_regenerate_key(self, account_id: str, user_id: str) -> Dict[str, Any]:
+        """Regenerate a user's API key. Old key is immediately invalidated."""
+        return run_async(self._async_client.admin_regenerate_key(account_id, user_id))
 
     # ============= Debug =============
 

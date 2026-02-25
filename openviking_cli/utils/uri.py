@@ -57,13 +57,16 @@ class VikingURI:
         # Remove scheme
         path = self.uri[len(f"{self.SCHEME}://") :]
 
-        # Split path components
-        parts = path.split("/")
-        if len(parts) < 1:
-            raise ValueError(f"Invalid URI format: {self.uri}")
+        # Root URI: viking://
+        if not path.strip("/"):
+            return {
+                "scheme": self.SCHEME,
+                "scope": "",
+                "full_path": "",
+            }
 
         # Parse scope
-        scope = parts[0]
+        scope = path.split("/")[0]
         if scope not in self.VALID_SCOPES:
             raise ValueError(f"Invalid scope '{scope}'. Must be one of {self.VALID_SCOPES}")
 
@@ -128,9 +131,9 @@ class VikingURI:
 
         after_scheme = uri[scheme_end + len(scheme_sep) :]
 
-        # If no / in after_scheme, only scope exists, no path
+        # If no / in after_scheme, only scope exists → parent is root
         if "/" not in after_scheme:
-            return None
+            return VikingURI(f"{self.SCHEME}://") if after_scheme else None
 
         # Find last / and truncate
         last_slash = uri.rfind("/")
@@ -157,18 +160,14 @@ class VikingURI:
         """
         Join URI parts, handling slashes correctly.
         """
+        part = part.strip("/") if part else ""
         if not part:
             return self
 
-        # Start with first part, strip trailing slash
-        result = self.uri.rstrip("/")
-
-        # Add remaining parts, strip leading/trailing slashes
-        part = part.strip("/")
-        if part:
-            result = f"{result}/{part}"
-
-        return VikingURI(result)
+        full = self.full_path.rstrip("/")
+        if full:
+            return VikingURI(f"{self.SCHEME}://{full}/{part}")
+        return VikingURI(f"{self.SCHEME}://{part}")
 
     @staticmethod
     def build(scope: str, *path_parts: str) -> str:
@@ -201,7 +200,7 @@ class VikingURI:
         Build a semantic URI based on parent URI.
         """
         # Sanitize semantic name for URI
-        safe_name = VikingURI._sanitize_segment(semantic_name)
+        safe_name = VikingURI.sanitize_segment(semantic_name)
 
         if not is_leaf:
             return f"{parent_uri}/{safe_name}"
@@ -211,11 +210,12 @@ class VikingURI:
             return f"{parent_uri}/{safe_name}/{node_id}"
 
     @staticmethod
-    def _sanitize_segment(text: str) -> str:
+    def sanitize_segment(text: str) -> str:
         """
         Sanitize text for use in URI segment.
 
-        Preserves Chinese characters but replaces special characters.
+        Preserves CJK characters (Chinese, Japanese, Korean) and other common scripts
+        while replacing special characters.
 
         Args:
             text: Original text
@@ -223,8 +223,18 @@ class VikingURI:
         Returns:
             URI-safe string
         """
-        # Preserve Chinese characters, letters, numbers, underscores, hyphens
-        safe = re.sub(r"[^\w\u4e00-\u9fff\-]", "_", text)
+        # Preserve:
+        # - Letters, numbers, underscores, hyphens (\w includes [a-zA-Z0-9_])
+        # - CJK Unified Ideographs (Chinese, Japanese Kanji, Korean Hanja)
+        # - Hiragana and Katakana (Japanese)
+        # - Hangul Syllables (Korean)
+        # - CJK Unified Ideographs Extension A
+        # - CJK Unified Ideographs Extension B
+        safe = re.sub(
+            r"[^\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u3400-\u4dbf\U00020000-\U0002a6df\-]",
+            "_",
+            text,
+        )
         # Merge consecutive underscores
         safe = re.sub(r"_+", "_", safe)
         # Strip leading/trailing underscores and limit length
@@ -244,6 +254,33 @@ class VikingURI:
 
     def __hash__(self) -> int:
         return hash(self.uri)
+
+    @staticmethod
+    def normalize(uri: str) -> str:
+        """
+        Normalize URI by ensuring it has the viking:// scheme.
+
+        If the input already starts with viking://, returns it as-is.
+        If it starts with /, prepends viking:// (resulting in viking:///... which is invalid,
+        so we strip leading / first).
+        Otherwise, prepends viking://.
+
+        Examples:
+            "/resources/images" -> "viking://resources/images"
+            "resources/images" -> "viking://resources/images"
+            "viking://resources/images" -> "viking://resources/images"
+
+        Args:
+            uri: Input URI string
+
+        Returns:
+            Normalized URI with viking:// scheme
+        """
+        if uri.startswith(f"{VikingURI.SCHEME}://"):
+            return uri
+        # Strip leading slashes
+        uri = uri.lstrip("/")
+        return f"{VikingURI.SCHEME}://{uri}"
 
     @classmethod
     def create_temp_uri(cls) -> str:

@@ -87,20 +87,29 @@ OpenViking 支持多种模型服务：
 
 ```json
 {
+  "storage": {
+    "workspace": "/home/your-name/openviking_workspace"
+  },
+  "log": {
+    "level": "INFO",
+    "output": "stdout"                 // 可配置为 "stdout" or "file"
+  },
   "embedding": {
     "dense": {
       "api_base" : "<api-endpoint>",   // API 服务端点地址
       "api_key"  : "<your-api-key>",   // 模型服务的 API 密钥
-      "provider" : "<provider-type>",  // 提供商类型（volcengine 或 openai）
+      "provider" : "<provider-type>",  // 提供商类型（volcengine、openai 或 jina）
       "dimension": 1024,               // 向量维度
       "model"    : "<model-name>"      // Embedding 模型名称（如 doubao-embedding-vision-250615 或 text-embedding-3-large）
-    }
+    },
+    "max_concurrent": 10               // Embedding 最大并发请求数（默认：10）
   },
   "vlm": {
     "api_base" : "<api-endpoint>",     // API 服务端点地址
     "api_key"  : "<your-api-key>",     // 模型服务的 API 密钥
-    "provider" : "<provider-type>",    // 提供商类型（volcengine 或 openai）
-    "model"    : "<model-name>"        // VLM 模型名称（如 doubao-seed-1-8-251228 或 gpt-4-vision-preview）
+    "provider" : "<provider-type>",    // 提供商类型（volcengine、openai 或 jina）
+    "model"    : "<model-name>",       // VLM 模型名称（如 doubao-seed-1-8-251228 或 gpt-4-vision-preview）
+    "max_concurrent": 100              // 语义处理最大并发 LLM 调用数（默认：100）
   }
 }
 ```
@@ -114,6 +123,13 @@ OpenViking 支持多种模型服务：
 
 ```json
 {
+  "storage": {
+    "workspace": "/home/your-name/openviking_workspace"
+  },
+  "log": {
+    "level": "INFO",
+    "output": "stdout"                 // 可配置为 "stdout" or "file"
+  },
   "embedding": {
     "dense": {
       "api_base" : "https://ark.cn-beijing.volces.com/api/v3",
@@ -121,13 +137,15 @@ OpenViking 支持多种模型服务：
       "provider" : "volcengine",
       "dimension": 1024,
       "model"    : "doubao-embedding-vision-250615"
-    }
+    },
+    "max_concurrent": 10
   },
   "vlm": {
     "api_base" : "https://ark.cn-beijing.volces.com/api/v3",
     "api_key"  : "your-volcengine-api-key",
     "provider" : "volcengine",
-    "model"    : "doubao-seed-1-8-251228"
+    "model"    : "doubao-seed-1-8-251228",
+    "max_concurrent": 100
   }
 }
 ```
@@ -139,6 +157,13 @@ OpenViking 支持多种模型服务：
 
 ```json
 {
+  "storage": {
+    "workspace": "/home/your-name/openviking_workspace"
+  },
+  "log": {
+    "level": "INFO",
+    "output": "stdout"                 // 可配置为 "stdout" or "file"
+  },
   "embedding": {
     "dense": {
       "api_base" : "https://api.openai.com/v1",
@@ -146,13 +171,15 @@ OpenViking 支持多种模型服务：
       "provider" : "openai",
       "dimension": 3072,
       "model"    : "text-embedding-3-large"
-    }
+    },
+    "max_concurrent": 10
   },
   "vlm": {
     "api_base" : "https://api.openai.com/v1",
     "api_key"  : "your-openai-api-key",
     "provider" : "openai",
-    "model"    : "gpt-4-vision-preview"
+    "model"    : "gpt-4-vision-preview",
+    "max_concurrent": 100
   }
 }
 ```
@@ -270,6 +297,15 @@ Search results:
 恭喜！你已成功运行 OpenViking 🎉
 
 ---
+
+## 服务端部署
+
+在生产环境中，我们推荐将 OpenViking 作为独立 HTTP 服务运行，以便为您的 AI Agent 提供持久化、高性能的上下文支持。
+
+🚀 **云端部署OpenViking**：
+为了确保存储性能与数据安全，我们推荐使用 **火山引擎云服务器 (ECS)** 结合 veLinux 系统进行部署。我们准备了详细的测试教程，点击下方链接即可快速上手。
+
+👉 **[点击查看：服务端部署与ECS测试文档](./docs/zh/getting-started/03-quickstart-server.md)**
 
 ## 核心理念
 
@@ -448,7 +484,7 @@ OpenViking 目前还处于早期阶段，有许多需要完善和探索的地方
 
 ### Star 趋势
 
-[![Star History Chart](https://api.star-history.com/svg?repos=volcengine/OpenViking&type=Timeline)](https://www.star-history.com/#volcengine/OpenViking&Timeline)
+[![Star History Chart](https://api.star-history.com/svg?repos=volcengine/OpenViking&type=timeline&legend=top-left)](https://www.star-history.com/#volcengine/OpenViking&type=timeline&legend=top-left)
 
 ---
 

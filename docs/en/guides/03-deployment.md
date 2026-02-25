@@ -48,7 +48,7 @@ The `server` section in `ov.conf` controls server behavior:
   "server": {
     "host": "0.0.0.0",
     "port": 1933,
-    "api_key": "your-secret-key",
+    "root_api_key": "your-secret-root-key",
     "cors_origins": ["*"]
   },
   "storage": {
@@ -94,6 +94,59 @@ Server connects to remote AGFS and VectorDB services. Configure remote URLs in `
 python -m openviking serve
 ```
 
+## Deploying with Systemd (Recommended)
+
+For Linux systems, you can use Systemd to manage OpenViking as a service, enabling automatic restart and startup on boot. Firstly, you should tried to install and configure openviking on your own.
+
+### Create Systemd Service File
+
+Create `/etc/systemd/system/openviking.service` file:
+
+```ini
+[Unit]
+Description=OpenViking HTTP Server
+After=network.target
+
+[Service]
+Type=simple
+# Replace with the user running OpenViking
+User=your-username
+# Replace with the user group
+Group=your-group
+# Replace with your working directory
+WorkingDirectory=/home/your-username/openviking_workspace
+# Choose one of the following start methods
+ExecStart=/path/to/your/python/bin/openviking-server
+Restart=always
+RestartSec=5
+# Path to config file
+Environment="OPENVIKING_CONFIG_FILE=/home/your-username/.openviking/ov.conf"
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Manage the Service
+
+After creating the service file, use the following commands to manage the OpenViking service:
+
+```bash
+# Reload systemd configuration
+sudo systemctl daemon-reload
+
+# Start the service
+sudo systemctl start openviking.service
+
+# Enable service on boot
+sudo systemctl enable openviking.service
+
+# Check service status
+sudo systemctl status openviking.service
+
+# View service logs
+sudo journalctl -u openviking.service -f
+```
+
 ## Connecting Clients
 
 ### Python SDK
@@ -101,7 +154,7 @@ python -m openviking serve
 ```python
 import openviking as ov
 
-client = ov.SyncHTTPClient(url="http://localhost:1933", api_key="your-key")
+client = ov.SyncHTTPClient(url="http://localhost:1933", api_key="your-key", agent_id="my-agent")
 client.initialize()
 
 results = client.find("how to use openviking")
@@ -137,6 +190,105 @@ python -m openviking ls viking://resources/
 curl http://localhost:1933/api/v1/fs/ls?uri=viking:// \
   -H "X-API-Key: your-key"
 ```
+
+## Cloud Deployment
+
+### Docker
+
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY . .
+RUN pip install -e .
+EXPOSE 1933
+CMD ["python", "-m", "openviking", "serve", "--config", "/etc/openviking/ov.conf"]
+```
+
+```bash
+docker build -t openviking .
+docker run -d -p 1933:1933 \
+  -v /path/to/ov.conf:/etc/openviking/ov.conf:ro \
+  -v /data/openviking:/data/openviking \
+  openviking
+```
+
+### Kubernetes
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openviking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openviking
+  template:
+    metadata:
+      labels:
+        app: openviking
+    spec:
+      containers:
+        - name: openviking
+          image: openviking:latest
+          ports:
+            - containerPort: 1933
+          volumeMounts:
+            - name: config
+              mountPath: /etc/openviking
+              readOnly: true
+            - name: data
+              mountPath: /data/openviking
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 1933
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 1933
+            initialDelaySeconds: 10
+            periodSeconds: 15
+      volumes:
+        - name: config
+          configMap:
+            name: openviking-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: openviking-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openviking
+spec:
+  selector:
+    app: openviking
+  ports:
+    - port: 1933
+      targetPort: 1933
+```
+
+## Health Checks
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `GET /health` | No | Liveness probe — returns `{"status": "ok"}` immediately |
+| `GET /ready` | No | Readiness probe — checks AGFS, VectorDB, APIKeyManager |
+
+```bash
+# Liveness
+curl http://localhost:1933/health
+
+# Readiness
+curl http://localhost:1933/ready
+# {"status": "ready", "checks": {"agfs": "ok", "vectordb": "ok", "api_key_manager": "ok"}}
+```
+
+Use `/health` for Kubernetes liveness probes and `/ready` for readiness probes.
 
 ## Related Documentation
 

@@ -11,6 +11,7 @@ Unified parser that handles:
 Preserves natural document hierarchy and filters out navigation/ads.
 """
 
+import hashlib
 import re
 import tempfile
 import time
@@ -27,6 +28,7 @@ from openviking.parse.base import (
     lazy_import,
 )
 from openviking.parse.parsers.base_parser import BaseParser
+from openviking_cli.utils.config import get_openviking_config
 
 
 class URLType(Enum):
@@ -140,24 +142,31 @@ class URLTypeDetector:
         """
         import re
 
-        # Repository URL patterns (from README)
-        repo_patterns = [
-            r"^https?://github\.com/[^/]+/[^/]+/?$",
-            r"^https?://gitlab\.com/[^/]+/[^/]+/?$",
-            r"^.*\.git$",
-            r"^git@",
-        ]
+        config = get_openviking_config()
+        github_domains = list(set(config.html.github_domains + config.code.github_domains))
+        gitlab_domains = list(set(config.html.gitlab_domains + config.code.gitlab_domains))
+        # Build repository URL patterns from config
+        repo_patterns = []
+
+        # Add patterns for GitHub domains
+        for domain in github_domains:
+            repo_patterns.append(rf"^https?://{re.escape(domain)}/[^/]+/[^/]+/?$")
+
+        # Add patterns for GitLab domains
+        for domain in gitlab_domains:
+            repo_patterns.append(rf"^https?://{re.escape(domain)}/[^/]+/[^/]+/?$")
+
+        # Add other patterns
+        repo_patterns.extend(
+            [
+                r"^.*\.git$",
+                r"^git@",
+            ]
+        )
 
         # Check for URL patterns
         for pattern in repo_patterns:
             if re.match(pattern, url):
-                return True
-
-        # Check if it's a GitHub/GitLab URL
-        parsed = urlparse(url)
-        if parsed.netloc in ["github.com", "gitlab.com"]:
-            path_parts = parsed.path.strip("/").split("/")
-            if len(path_parts) >= 2:
                 return True
 
         return False
@@ -359,14 +368,17 @@ class HTMLParser(BaseParser):
             # Get appropriate parser
             if file_type == "pdf":
                 from openviking.parse.parsers.pdf import PDFParser
+
                 parser = PDFParser()
                 result = await parser.parse(temp_path)
             elif file_type == "markdown":
                 from openviking.parse.parsers.markdown import MarkdownParser
+
                 parser = MarkdownParser()
                 result = await parser.parse(temp_path)
             elif file_type == "text":
                 from openviking.parse.parsers.text import TextParser
+
                 parser = TextParser()
                 result = await parser.parse(temp_path)
             elif file_type == "html":
@@ -478,6 +490,26 @@ class HTMLParser(BaseParser):
             response.raise_for_status()
             return response.text
 
+    def _convert_to_raw_url(self, url: str) -> str:
+        """Convert GitHub/GitLab blob URL to raw URL."""
+        parsed = urlparse(url)
+        config = get_openviking_config()
+        github_domains = config.html.github_domains
+        gitlab_domains = config.html.gitlab_domains
+        github_raw_domain = config.code.github_raw_domain
+
+        if parsed.netloc in github_domains:
+            path_parts = parsed.path.strip("/").split("/")
+            if len(path_parts) >= 4 and path_parts[2] == "blob":
+                # Remove 'blob'
+                new_path = "/".join(path_parts[:2] + path_parts[3:])
+                return f"https://{github_raw_domain}/{new_path}"
+
+        if parsed.netloc in gitlab_domains and "/blob/" in parsed.path:
+            return url.replace("/blob/", "/raw/")
+
+        return url
+
     async def _download_file(self, url: str) -> str:
         """
         Download file from URL to temporary location.
@@ -492,6 +524,8 @@ class HTMLParser(BaseParser):
             Exception: If download fails
         """
         httpx = lazy_import("httpx")
+
+        url = self._convert_to_raw_url(url)
 
         # Determine file extension from URL
         parsed = urlparse(url)
@@ -585,8 +619,18 @@ class HTMLParser(BaseParser):
 
         return result
 
-    def _sanitize_for_path(self, text: str) -> str:
-        """Sanitize text for use in file path."""
-        safe = re.sub(r"[^\w\u4e00-\u9fff\s-]", "", text)
+    def _sanitize_for_path(self, text: str, max_length: int = 50) -> str:
+        """Sanitize text for use in file path, hash & shorten if too long."""
+        safe = re.sub(
+            r"[^\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u3400-\u4dbf\U00020000-\U0002a6df\s-]",
+            "",
+            text,
+        )
         safe = re.sub(r"\s+", "_", safe)
-        return safe.strip("_")[:50] or "section"
+        safe = safe.strip("_")
+        if not safe:
+            return "section"
+        if len(safe) > max_length:
+            hash_suffix = hashlib.sha256(text.encode()).hexdigest()[:8]
+            return f"{safe[: max_length - 9]}_{hash_suffix}"
+        return safe

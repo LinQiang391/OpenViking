@@ -35,8 +35,8 @@ class VikingVectorIndexBackend(VikingDBInterface):
     """
 
     # Default project and index names
-    DEFAULT_PROJECT_NAME = "vectordb"
     DEFAULT_INDEX_NAME = "default"
+    DEFAULT_LOCAL_PROJECT_NAME = "vectordb"
 
     def __init__(
         self,
@@ -104,7 +104,7 @@ class VikingVectorIndexBackend(VikingDBInterface):
             )
 
             self.project = get_or_create_volcengine_project(
-                project_name=self.DEFAULT_PROJECT_NAME, config=volc_config
+                project_name=config.project_name, config=volc_config
             )
             logger.info(
                 f"VectorDB backend initialized in Volcengine mode: region={volc_config['Region']}"
@@ -124,7 +124,7 @@ class VikingVectorIndexBackend(VikingDBInterface):
             )
 
             self.project = get_or_create_vikingdb_project(
-                project_name=self.DEFAULT_PROJECT_NAME, config=viking_config
+                project_name=config.project_name, config=viking_config
             )
             logger.info(f"VikingDB backend initialized in private mode: {config.vikingdb.host}")
         elif config.backend == "http":
@@ -137,7 +137,7 @@ class VikingVectorIndexBackend(VikingDBInterface):
             from openviking.storage.vectordb.project.http_project import get_or_create_http_project
 
             self.project = get_or_create_http_project(
-                host=self.host, port=self.port, project_name=self.DEFAULT_PROJECT_NAME
+                host=self.host, port=self.port, project_name=config.project_name
             )
             logger.info(f"VikingDB backend initialized in remote mode: {config.url}")
         elif config.backend == "local":
@@ -147,7 +147,9 @@ class VikingVectorIndexBackend(VikingDBInterface):
                 get_or_create_local_project,
             )
 
-            project_path = Path(config.path) / self.DEFAULT_PROJECT_NAME if config.path else ""
+            project_path = (
+                Path(config.path) / self.DEFAULT_LOCAL_PROJECT_NAME if config.path else ""
+            )
             self.project = get_or_create_local_project(path=str(project_path))
             logger.info(f"VikingDB backend initialized with local storage: {project_path}")
         else:
@@ -195,6 +197,23 @@ class VikingVectorIndexBackend(VikingDBInterface):
         """Update the cached meta_data after modifications."""
         meta_data = coll.get_meta_data()
         self._meta_data_cache[collection_name] = meta_data
+
+    @staticmethod
+    def _restore_uri_fields(record: Dict[str, Any]) -> Dict[str, Any]:
+        """Restore viking:// prefix on uri/parent_uri fields read from VikingDB.
+
+        The volcengine backend sanitizes URIs to /path/ format on write;
+        this reverses that transformation so the rest of the system sees
+        the canonical viking:// scheme.  Idempotent for values that
+        already carry the prefix (local/http backends).
+        """
+        for key in ("uri", "parent_uri"):
+            val = record.get(key)
+            if isinstance(val, str) and not val.startswith("viking://"):
+                restored = val.strip("/")
+                if restored:
+                    record[key] = f"viking://{restored}"
+        return record
 
     # =========================================================================
     # Collection/Table Management
@@ -443,6 +462,7 @@ class VikingVectorIndexBackend(VikingDBInterface):
                 for item in result.items:
                     record = dict(item.fields) if item.fields else {}
                     record["id"] = item.id
+                    self._restore_uri_fields(record)
                     records.append(record)
                 return records
             elif isinstance(result, dict):
@@ -452,6 +472,7 @@ class VikingVectorIndexBackend(VikingDBInterface):
                         record = dict(item.get("fields", {})) if item.get("fields") else {}
                         record["id"] = item.get("id")
                         if record["id"]:
+                            self._restore_uri_fields(record)
                             records.append(record)
                 return records
             else:
@@ -474,8 +495,9 @@ class VikingVectorIndexBackend(VikingDBInterface):
             for item in result.data:
                 record = dict(item.fields) if item.fields else {}
                 record["id"] = item.id
+                self._restore_uri_fields(record)
                 records.append(record)
-            if len(records) > 0:
+            if len(records) > 1:
                 raise ValueError(f"Duplicate records found for URI: {uri}")
             if len(records) == 0:
                 raise ValueError(f"Record not found for URI: {uri}")
@@ -560,29 +582,25 @@ class VikingVectorIndexBackend(VikingDBInterface):
     async def remove_by_uri(self, collection: str, uri: str) -> int:
         """Remove resource(s) by URI."""
         try:
-            # Find records with matching URI
             target_records = await self.filter(
                 collection=collection,
                 filter={"op": "must", "field": "uri", "conds": [uri]},
-                limit=1,
+                limit=10,
             )
 
             if not target_records:
                 return 0
 
             total_deleted = 0
-            target = target_records[0]
-            is_leaf = target.get("is_leaf", False)
 
-            # If not leaf (i.e., intermediate directory), find and delete all descendants recursively
-            if not is_leaf:
+            # If any record indicates this URI is a directory node, remove descendants first.
+            if any(r.get("level") in [0, 1] for r in target_records):
                 descendant_count = await self._remove_descendants(collection, uri)
                 total_deleted += descendant_count
 
-            # Delete the target itself
-            if "id" in target:
-                await self.delete(collection, [target["id"]])
-                total_deleted += 1
+            ids = [r.get("id") for r in target_records if r.get("id")]
+            if ids:
+                total_deleted += await self.delete(collection, ids)
 
             logger.info(f"Removed {total_deleted} record(s) for URI: {uri}")
             return total_deleted
@@ -604,10 +622,10 @@ class VikingVectorIndexBackend(VikingDBInterface):
 
         for child in children:
             child_uri = child.get("uri")
-            is_leaf = child.get("is_leaf", False)
+            level = child.get("level", 2)
 
             # Recursively delete if child is also an intermediate directory
-            if not is_leaf and child_uri:
+            if level in [0, 1] and child_uri:
                 descendant_count = await self._remove_descendants(collection, child_uri)
                 total_deleted += descendant_count
 
@@ -672,6 +690,7 @@ class VikingVectorIndexBackend(VikingDBInterface):
                     record = dict(item.fields) if item.fields else {}
                     record["id"] = item.id
                     record["_score"] = item.score if item.score is not None else 0.0
+                    self._restore_uri_fields(record)
 
                     if not with_vector:
                         if "vector" in record:
@@ -736,6 +755,7 @@ class VikingVectorIndexBackend(VikingDBInterface):
             for item in result.data:
                 record = dict(item.fields) if item.fields else {}
                 record["id"] = item.id
+                self._restore_uri_fields(record)
                 records.append(record)
 
             return records

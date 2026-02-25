@@ -3,8 +3,14 @@
 """Session management module."""
 
 from openviking.session.compressor import ExtractionStats, SessionCompressor
-from openviking.session.memory_deduplicator import DedupDecision, DedupResult, MemoryDeduplicator
-from openviking.session.memory_extractor import CandidateMemory, MemoryCategory, MemoryExtractor
+from openviking.session.memory_deduplicator import (
+    DedupDecision,
+    DedupResult,
+    ExistingMemoryAction,
+    MemoryActionDecision,
+    MemoryDeduplicator,
+)
+from openviking.session.memory_extractor import CandidateMemory, MemoryCategory, MemoryExtractor, ToolSkillCandidateMemory
 from openviking.session.session import Session, SessionCompression, SessionStats
 
 __all__ = [
@@ -19,8 +25,11 @@ __all__ = [
     "MemoryExtractor",
     "MemoryCategory",
     "CandidateMemory",
+    "ToolSkillCandidateMemory",
     # Memory Deduplicator
     "MemoryDeduplicator",
     "DedupDecision",
+    "MemoryActionDecision",
+    "ExistingMemoryAction",
     "DedupResult",
 ]
