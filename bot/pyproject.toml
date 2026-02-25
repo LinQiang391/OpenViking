@@ -51,6 +51,7 @@ dependencies = [
     "opencode-ai>=0.1.0a0",
     "openviking>=0.1.18",
     "tos>=2.9.0",
+    "gradio>=6.6.0",
 ]
 
 [project.optional-dependencies]
