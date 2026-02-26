@@ -86,7 +86,7 @@ class ContextBuilder:
             parts.append(f"# Memory\n\n{memory}")
 
         # Viking memory
-        viking_memory = self.memory.get_viking_memory_context(session_key.safe_name(), current_message, history)
+        viking_memory = await self.memory.get_viking_memory_context(session_key.safe_name(), current_message, history)
         if viking_memory:
             parts.append(viking_memory)
         
