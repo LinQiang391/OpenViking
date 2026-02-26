@@ -199,7 +199,7 @@ Always be helpful, accurate, and concise. When using tools, think step by step: 
         messages = []
 
         # System prompt
-        system_prompt = await self.build_system_prompt(session_key, skill_names)
+        system_prompt = await self.build_system_prompt(session_key, current_message, history)
         if session_key.channel_id and session_key.chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {session_key.type}:{session_key.channel_id}\nChat ID: {session_key.chat_id}"
         messages.append({"role": "system", "content": system_prompt})
