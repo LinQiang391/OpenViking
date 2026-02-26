@@ -47,7 +47,7 @@ class VikingReadTool(OVFileTool):
             "required": ["uri"],
         }
 
-    async def execute(self, uri: str, level: str = "abstract", **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", uri: str, level: str = "abstract", **kwargs: Any) -> str:
         try:
             client = await self._get_client()
             content = await client.read_content(uri, level=level)
@@ -85,7 +85,7 @@ class VikingListTool(OVFileTool):
             "required": [],
         }
 
-    async def execute(self, uri: str, recursive: bool = False, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", uri: str, recursive: bool = False, **kwargs: Any) -> str:
         try:
             client = await self._get_client()
             entries = await client.list_resources(path=uri, recursive=recursive)
@@ -132,7 +132,7 @@ class VikingSearchTool(OVFileTool):
             "required": ["query"],
         }
 
-    async def execute(self, query: str, target_uri: Optional[str] = None, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", query: str, target_uri: Optional[str] = None, **kwargs: Any) -> str:
         try:
             client = await self._get_client()
             results = await client.search(query, target_uri=target_uri)
@@ -184,6 +184,7 @@ class VikingAddResourceTool(OVFileTool):
 
     async def execute(
         self,
+        tool_context: "ToolContext",
         local_path: str,
         description: str,
         target_path: str = "",
@@ -244,7 +245,7 @@ class VikingGrepTool(OVFileTool):
         }
 
     async def execute(
-        self, uri: str, pattern: str, case_insensitive: bool = False, **kwargs: Any
+        self, tool_context: "ToolContext", uri: str, pattern: str, case_insensitive: bool = False, **kwargs: Any
     ) -> str:
         try:
             client = await self._get_client()
@@ -307,7 +308,7 @@ class VikingGlobTool(OVFileTool):
             "required": ["pattern"],
         }
 
-    async def execute(self, pattern: str, uri: str = "", **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", pattern: str, uri: str = "", **kwargs: Any) -> str:
         try:
             client = await self._get_client()
             result = await client.glob(pattern, uri=uri or None)
@@ -352,7 +353,7 @@ class VikingSearchUserMemoryTool(OVFileTool):
             "required": ["query"],
         }
 
-    async def execute(self, query: str, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", query: str, **kwargs: Any) -> str:
         try:
             client = await self._get_client()
             results = await client.search_user_memory(query)
