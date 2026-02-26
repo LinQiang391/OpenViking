@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unified resource processor with strategy-based routing."""
 
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -44,6 +46,7 @@ class UnifiedResourceProcessor:
         self,
         source: str,
         instruction: str = "",
+        **kwargs,
     ) -> ParseResult:
         """Process any source (file/URL/content) with appropriate strategy."""
         # Check if URL
@@ -55,6 +58,8 @@ class UnifiedResourceProcessor:
         if is_potential_path:
             path = Path(source)
             if path.exists():
+                if path.is_dir():
+                    return await self._process_directory(path, instruction, **kwargs)
                 return await self._process_file(path, instruction)
             else:
                 logger.warning(f"Path {path} does not exist")
@@ -74,12 +79,41 @@ class UnifiedResourceProcessor:
         parser = HTMLParser()
         return await parser.parse(url, instruction=instruction)
 
+    async def _process_directory(
+        self,
+        dir_path: Path,
+        instruction: str,
+        **kwargs,
+    ) -> ParseResult:
+        """Process directory source via DirectoryParser.
+
+        Args:
+            dir_path: Path to the directory.
+            instruction: Processing instruction.
+            **kwargs: Forwarded to ``DirectoryParser.parse()`` →
+                ``scan_directory()``: ``strict``, ``ignore_dirs``,
+                ``include``, ``exclude``.
+        """
+        from openviking.parse.parsers.directory import DirectoryParser
+
+        parser = DirectoryParser()
+        return await parser.parse(str(dir_path), instruction=instruction, **kwargs)
+
     async def _process_file(
         self,
         file_path: Path,
         instruction: str,
     ) -> ParseResult:
         """Process file with unified parsing."""
+        # Check if it's a zip file
+        if zipfile.is_zipfile(file_path):
+            temp_dir = Path(tempfile.mkdtemp())
+            try:
+                with zipfile.ZipFile(file_path, "r") as zipf:
+                    zipf.extractall(temp_dir)
+                return await self._process_directory(temp_dir, instruction)
+            finally:
+                pass  # Don't delete temp_dir yet, it will be used by TreeBuilder
         return await parse(
             str(file_path),
             instruction=instruction,

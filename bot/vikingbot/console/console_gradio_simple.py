@@ -369,7 +369,10 @@ def create_workspace_tab():
     with gr.Tab("Workspace"):
         gr.Markdown("## Workspace")
         config = load_config()
-        workspace_path_str = str(config.workspace_path)
+        workspace_path = config.workspace_path
+        # Create workspace directory if it doesn't exist
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        workspace_path_str = str(workspace_path)
         
         with gr.Row():
             with gr.Column(scale=1):
@@ -425,5 +428,14 @@ if __name__ == "__main__":
             port = int(sys.argv[1])
         except ValueError:
             pass
+    # First, get the FastAPI app and add health endpoint before launching
+    # Use Gradio's queue to get access to the app
+    demo.queue()
+    # Add /health endpoint to the FastAPI app
+    app = demo.app
+    @app.get("/health")
+    async def health_endpoint():
+        from vikingbot import __version__
+        return {"status": "healthy", "version": __version__}
+    # Launch the demo
     demo.launch(server_name="0.0.0.0", server_port=port, share=False)
-

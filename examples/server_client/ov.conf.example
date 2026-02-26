@@ -2,19 +2,18 @@
   "server": {
     "host": "0.0.0.0",
     "port": 1933,
-    "api_key": null,
+    "root_api_key": null,
     "cors_origins": ["*"]
   },
   "storage": {
+    "workspace": "./data",
     "vectordb": {
       "name": "context",
-      "backend": "local",
-      "path": "./data"
+      "backend": "local"
     },
     "agfs": {
       "port": 1833,
       "log_level": "warn",
-      "path": "./data",
       "backend": "local"
     }
   },
@@ -34,6 +33,7 @@
     "api_base": "https://ark.cn-beijing.volces.com/api/v3",
     "temperature": 0.0,
     "max_retries": 2,
-    "provider": "volcengine"
+    "provider": "volcengine",
+    "thinking": false
   }
 }

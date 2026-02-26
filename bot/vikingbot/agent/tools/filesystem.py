@@ -12,15 +12,6 @@ from vikingbot.sandbox.manager import SandboxManager
 class ReadFileTool(Tool):
     """Tool to read file contents."""
 
-    def __init__(
-        self,
-        sandbox_manager: "SandboxManager | None" = None,
-    ):
-        self._sandbox_manager = sandbox_manager
-        self._session_key: SessionKey | None = None
-
-
-
     @property
     def name(self) -> str:
         return "read_file"
@@ -42,9 +33,9 @@ class ReadFileTool(Tool):
             "required": ["path"]
         }
     
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", path: str, **kwargs: Any) -> str:
         try:
-            sandbox = await self._sandbox_manager.get_sandbox(self._session_key)
+            sandbox = await tool_context.sandbox_manager.get_sandbox(tool_context.session_key)
             content = await sandbox.read_file(path)
             return content
         except FileNotFoundError as e:
@@ -57,16 +48,6 @@ class ReadFileTool(Tool):
 
 class WriteFileTool(Tool):
     """Tool to write content to a file."""
-
-    def __init__(
-        self,
-        sandbox_manager: "SandboxManager | None" = None,
-    ):
-        self._sandbox_manager = sandbox_manager
-        self._session_key: SessionKey | None = None
-
-    def set_session_key(self, session_key: SessionKey) -> None:
-        self._session_key = session_key
 
     @property
     def name(self) -> str:
@@ -93,9 +74,9 @@ class WriteFileTool(Tool):
             "required": ["path", "content"]
         }
     
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", path: str, content: str, **kwargs: Any) -> str:
         try:
-            sandbox = await self._sandbox_manager.get_sandbox(self._session_key)
+            sandbox = await tool_context.sandbox_manager.get_sandbox(tool_context.session_key)
             await sandbox.write_file(path, content)
             return f"Successfully wrote {len(content)} bytes to {path}"
         except IOError as e:
@@ -106,16 +87,6 @@ class WriteFileTool(Tool):
 
 class EditFileTool(Tool):
     """Tool to edit a file by replacing text."""
-
-    def __init__(
-        self,
-        sandbox_manager: "SandboxManager | None" = None,
-    ):
-        self._sandbox_manager = sandbox_manager
-        self._session_key: SessionKey | None = None
-
-    def set_session_key(self, session_key: SessionKey) -> None:
-        self._session_key = session_key
 
     @property
     def name(self) -> str:
@@ -146,9 +117,9 @@ class EditFileTool(Tool):
             "required": ["path", "old_text", "new_text"]
         }
     
-    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
-            sandbox = await self._sandbox_manager.get_sandbox(self._session_key)
+            sandbox = await tool_context.sandbox_manager.get_sandbox(tool_context.session_key)
             content = await sandbox.read_file(path)
 
             if old_text not in content:
@@ -173,16 +144,6 @@ class EditFileTool(Tool):
 class ListDirTool(Tool):
     """Tool to list directory contents."""
 
-    def __init__(
-        self,
-        sandbox_manager: "SandboxManager | None" = None,
-    ):
-        self._sandbox_manager = sandbox_manager
-        self._session_key: SessionKey | None = None
-
-    def set_session_key(self, session_key: SessionKey) -> None:
-        self._session_key = session_key
-
     @property
     def name(self) -> str:
         return "list_dir"
@@ -204,9 +165,9 @@ class ListDirTool(Tool):
             "required": ["path"]
         }
     
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", path: str, **kwargs: Any) -> str:
         try:
-            sandbox = await self._sandbox_manager.get_sandbox(self._session_key)
+            sandbox = await tool_context.sandbox_manager.get_sandbox(tool_context.session_key)
             items = await sandbox.list_dir(path)
 
             if not items:

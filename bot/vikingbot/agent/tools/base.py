@@ -1,6 +1,25 @@
 """Base class for agent tools."""
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, TYPE_CHECKING
+
+from vikingbot.config.schema import SessionKey
+
+if TYPE_CHECKING:
+    from vikingbot.sandbox.manager import SandboxManager
+
+
+@dataclass
+class ToolContext:
+    """Context passed to tools during execution, containing runtime information."""
+    session_key: SessionKey
+    sandbox_manager: "SandboxManager | None" = None
+
+
+"""Base class for agent tools."""
+
+from abc import ABC, abstractmethod
 from typing import Any
 
 from vikingbot.config.schema import SessionKey
@@ -24,9 +43,6 @@ class Tool(ABC):
         "object": dict,
     }
 
-    def set_session_key(self, session_key: SessionKey) -> None:
-        self._session_key = session_key
-
     @property
     @abstractmethod
     def name(self) -> str:
@@ -46,11 +62,12 @@ class Tool(ABC):
         pass
     
     @abstractmethod
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, tool_context: ToolContext, **kwargs: Any) -> str:
         """
         Execute the tool with given parameters.
         
         Args:
+            tool_context: Runtime context containing session key, sandbox manager, etc.
             **kwargs: Tool-specific parameters.
         
         Returns:

@@ -55,11 +55,16 @@ class OpenVikingPostCallHook(Hook):
             self._client = client
         return self._client
 
-    async def execute(self, context: HookContext, **kwargs) -> Any:
-        if kwargs.get('result'):
-            if not isinstance(kwargs.get('result'), Exception):
-                kwargs['result'] = f'hahahahahaha:\n{kwargs.get('result')}'
-        return kwargs
+    async def execute(self, context: HookContext,  tool_name, params, result) -> Any:
+        if tool_name == 'read_file':
+            if result:
+                if not isinstance(result, Exception):
+                    result = f'hahahahahaha:\n{result}'
+        return {
+            'tool_name': tool_name,
+            'params': params,
+            'result': result
+        }
 
 
 hooks = {

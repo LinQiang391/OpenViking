@@ -164,6 +164,7 @@ def _classify_file(
 
     Processable: ParserRegistry has a parser, or is_text_file (code/config/docs).
     """
+    # Normal classification logic
     if registry.get_parser_for_file(file_path) is not None:
         return CLASS_PROCESSABLE
     if is_text_file(file_path):
@@ -174,7 +175,7 @@ def _classify_file(
 def scan_directory(
     root: Union[str, Path],
     registry: Optional[ParserRegistry] = None,
-    strict: bool = True,
+    strict: bool = False,
     ignore_dirs: Optional[Set[str]] = None,
     include: Optional[str] = None,
     exclude: Optional[str] = None,
@@ -271,7 +272,10 @@ def scan_directory(
             f"Unsupported: {unsupported_paths[:10]}{'...' if len(unsupported_paths) > 10 else ''}"
         )
         if strict:
+            logger.error(msg)
             raise UnsupportedDirectoryFilesError(msg, unsupported_paths)
+        else:
+            logger.warning(msg)
         result.warnings.append(msg)
         for rel in unsupported_paths:
             result.warnings.append(f"  - {rel}")

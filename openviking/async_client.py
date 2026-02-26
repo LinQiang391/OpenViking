@@ -123,10 +123,27 @@ class AsyncOpenViking:
         await self._ensure_initialized()
         await self._client.delete_session(session_id)
 
-    async def add_message(self, session_id: str, role: str, content: str) -> Dict[str, Any]:
-        """Add a message to a session."""
+    async def add_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str | None = None,
+        parts: list[dict] | None = None,
+    ) -> Dict[str, Any]:
+        """Add a message to a session.
+
+        Args:
+            session_id: Session ID
+            role: Message role ("user" or "assistant")
+            content: Text content (simple mode)
+            parts: Parts array (full Part support: TextPart, ContextPart, ToolPart)
+
+        If both content and parts are provided, parts takes precedence.
+        """
         await self._ensure_initialized()
-        return await self._client.add_message(session_id=session_id, role=role, content=content)
+        return await self._client.add_message(
+            session_id=session_id, role=role, content=content, parts=parts
+        )
 
     async def commit_session(self, session_id: str) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
@@ -143,12 +160,15 @@ class AsyncOpenViking:
         instruction: str = "",
         wait: bool = False,
         timeout: float = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Add resource to OpenViking (only supports resources scope).
 
         Args:
             wait: Whether to wait for semantic extraction and vectorization to complete
             timeout: Wait timeout in seconds
+            **kwargs: Extra options forwarded to the parser chain, e.g.
+                ``strict``, ``ignore_dirs``, ``include``, ``exclude``.
         """
         await self._ensure_initialized()
         return await self._client.add_resource(
@@ -158,6 +178,7 @@ class AsyncOpenViking:
             instruction=instruction,
             wait=wait,
             timeout=timeout,
+            **kwargs,
         )
 
     async def wait_processed(self, timeout: float = None) -> Dict[str, Any]:
@@ -251,10 +272,10 @@ class AsyncOpenViking:
         await self._ensure_initialized()
         return await self._client.overview(uri)
 
-    async def read(self, uri: str) -> str:
+    async def read(self, uri: str, offset: int = 0, limit: int = -1) -> str:
         """Read file content"""
         await self._ensure_initialized()
-        return await self._client.read(uri)
+        return await self._client.read(uri, offset=offset, limit=limit)
 
     async def ls(self, uri: str, **kwargs) -> List[Any]:
         """
@@ -306,8 +327,13 @@ class AsyncOpenViking:
         output = kwargs.get("output", "original")
         abs_limit = kwargs.get("abs_limit", 128)
         show_all_hidden = kwargs.get("show_all_hidden", True)
+        node_limit = kwargs.get("node_limit", 1000)
         return await self._client.tree(
-            uri, output=output, abs_limit=abs_limit, show_all_hidden=show_all_hidden
+            uri,
+            output=output,
+            abs_limit=abs_limit,
+            show_all_hidden=show_all_hidden,
+            node_limit=node_limit,
         )
 
     async def mkdir(self, uri: str) -> None:

@@ -12,13 +12,19 @@ from typing import Dict, List, Optional
 
 from openviking.core.context import Context, Vectorize
 from openviking.message import Message
+from openviking.server.identity import RequestContext
 from openviking.storage import VikingDBManager
 from openviking.storage.viking_fs import get_viking_fs
 from openviking_cli.session.user_id import UserIdentifier
 from openviking_cli.utils import get_logger
 
-from .memory_deduplicator import DedupDecision, MemoryDeduplicator
-from .memory_extractor import MemoryCategory, MemoryExtractor
+from .memory_deduplicator import DedupDecision, MemoryActionDecision, MemoryDeduplicator
+from .memory_extractor import (
+    CandidateMemory,
+    MemoryCategory,
+    MemoryExtractor,
+    ToolSkillCandidateMemory,
+)
 
 logger = get_logger(__name__)
 
@@ -32,6 +38,12 @@ MERGE_SUPPORTED_CATEGORIES = {
     MemoryCategory.PATTERNS,
 }
 
+# Tool/Skill Memory categories
+TOOL_SKILL_CATEGORIES = {
+    MemoryCategory.TOOLS,
+    MemoryCategory.SKILLS,
+}
+
 
 @dataclass
 class ExtractionStats:
@@ -39,6 +51,7 @@ class ExtractionStats:
 
     created: int = 0
     merged: int = 0
+    deleted: int = 0
     skipped: int = 0
 
 
@@ -63,17 +76,74 @@ class SessionCompressor:
         logger.info(f"Enqueued memory for vectorization: {memory.uri}")
         return True
 
+    async def _merge_into_existing(
+        self,
+        candidate: CandidateMemory,
+        target_memory: Context,
+        viking_fs,
+        ctx: RequestContext,
+    ) -> bool:
+        """Merge candidate content into an existing memory file."""
+        try:
+            existing_content = await viking_fs.read_file(target_memory.uri, ctx=ctx)
+            payload = await self.extractor._merge_memory_bundle(
+                existing_abstract=target_memory.abstract,
+                existing_overview=(target_memory.meta or {}).get("overview") or "",
+                existing_content=existing_content,
+                new_abstract=candidate.abstract,
+                new_overview=candidate.overview,
+                new_content=candidate.content,
+                category=candidate.category.value,
+                output_language=candidate.language,
+            )
+            if not payload:
+                return False
+
+            await viking_fs.write_file(target_memory.uri, payload.content, ctx=ctx)
+            target_memory.abstract = payload.abstract
+            target_memory.meta = {**(target_memory.meta or {}), "overview": payload.overview}
+            logger.info(
+                "Merged memory %s with abstract %s", target_memory.uri, target_memory.abstract
+            )
+            target_memory.set_vectorize(Vectorize(text=payload.content))
+            await self._index_memory(target_memory)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to merge memory {target_memory.uri}: {e}")
+            return False
+
+    async def _delete_existing_memory(
+        self, memory: Context, viking_fs, ctx: RequestContext
+    ) -> bool:
+        """Hard delete an existing memory file and clean up its vector record."""
+        try:
+            await viking_fs.rm(memory.uri, recursive=False, ctx=ctx)
+        except Exception as e:
+            logger.error(f"Failed to delete memory file {memory.uri}: {e}")
+            return False
+
+        try:
+            # rm() already syncs vector deletion in most cases; keep this as a safe fallback.
+            await self.vikingdb.remove_by_uri("context", memory.uri)
+        except Exception as e:
+            logger.warning(f"Failed to remove vector record for {memory.uri}: {e}")
+        return True
+
     async def extract_long_term_memories(
         self,
         messages: List[Message],
         user: Optional["UserIdentifier"] = None,
         session_id: Optional[str] = None,
+        ctx: Optional[RequestContext] = None,
     ) -> List[Context]:
         """Extract long-term memories from messages."""
         if not messages:
             return []
 
         context = {"messages": messages}
+        if not ctx:
+            return []
+
         candidates = await self.extractor.extract(context, user, session_id)
 
         if not candidates:
@@ -83,70 +153,150 @@ class SessionCompressor:
         stats = ExtractionStats()
         viking_fs = get_viking_fs()
 
+        tool_parts = self._extract_tool_parts(messages)
+
         for candidate in candidates:
             # Profile: skip dedup, always merge
             if candidate.category in ALWAYS_MERGE_CATEGORIES:
-                memory = await self.extractor.create_memory(candidate, user, session_id)
+                memory = await self.extractor.create_memory(candidate, user, session_id, ctx=ctx)
                 if memory:
                     memories.append(memory)
                     stats.created += 1
                     await self._index_memory(memory)
+                else:
+                    stats.skipped += 1
+                continue
+
+            # Tool/Skill Memory: 特殊合并逻辑
+            if candidate.category in TOOL_SKILL_CATEGORIES:
+                if isinstance(candidate, ToolSkillCandidateMemory):
+                    tool_name, skill_uri = self._get_tool_skill_info(candidate, tool_parts)
+                    if skill_uri:
+                        skill_name = self._extract_skill_name_from_uri(skill_uri)
+                        memory = await self.extractor._merge_skill_memory(
+                            skill_name, candidate, ctx=ctx
+                        )
+                    elif tool_name:
+                        memory = await self.extractor._merge_tool_memory(
+                            tool_name, candidate, ctx=ctx
+                        )
+                    else:
+                        logger.warning("No tool_name or skill_uri found, skipping")
+                        stats.skipped += 1
+                        continue
+                    if memory:
+                        memories.append(memory)
+                        stats.merged += 1
+                        await self._index_memory(memory)
                 continue
 
             # Dedup check for other categories
             result = await self.deduplicator.deduplicate(candidate)
+            actions = result.actions or []
+            decision = result.decision
 
-            if result.decision == DedupDecision.SKIP:
+            # Safety net: create+merge should be treated as none.
+            if decision == DedupDecision.CREATE and any(
+                a.decision == MemoryActionDecision.MERGE for a in actions
+            ):
+                logger.warning(
+                    f"Dedup returned create with merge action, normalizing to none: "
+                    f"{candidate.abstract}"
+                )
+                decision = DedupDecision.NONE
+
+            if decision == DedupDecision.SKIP:
                 stats.skipped += 1
                 continue
 
-            if result.decision == DedupDecision.CREATE:
-                memory = await self.extractor.create_memory(candidate, user, session_id)
+            if decision == DedupDecision.NONE:
+                if not actions:
+                    stats.skipped += 1
+                    continue
+
+                for action in actions:
+                    if action.decision == MemoryActionDecision.DELETE:
+                        if viking_fs and await self._delete_existing_memory(
+                            action.memory, viking_fs, ctx=ctx
+                        ):
+                            stats.deleted += 1
+                        else:
+                            stats.skipped += 1
+                    elif action.decision == MemoryActionDecision.MERGE:
+                        if candidate.category in MERGE_SUPPORTED_CATEGORIES and viking_fs:
+                            if await self._merge_into_existing(
+                                candidate, action.memory, viking_fs, ctx=ctx
+                            ):
+                                stats.merged += 1
+                            else:
+                                stats.skipped += 1
+                        else:
+                            # events/cases don't support MERGE, treat as SKIP
+                            stats.skipped += 1
+                continue
+
+            if decision == DedupDecision.CREATE:
+                # create can optionally include delete actions (delete first, then create)
+                for action in actions:
+                    if action.decision == MemoryActionDecision.DELETE:
+                        if viking_fs and await self._delete_existing_memory(
+                            action.memory, viking_fs, ctx=ctx
+                        ):
+                            stats.deleted += 1
+                        else:
+                            stats.skipped += 1
+
+                memory = await self.extractor.create_memory(candidate, user, session_id, ctx=ctx)
                 if memory:
                     memories.append(memory)
                     stats.created += 1
                     await self._index_memory(memory)
-
-            elif result.decision == DedupDecision.MERGE:
-                # Only merge for supported categories
-                if (
-                    candidate.category in MERGE_SUPPORTED_CATEGORIES
-                    and result.similar_memories
-                    and viking_fs
-                ):
-                    target_memory = result.similar_memories[0]
-                    try:
-                        existing_content = await viking_fs.read_file(target_memory.uri)
-                        merged = await self.extractor._merge_memory(
-                            existing_content,
-                            candidate.content,
-                            candidate.category.value,
-                            output_language=candidate.language,
-                        )
-                        if merged:
-                            await viking_fs.write_file(target_memory.uri, merged)
-                            target_memory.set_vectorize(Vectorize(text=merged))
-                            await self._index_memory(target_memory)
-                            stats.merged += 1
-                        else:
-                            stats.skipped += 1
-                    except Exception as e:
-                        logger.error(f"Failed to merge memory: {e}")
-                        stats.skipped += 1
                 else:
-                    # events/cases don't support MERGE, treat as SKIP
                     stats.skipped += 1
 
         # Extract URIs used in messages, create relations
         used_uris = self._extract_used_uris(messages)
         if used_uris and memories:
-            await self._create_relations(memories, used_uris)
+            await self._create_relations(memories, used_uris, ctx=ctx)
 
         logger.info(
             f"Memory extraction: created={stats.created}, "
-            f"merged={stats.merged}, skipped={stats.skipped}"
+            f"merged={stats.merged}, deleted={stats.deleted}, skipped={stats.skipped}"
         )
         return memories
+
+    def _extract_tool_parts(self, messages: List[Message]) -> List:
+        """Extract all ToolPart from messages."""
+        from openviking.message.part import ToolPart
+
+        tool_parts = []
+        for msg in messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, ToolPart):
+                    tool_parts.append(part)
+        return tool_parts
+
+    def _get_tool_skill_info(
+        self, candidate: "ToolSkillCandidateMemory", tool_parts: List
+    ) -> tuple:
+        """Get tool_name and skill_uri from ToolPart, not from LLM.
+
+        Returns:
+            (tool_name, skill_uri) tuple
+        """
+        for part in tool_parts:
+            if part.skill_uri:
+                return ("", part.skill_uri)
+            if part.tool_name:
+                return (part.tool_name, "")
+        return ("", "")
+
+    def _extract_skill_name_from_uri(self, skill_uri: str) -> str:
+        """从 skill_uri 提取 skill_name
+
+        例如: viking://agent/skills/create_presentation -> create_presentation
+        """
+        return skill_uri.rstrip("/").split("/")[-1]
 
     def _extract_used_uris(self, messages: List[Message]) -> Dict[str, List[str]]:
         """Extract URIs used in messages."""
@@ -167,6 +317,7 @@ class SessionCompressor:
         self,
         memories: List[Context],
         used_uris: Dict[str, List[str]],
+        ctx: RequestContext,
     ) -> None:
         """Create bidirectional relations between memories and resources/skills."""
         viking_fs = get_viking_fs()
@@ -178,29 +329,49 @@ class SessionCompressor:
             resource_uris = used_uris.get("resources", [])
             skill_uris = used_uris.get("skills", [])
 
-            # Memory -> resources/skills
+            valid_resource_uris = []
+            for uri in resource_uris:
+                if await self._uri_exists(uri, viking_fs, ctx):
+                    valid_resource_uris.append(uri)
+
+            valid_skill_uris = []
+            for uri in skill_uris:
+                if await self._uri_exists(uri, viking_fs, ctx):
+                    valid_skill_uris.append(uri)
+
             for memory_uri in memory_uris:
-                if resource_uris:
+                if valid_resource_uris:
                     await viking_fs.link(
                         memory_uri,
-                        resource_uris,
+                        valid_resource_uris,
                         reason="Memory extracted from session using these resources",
+                        ctx=ctx,
                     )
-                if skill_uris:
+                if valid_skill_uris:
                     await viking_fs.link(
                         memory_uri,
-                        skill_uris,
+                        valid_skill_uris,
                         reason="Memory extracted from session calling these skills",
+                        ctx=ctx,
                     )
 
-            # Resources/skills -> memories (reverse)
-            for resource_uri in resource_uris:
+            for resource_uri in valid_resource_uris:
                 await viking_fs.link(
-                    resource_uri, memory_uris, reason="Referenced by these memories"
+                    resource_uri, memory_uris, reason="Referenced by these memories", ctx=ctx
                 )
-            for skill_uri in skill_uris:
-                await viking_fs.link(skill_uri, memory_uris, reason="Called by these memories")
+            for skill_uri in valid_skill_uris:
+                await viking_fs.link(
+                    skill_uri, memory_uris, reason="Called by these memories", ctx=ctx
+                )
 
             logger.info(f"Created bidirectional relations for {len(memories)} memories")
         except Exception as e:
             logger.error(f"Error creating memory relations: {e}")
+
+    async def _uri_exists(self, uri: str, viking_fs, ctx: RequestContext) -> bool:
+        """Check if a URI exists."""
+        try:
+            await viking_fs.read_file(uri, ctx=ctx)
+            return True
+        except Exception:
+            return False

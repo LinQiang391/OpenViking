@@ -17,6 +17,7 @@ import uvicorn
 from openviking import AsyncOpenViking
 from openviking.server.app import create_app
 from openviking.server.config import ServerConfig
+from openviking.server.identity import RequestContext, Role
 from openviking.service.core import OpenVikingService
 from openviking_cli.session.user_id import UserIdentifier
 
@@ -81,7 +82,7 @@ async def app(service: OpenVikingService):
     """Create FastAPI app with pre-initialized service (no auth)."""
     from openviking.server.dependencies import set_service
 
-    config = ServerConfig(api_key=None)
+    config = ServerConfig()
     fastapi_app = create_app(config=config, service=service)
     # ASGITransport doesn't trigger lifespan, so wire up the service manually
     set_service(service)
@@ -99,8 +100,10 @@ async def client(app):
 @pytest_asyncio.fixture(scope="function")
 async def client_with_resource(client, service, sample_markdown_file):
     """Client + a resource already added and processed."""
+    ctx = RequestContext(user=UserIdentifier.the_default_user(), role=Role.ROOT)
     result = await service.resources.add_resource(
         path=str(sample_markdown_file),
+        ctx=ctx,
         reason="test resource",
         wait=True,
     )
@@ -122,7 +125,7 @@ async def running_server(temp_dir: Path):
     )
     await svc.initialize()
 
-    config = ServerConfig(api_key=None)
+    config = ServerConfig()
     fastapi_app = create_app(config=config, service=svc)
 
     # Find a free port

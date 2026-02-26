@@ -83,6 +83,6 @@ class WebSearchTool(Tool):
         """Get the active backend."""
         return self._backend
     
-    async def execute(self, query: str, count: Optional[int] = None, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", query: str, count: Optional[int] = None, **kwargs: Any) -> str:
         n = min(max(count or self.max_results, 1), 20)
         return await self._backend.search(query, n, **kwargs)

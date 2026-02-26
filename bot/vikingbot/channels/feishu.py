@@ -32,6 +32,7 @@ from vikingbot.bus.events import OutboundMessage
 from vikingbot.bus.queue import MessageBus
 from vikingbot.channels.base import BaseChannel
 from vikingbot.config.schema import FeishuChannelConfig
+from vikingbot.channels.utils import extract_image_paths, read_image_file
 
 try:
     import lark_oapi as lark
@@ -613,9 +614,50 @@ class FeishuChannel(BaseChannel):
                 receive_id_type = "chat_id"
             else:
                 receive_id_type = "open_id"
+            logger.info(f"[DEBUG] Feishu send() content: {msg.content[:300]}")
 
-            # Extract images from content
-            image_data_uris, text_content = self._extract_images(msg.content)
+            # First extract local image file paths
+            local_image_paths, content_no_paths = extract_image_paths(msg.content)
+            logger.info(f"[DEBUG] Extracted local_image_paths: {local_image_paths}")
+            
+            # Then extract data URIs and URLs from the remaining content
+            image_data_uris, text_content = self._extract_images(content_no_paths)
+            
+            # Process local image files
+            if local_image_paths:
+                for img_path in local_image_paths:
+                    try:
+                        logger.debug(f"Processing local image file: {img_path}")
+                        image_bytes = read_image_file(img_path)
+                        image_key = await self._upload_image_to_feishu(image_bytes)
+                        
+                        # Send as image message
+                        content = json.dumps({"image_key": image_key}, ensure_ascii=False)
+                        
+                        request = (
+                            CreateMessageRequest.builder()
+                            .receive_id_type(receive_id_type)
+                            .request_body(
+                                CreateMessageRequestBody.builder()
+                                .receive_id(msg.session_key.chat_id)
+                                .msg_type("image")
+                                .content(content)
+                                .build()
+                            )
+                            .build()
+                        )
+                        
+                        response = self._client.im.v1.message.create(request)
+                        
+                        if not response.success():
+                            logger.exception(
+                                f"Failed to send Feishu image: code={response.code}, "
+                                f"msg={response.msg}, log_id={response.get_log_id()}"
+                            )
+                        else:
+                            logger.debug(f"Sent local image to {msg.session_key.chat_id}: {img_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to process local image {img_path}: {e}")
 
             if image_data_uris:
                 # Handle images - upload and send each as image message

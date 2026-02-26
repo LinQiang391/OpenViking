@@ -35,7 +35,7 @@ Minimal configuration example:
     "dense": {
       "api_base": "<api-endpoint>",
       "api_key": "<your-api-key>",
-      "provider": "<volcengine|openai>",
+      "provider": "<volcengine|openai|jina>",
       "dimension": 1024,
       "model": "<model-name>"
     }
@@ -43,7 +43,7 @@ Minimal configuration example:
   "vlm": {
     "api_base": "<api-endpoint>",
     "api_key": "<your-api-key>",
-    "provider": "<volcengine|openai>",
+    "provider": "<volcengine|openai|jina>",
     "model": "<model-name>"
   }
 }
@@ -57,6 +57,7 @@ For full configuration options and provider-specific examples, see the [Configur
 client = ov.SyncHTTPClient(
     url="http://localhost:1933",
     api_key="your-key",
+    agent_id="my-agent",
 )
 client.initialize()
 ```
@@ -70,7 +71,8 @@ export OPENVIKING_CLI_CONFIG_FILE=/path/to/ovcli.conf
 ```json
 {
   "url": "http://localhost:1933",
-  "api_key": "your-key"
+  "api_key": "your-key",
+  "agent_id": "my-agent"
 }
 ```
 
@@ -104,13 +106,11 @@ openviking [global options] <command> [arguments] [command options]
 | Option | Description |
 |--------|-------------|
 | `--output`, `-o` | Output format: `table` (default), `json` |
-| `--json` | Compact JSON with `{ok, result}` wrapper (for scripts) |
 | `--version` | Show CLI version |
 
 Example:
 
 ```bash
-openviking --json ls viking://resources/
 openviking -o json ls viking://resources/
 ```
 
@@ -208,9 +208,9 @@ The default output format can be set in `ovcli.conf`:
 }
 ```
 
-### Script Mode (`--json`)
+### Script Mode (`-o json`)
 
-Compact JSON with status wrapper, suitable for scripting. Overrides `--output`:
+Compact JSON with status wrapper (when `--compact` is true, which is the default), suitable for scripting:
 
 **Success**
 
@@ -335,6 +335,19 @@ Compact JSON with status wrapper, suitable for scripting. Overrides `--output`:
 | GET | `/api/v1/observer/system` | System status |
 | GET | `/api/v1/debug/health` | Quick health check |
 
+### Admin (Multi-tenant)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/admin/accounts` | Create workspace + first admin (ROOT) |
+| GET | `/api/v1/admin/accounts` | List workspaces (ROOT) |
+| DELETE | `/api/v1/admin/accounts/{account_id}` | Delete workspace (ROOT) |
+| POST | `/api/v1/admin/accounts/{account_id}/users` | Register user (ROOT, ADMIN) |
+| GET | `/api/v1/admin/accounts/{account_id}/users` | List users (ROOT, ADMIN) |
+| DELETE | `/api/v1/admin/accounts/{account_id}/users/{user_id}` | Remove user (ROOT, ADMIN) |
+| PUT | `/api/v1/admin/accounts/{account_id}/users/{user_id}/role` | Change user role (ROOT) |
+| POST | `/api/v1/admin/accounts/{account_id}/users/{user_id}/key` | Regenerate user key (ROOT, ADMIN) |
+
 ## Related Documentation
 
 - [Resources](02-resources.md) - Resource management API
@@ -343,3 +356,4 @@ Compact JSON with status wrapper, suitable for scripting. Overrides `--output`:
 - [Sessions](05-sessions.md) - Session management
 - [Skills](04-skills.md) - Skill management
 - [System](07-system.md) - System and monitoring API
+- [Admin](08-admin.md) - Multi-tenant management API

@@ -13,7 +13,6 @@ class MessageTool(Tool):
     def __init__(
         self, 
         send_callback: Callable[[OutboundMessage], Awaitable[None]] | None = None,
-        session_key: SessionKey = None,
     ):
         self._send_callback = send_callback
 
@@ -43,23 +42,21 @@ class MessageTool(Tool):
             "required": ["content"]
         }
     
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", **kwargs: Any) -> str:
         from loguru import logger
         
         content = kwargs.get("content")
 
-
-        
         if not self._send_callback:
             return "Error: Message sending not configured"
         
         msg = OutboundMessage(
-            session_key=self._session_key,
+            session_key=tool_context.session_key,
             content=content
         )
         
         try:
             await self._send_callback(msg)
-            return f"Message sent to {self._session_key} "
+            return f"Message sent to {tool_context.session_key} "
         except Exception as e:
             return f"Error sending message: {str(e)}"
