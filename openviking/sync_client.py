@@ -48,9 +48,24 @@ class SyncOpenViking:
         """Delete a session."""
         run_async(self._async_client.delete_session(session_id))
 
-    def add_message(self, session_id: str, role: str, content: str) -> Dict[str, Any]:
-        """Add a message to a session."""
-        return run_async(self._async_client.add_message(session_id, role, content))
+    def add_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str | None = None,
+        parts: list[dict] | None = None,
+    ) -> Dict[str, Any]:
+        """Add a message to a session.
+
+        Args:
+            session_id: Session ID
+            role: Message role ("user" or "assistant")
+            content: Text content (simple mode)
+            parts: Parts array (full Part support: TextPart, ContextPart, ToolPart)
+
+        If both content and parts are provided, parts takes precedence.
+        """
+        return run_async(self._async_client.add_message(session_id, role, content, parts))
 
     def commit_session(self, session_id: str) -> Dict[str, Any]:
         """Commit a session (archive and extract memories)."""
@@ -64,10 +79,24 @@ class SyncOpenViking:
         instruction: str = "",
         wait: bool = False,
         timeout: float = None,
+        **kwargs,
     ) -> Dict[str, Any]:
-        """Add resource to OpenViking (resources scope only)"""
+        """Add resource to OpenViking (resources scope only)
+
+        Args:
+            **kwargs: Extra options forwarded to the parser chain, e.g.
+                ``strict``, ``ignore_dirs``, ``include``, ``exclude``.
+        """
         return run_async(
-            self._async_client.add_resource(path, target, reason, instruction, wait, timeout)
+            self._async_client.add_resource(
+                path,
+                target,
+                reason,
+                instruction,
+                wait,
+                timeout,
+                **kwargs,
+            )
         )
 
     def add_skill(
@@ -114,9 +143,9 @@ class SyncOpenViking:
         """Read L1 overview"""
         return run_async(self._async_client.overview(uri))
 
-    def read(self, uri: str) -> str:
+    def read(self, uri: str, offset: int = 0, limit: int = -1) -> str:
         """Read file"""
-        return run_async(self._async_client.read(uri))
+        return run_async(self._async_client.read(uri, offset=offset, limit=limit))
 
     def ls(self, uri: str, **kwargs) -> List[Any]:
         """

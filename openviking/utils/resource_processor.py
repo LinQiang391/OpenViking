@@ -10,6 +10,7 @@ as described in the OpenViking design document.
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from openviking.parse.tree_builder import TreeBuilder
+from openviking.server.identity import RequestContext
 from openviking.storage import VikingDBManager
 from openviking.storage.viking_fs import get_viking_fs
 from openviking_cli.utils import get_logger
@@ -71,11 +72,13 @@ class ResourceProcessor:
     async def process_resource(
         self,
         path: str,
+        ctx: RequestContext,
         reason: str = "",
         instruction: str = "",
         scope: str = "resources",
         user: Optional[str] = None,
         target: Optional[str] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Process and store a new resource.
@@ -94,17 +97,39 @@ class ResourceProcessor:
         # ============ Phase 1: Parse source (Parser generates L0/L1 and writes to temp) ============
         try:
             media_processor = self._get_media_processor()
-            parse_result = await media_processor.process(source=path, instruction=instruction)
+            viking_fs = get_viking_fs()
+            # Use reason as instruction fallback so it influences L0/L1
+            # generation and improves search relevance as documented.
+            effective_instruction = instruction or reason
+            with viking_fs.bind_request_context(ctx):
+                parse_result = await media_processor.process(
+                    source=path,
+                    instruction=effective_instruction,
+                    **kwargs,
+                )
             result["source_path"] = parse_result.source_path or path
+            result["meta"] = parse_result.meta
 
-            if not parse_result.success:
+            # Only abort when no temp content was produced at all.
+            # For directory imports partial success (some files failed) is
+            # normal – finalization should still proceed.
+            if not parse_result.temp_dir_path:
                 result["status"] = "error"
-                result["errors"].extend(parse_result.warnings)
+                result["errors"].extend(
+                    parse_result.warnings or ["Parse failed: no content generated"],
+                )
                 return result
+
+            if parse_result.warnings:
+                result["errors"].extend(parse_result.warnings)
 
         except Exception as e:
             result["status"] = "error"
             result["errors"].append(f"Parse error: {e}")
+            logger.error(f"[ResourceProcessor] Parse error: {e}")
+            import traceback
+
+            traceback.print_exc()
             return result
 
         # parse_result contains:
@@ -123,13 +148,15 @@ class ResourceProcessor:
 
         # ============ Phase 3: TreeBuilder finalizes from temp (scan + move to AGFS) ============
         try:
-            context_tree = await self.tree_builder.finalize_from_temp(
-                temp_dir_path=parse_result.temp_dir_path,
-                scope=scope,
-                base_uri=located_uri,
-                source_path=parse_result.source_path,
-                source_format=parse_result.source_format,
-            )
+            with get_viking_fs().bind_request_context(ctx):
+                context_tree = await self.tree_builder.finalize_from_temp(
+                    temp_dir_path=parse_result.temp_dir_path,
+                    ctx=ctx,
+                    scope=scope,
+                    base_uri=located_uri,
+                    source_path=parse_result.source_path,
+                    source_format=parse_result.source_format,
+                )
         except Exception as e:
             result["status"] = "error"
             result["errors"].append(f"Finalize from temp error: {e}")
@@ -137,7 +164,7 @@ class ResourceProcessor:
             # Cleanup temporary directory on error (via VikingFS)
             try:
                 if parse_result.temp_dir_path:
-                    await get_viking_fs().delete_temp(parse_result.temp_dir_path)
+                    await get_viking_fs().delete_temp(parse_result.temp_dir_path, ctx=ctx)
             except Exception:
                 pass
 

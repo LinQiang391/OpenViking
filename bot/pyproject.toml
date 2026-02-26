@@ -49,10 +49,11 @@ dependencies = [
     "html2text>=2020.1.16",
     "beautifulsoup4>=4.12.0",
     "opencode-ai>=0.1.0a0",
-    "gradio>=4.38.1",
     "openviking>=0.1.18",
     "tos>=2.9.0",
+    "gradio>=6.6.0",
     "fusepy>=3.0.1",
+    "pytest>=9.0.2",
 ]
 
 [project.optional-dependencies]

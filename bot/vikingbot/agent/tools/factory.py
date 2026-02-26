@@ -10,7 +10,8 @@ from vikingbot.agent.tools.websearch import WebSearchTool
 from vikingbot.agent.tools.image import ImageGenerationTool
 from vikingbot.agent.tools.message import MessageTool
 from vikingbot.agent.tools.cron import CronTool
-from vikingbot.agent.tools.ov_file import VikingReadTool, VikingListTool, VikingAddResourceTool, VikingSearchTool, VikingGrepTool, VikingGlobTool
+from vikingbot.agent.tools.ov_file import VikingReadTool, VikingListTool, VikingAddResourceTool, VikingSearchTool, \
+    VikingGrepTool, VikingGlobTool, VikingSearchUserMemoryTool
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -85,6 +86,7 @@ def register_default_tools(
         registry.register(VikingSearchTool())
         registry.register(VikingGrepTool())
         registry.register(VikingGlobTool())
+        registry.register(VikingSearchUserMemoryTool())
 
     # Image generation tool
     if include_image_tool:

@@ -7,8 +7,9 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from openviking.server.auth import verify_api_key
+from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
+from openviking.server.identity import RequestContext
 from openviking.server.models import Response
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
@@ -53,12 +54,13 @@ class GlobRequest(BaseModel):
 @router.post("/find")
 async def find(
     request: FindRequest,
-    _: bool = Depends(verify_api_key),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """Semantic search without session context."""
     service = get_service()
     result = await service.search.find(
         query=request.query,
+        ctx=_ctx,
         target_uri=request.target_uri,
         limit=request.limit,
         score_threshold=request.score_threshold,
@@ -73,7 +75,7 @@ async def find(
 @router.post("/search")
 async def search(
     request: SearchRequest,
-    _: bool = Depends(verify_api_key),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """Semantic search with optional session context."""
     service = get_service()
@@ -81,11 +83,12 @@ async def search(
     # Get session if session_id provided
     session = None
     if request.session_id:
-        session = service.sessions.session(request.session_id)
-        session.load()
+        session = service.sessions.session(_ctx, request.session_id)
+        await session.load()
 
     result = await service.search.search(
         query=request.query,
+        ctx=_ctx,
         target_uri=request.target_uri,
         session=session,
         limit=request.limit,
@@ -101,13 +104,14 @@ async def search(
 @router.post("/grep")
 async def grep(
     request: GrepRequest,
-    _: bool = Depends(verify_api_key),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """Content search with pattern."""
     service = get_service()
     result = await service.fs.grep(
         request.uri,
         request.pattern,
+        ctx=_ctx,
         case_insensitive=request.case_insensitive,
     )
     return Response(status="ok", result=result)
@@ -116,9 +120,9 @@ async def grep(
 @router.post("/glob")
 async def glob(
     request: GlobRequest,
-    _: bool = Depends(verify_api_key),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """File pattern matching."""
     service = get_service()
-    result = await service.fs.glob(request.pattern, uri=request.uri)
+    result = await service.fs.glob(request.pattern, ctx=_ctx, uri=request.uri)
     return Response(status="ok", result=result)

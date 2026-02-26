@@ -1,14 +1,23 @@
 """OpenViking file system tools: read, write, list, search resources."""
-
-from typing import Any, Optional
+from abc import ABC
 from pathlib import Path
-from loguru import logger
+from typing import Any, Optional
 
 from vikingbot.agent.tools.base import Tool
 from vikingbot.openviking_mount.ov_server import VikingClient
 
 
-class VikingReadTool(Tool):
+class OVFileTool(Tool, ABC):
+    def __init__(self):
+        super().__init__()
+        self._client = None
+
+    async def _get_client(self):
+        if self._client is None:
+            self._client = await VikingClient.create()
+        return self._client
+
+class VikingReadTool(OVFileTool):
     """Tool to read content from Viking resources."""
 
     @property
@@ -26,7 +35,7 @@ class VikingReadTool(Tool):
             "properties": {
                 "uri": {
                     "type": "string",
-                    "description": "The Viking URI to read from (e.g., viking://resources/path/)",
+                    "description": "The Viking file's URI to read from (e.g., viking://resources/path/123.md)",
                 },
                 "level": {
                     "type": "string",
@@ -40,18 +49,14 @@ class VikingReadTool(Tool):
 
     async def execute(self, uri: str, level: str = "abstract", **kwargs: Any) -> str:
         try:
-            from vikingbot.config.loader import load_config
-
-            config = load_config()
-            viking_url = config.tools.openviking.server_url
-            client = VikingClient(viking_url)
-            content = client.read_content(uri, level=level)
+            client = await self._get_client()
+            content = await client.read_content(uri, level=level)
             return content
         except Exception as e:
             return f"Error reading from Viking: {str(e)}"
 
 
-class VikingListTool(Tool):
+class VikingListTool(OVFileTool):
     """Tool to list Viking resources."""
 
     @property
@@ -67,9 +72,9 @@ class VikingListTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {
+                "uri": {
                     "type": "string",
-                    "description": "The Viking path to list (e.g., /bot_test/dutao/ or viking://resources/bot_test/dutao/)",
+                    "description": "The parent Viking uri to list (e.g., viking://resources/bot_test/dutao/)",
                 },
                 "recursive": {
                     "type": "boolean",
@@ -77,37 +82,32 @@ class VikingListTool(Tool):
                     "default": False,
                 },
             },
-            "required": ["path"],
+            "required": [],
         }
 
-    async def execute(self, path: str, recursive: bool = False, **kwargs: Any) -> str:
+    async def execute(self, uri: str, recursive: bool = False, **kwargs: Any) -> str:
         try:
-            from vikingbot.config.loader import load_config
-
-            config = load_config()
-            viking_url = config.tools.openviking.server_url
-            client = VikingClient(viking_url)
-            if path.startswith("viking://"):
-                viking_path = path.replace("viking://resources", "")
-            else:
-                viking_path = path
-
-            entries = client.list_resources(path=viking_path, recursive=recursive)
+            client = await self._get_client()
+            entries = await client.list_resources(path=uri, recursive=recursive)
 
             if not entries:
-                return f"No resources found at {path}"
+                return f"No resources found at {uri}"
 
             result = []
             for entry in entries:
-                type_str = "📁 " if entry.get("isDir", False) else "📄 "
-                result.append(f"{type_str}{entry.get('name', 'unknown')}")
-
+                item = {
+                    "name": entry["name"],
+                    "size": entry["uri"],
+                    "uri": entry["uri"],
+                    "isDir": entry["isDir"],
+                }
+                result.append(str(item))
             return "\n".join(result)
         except Exception as e:
             return f"Error listing Viking resources: {str(e)}"
 
 
-class VikingSearchTool(Tool):
+class VikingSearchTool(OVFileTool):
     """Tool to search Viking resources."""
 
     @property
@@ -126,7 +126,7 @@ class VikingSearchTool(Tool):
                 "query": {"type": "string", "description": "The search query"},
                 "target_uri": {
                     "type": "string",
-                    "description": "Optional target URI to limit search scope (e.g., /bot_test/dutao/)",
+                    "description": "Optional target URI to limit search scope, if is None, then search the entire range.(e.g., viking://resources/)",
                 },
             },
             "required": ["query"],
@@ -134,13 +134,8 @@ class VikingSearchTool(Tool):
 
     async def execute(self, query: str, target_uri: Optional[str] = None, **kwargs: Any) -> str:
         try:
-            from vikingbot.config.loader import load_config
-
-            config = load_config()
-            viking_url = config.tools.openviking.server_url
-            client = VikingClient(viking_url)
-            logger.warning(f"Viking query: {query}")
-            results = client.search(query, target_uri=target_uri)
+            client = await self._get_client()
+            results = await client.search(query, target_uri=target_uri)
 
             if not results:
                 return f"No results found for query: {query}"
@@ -155,7 +150,7 @@ class VikingSearchTool(Tool):
             return f"Error searching Viking: {str(e)}"
 
 
-class VikingAddResourceTool(Tool):
+class VikingAddResourceTool(OVFileTool):
     """Tool to add a resource to Viking."""
 
     @property
@@ -202,12 +197,8 @@ class VikingAddResourceTool(Tool):
             if not path.is_file():
                 return f"Error: Not a file: {local_path}"
 
-            from vikingbot.config.loader import load_config
-
-            config = load_config()
-            viking_url = config.tools.openviking.server_url
-            client = VikingClient(viking_url)
-            result = client.add_resource(
+            client = await self._get_client()
+            result = await client.add_resource(
                 str(path), description, target_path=target_path or None, wait=wait
             )
 
@@ -220,9 +211,8 @@ class VikingAddResourceTool(Tool):
             return f"Error adding resource to Viking: {str(e)}"
 
 
-class VikingGrepTool(Tool):
+class VikingGrepTool(OVFileTool):
     """Tool to search Viking resources using regex patterns."""
-
     @property
     def name(self) -> str:
         return "openviking_grep"
@@ -238,7 +228,7 @@ class VikingGrepTool(Tool):
             "properties": {
                 "uri": {
                     "type": "string",
-                    "description": "The Viking URI to search within (e.g., viking://resources/path/, /bot_test/dutao/)",
+                    "description": "The whole Viking URI to search within (e.g., viking://resources/path/)",
                 },
                 "pattern": {
                     "type": "string",
@@ -257,12 +247,8 @@ class VikingGrepTool(Tool):
         self, uri: str, pattern: str, case_insensitive: bool = False, **kwargs: Any
     ) -> str:
         try:
-            from vikingbot.config.loader import load_config
-
-            config = load_config()
-            viking_url = config.tools.openviking.server_url
-            client = VikingClient(viking_url)
-            result = client.grep(uri, pattern, case_insensitive=case_insensitive)
+            client = await self._get_client()
+            result = await client.grep(uri, pattern, case_insensitive=case_insensitive)
 
             if isinstance(result, dict):
                 matches = result.get("result", {}).get("matches", [])
@@ -292,7 +278,7 @@ class VikingGrepTool(Tool):
             return f"Error searching Viking with grep: {str(e)}"
 
 
-class VikingGlobTool(Tool):
+class VikingGlobTool(OVFileTool):
     """Tool to find Viking resources using glob patterns."""
 
     @property
@@ -314,7 +300,7 @@ class VikingGlobTool(Tool):
                 },
                 "uri": {
                     "type": "string",
-                    "description": "Optional starting URI (e.g., viking://resources/path/, /bot_test/dutao/)",
+                    "description": "The whole Viking URI to search within (e.g., viking://resources/path/)",
                     "default": "",
                 },
             },
@@ -323,12 +309,8 @@ class VikingGlobTool(Tool):
 
     async def execute(self, pattern: str, uri: str = "", **kwargs: Any) -> str:
         try:
-            from vikingbot.config.loader import load_config
-
-            config = load_config()
-            viking_url = config.tools.openviking.server_url
-            client = VikingClient(viking_url)
-            result = client.glob(pattern, uri=uri or None)
+            client = await self._get_client()
+            result = await client.glob(pattern, uri=uri or None)
 
             if isinstance(result, dict):
                 matches = result.get("result", {}).get("matches", [])
@@ -349,3 +331,34 @@ class VikingGlobTool(Tool):
             return "\n".join(result_lines)
         except Exception as e:
             return f"Error searching Viking with glob: {str(e)}"
+
+
+class VikingSearchUserMemoryTool(OVFileTool):
+    """Tool to search Viking user memories"""
+
+    @property
+    def name(self) -> str:
+        return "user_memory_search"
+
+    @property
+    def description(self) -> str:
+        return "Search for user memories in OpenViking using a query."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "The search query"}},
+            "required": ["query"],
+        }
+
+    async def execute(self, query: str, **kwargs: Any) -> str:
+        try:
+            client = await self._get_client()
+            results = await client.search_user_memory(query)
+
+            if not results:
+                return f"No results found for query: {query}"
+            return str(results)
+        except Exception as e:
+            return f"Error searching Viking: {str(e)}"

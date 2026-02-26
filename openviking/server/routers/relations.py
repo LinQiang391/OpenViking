@@ -7,8 +7,9 @@ from typing import List, Union
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from openviking.server.auth import verify_api_key
+from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
+from openviking.server.identity import RequestContext
 from openviking.server.models import Response
 
 router = APIRouter(prefix="/api/v1/relations", tags=["relations"])
@@ -32,31 +33,31 @@ class UnlinkRequest(BaseModel):
 @router.get("")
 async def relations(
     uri: str = Query(..., description="Viking URI"),
-    _: bool = Depends(verify_api_key),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """Get relations for a resource."""
     service = get_service()
-    result = await service.relations.relations(uri)
+    result = await service.relations.relations(uri, ctx=_ctx)
     return Response(status="ok", result=result)
 
 
 @router.post("/link")
 async def link(
     request: LinkRequest,
-    _: bool = Depends(verify_api_key),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """Create link between resources."""
     service = get_service()
-    await service.relations.link(request.from_uri, request.to_uris, request.reason)
+    await service.relations.link(request.from_uri, request.to_uris, ctx=_ctx, reason=request.reason)
     return Response(status="ok", result={"from": request.from_uri, "to": request.to_uris})
 
 
 @router.delete("/link")
 async def unlink(
     request: UnlinkRequest,
-    _: bool = Depends(verify_api_key),
+    _ctx: RequestContext = Depends(get_request_context),
 ):
     """Remove link between resources."""
     service = get_service()
-    await service.relations.unlink(request.from_uri, request.to_uri)
+    await service.relations.unlink(request.from_uri, request.to_uri, ctx=_ctx)
     return Response(status="ok", result={"from": request.from_uri, "to": request.to_uri})

@@ -414,9 +414,9 @@ class WebSearchConfig(BaseModel):
     max_results: int = 5
 
 
-class OpenVikingToolsConfig(BaseModel):
+class OpenVikingConfig(BaseModel):
     """Viking tools configuration."""
-
+    mode: str = "local" # local or remote
     server_url: str = ""
     tos_endpoint: str = ""
     tos_region: str = ""
@@ -441,7 +441,6 @@ class ToolsConfig(BaseModel):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
-    openviking: OpenVikingToolsConfig = Field(default_factory=OpenVikingToolsConfig)
 
 
 class SandboxNetworkConfig(BaseModel):
@@ -561,6 +560,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    openviking: OpenVikingConfig = Field(default_factory=OpenVikingConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     hooks: list[str] = Field(['vikingbot.hooks.builtins.openviking_hooks.hooks'])

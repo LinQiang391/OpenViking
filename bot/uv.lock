@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.13"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -2491,6 +2491,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pygments" },
+    { name = "pytest" },
     { name = "python-socketio" },
     { name = "python-socks" },
     { name = "python-telegram-bot", extra = ["socks"] },
@@ -2523,7 +2524,7 @@ requires-dist = [
     { name = "dingtalk-stream", specifier = ">=0.4.0" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "fusepy", specifier = ">=3.0.1" },
-    { name = "gradio", specifier = ">=4.38.1" },
+    { name = "gradio", specifier = ">=6.6.0" },
     { name = "html2text", specifier = ">=2020.1.16" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.25.0" },
     { name = "lark-oapi", specifier = ">=1.0.0" },
@@ -2538,6 +2539,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pygments", specifier = ">=2.16.0" },
+    { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "python-socketio", specifier = ">=5.11.0" },

@@ -34,6 +34,7 @@ type S3Config struct {
 	Endpoint        string // Optional custom endpoint (for S3-compatible services)
 	Prefix          string // Optional prefix for all keys
 	DisableSSL      bool   // For testing with local S3
+	UsePathStyle    bool  // Whether to use path-style addressing (true) or virtual-host-style (false)
 }
 
 // NewS3Client creates a new S3 client
@@ -63,11 +64,13 @@ func NewS3Client(cfg S3Config) (*S3Client, error) {
 	// Create S3 client options
 	clientOpts := []func(*s3.Options){}
 
-	// Set custom endpoint if provided (for MinIO, LocalStack, etc.)
+	// Set custom endpoint if provided (for MinIO, LocalStack, TOS, etc.)
 	if cfg.Endpoint != "" {
 		clientOpts = append(clientOpts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
-			o.UsePathStyle = true // Required for MinIO and some S3-compatible services
+			// true represent UsePathStyle for MinIO and some S3-compatible services
+			// false represent VirtualHostStyle for TOS  and some S3-compatible services
+			o.UsePathStyle = cfg.UsePathStyle 
 		})
 	}
 
@@ -390,12 +393,24 @@ func (c *S3Client) ObjectExists(ctx context.Context, path string) (bool, error) 
 // DirectoryExists checks if a directory exists (has objects with the prefix)
 // Optimized to use a single ListObjectsV2 call
 func (c *S3Client) DirectoryExists(ctx context.Context, path string) (bool, error) {
-	prefix := c.buildKey(path)
-	if prefix != "" && !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
+	// First check if directory marker exists
+	dirKey := c.buildKey(path)
+	if !strings.HasSuffix(dirKey, "/") {
+		dirKey += "/"
 	}
-
-	// Single ListObjectsV2 call to check both directory marker and children
+	
+	// Try HeadObject to check if directory marker exists
+	_, err := c.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(dirKey),
+	})
+	if err == nil {
+		// Directory marker exists
+		return true, nil
+	}
+	
+	// If directory marker doesn't exist, check if there are any objects with this prefix
+	prefix := dirKey
 	result, err := c.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:    aws.String(c.bucket),
 		Prefix:    aws.String(prefix),
@@ -407,6 +422,62 @@ func (c *S3Client) DirectoryExists(ctx context.Context, path string) (bool, erro
 	}
 
 	return len(result.Contents) > 0 || len(result.CommonPrefixes) > 0, nil
+}
+
+// CopyObject copies an object within the same bucket
+func (c *S3Client) CopyObject(ctx context.Context, srcPath, dstPath string) error {
+	srcKey := c.buildKey(srcPath)
+	dstKey := c.buildKey(dstPath)
+
+	_, err := c.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(c.bucket),
+		CopySource: aws.String(c.bucket + "/" + srcKey),
+		Key:        aws.String(dstKey),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy object %s -> %s: %w", srcKey, dstKey, err)
+	}
+	return nil
+}
+
+// ListAllObjects lists all objects (recursively) under a given prefix.
+// Unlike ListObjects which only lists immediate children, this returns
+// every object in the subtree.
+func (c *S3Client) ListAllObjects(ctx context.Context, path string) ([]S3Object, error) {
+	prefix := c.buildKey(path)
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	var objects []S3Object
+	paginator := s3.NewListObjectsV2Paginator(c.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(c.bucket),
+		Prefix: aws.String(prefix),
+		// No Delimiter — list all objects recursively
+	})
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list all objects: %w", err)
+		}
+
+		for _, obj := range page.Contents {
+			if obj.Key == nil {
+				continue
+			}
+			relPath := strings.TrimPrefix(*obj.Key, prefix)
+			isDir := strings.HasSuffix(relPath, "/")
+			objects = append(objects, S3Object{
+				Key:          relPath,
+				Size:         aws.ToInt64(obj.Size),
+				LastModified: aws.ToTime(obj.LastModified),
+				IsDir:        isDir,
+			})
+		}
+	}
+
+	return objects, nil
 }
 
 // getParentPath returns the parent directory path

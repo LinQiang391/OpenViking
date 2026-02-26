@@ -247,7 +247,7 @@ class TypedQuery:
     """
 
     query: str
-    context_type: ContextType
+    context_type: Optional[ContextType]
     intent: str
     priority: int = 3
     target_directories: List[str] = field(default_factory=list)
@@ -283,7 +283,7 @@ class MatchedContext:
 
     uri: str
     context_type: ContextType
-    is_leaf: bool = False
+    level: int = 2
     abstract: str = ""
     overview: Optional[str] = None
     category: str = ""
@@ -365,15 +365,15 @@ class FindResult:
     def _context_to_dict(self, ctx: MatchedContext) -> Dict[str, Any]:
         """Convert MatchedContext to dict."""
         return {
-            "uri": ctx.uri,
             "context_type": ctx.context_type.value,
-            "is_leaf": ctx.is_leaf,
-            "abstract": ctx.abstract,
-            "overview": ctx.overview,
-            "category": ctx.category,
+            "uri": ctx.uri,
+            "level": ctx.level,
             "score": ctx.score,
+            "category": ctx.category,
             "match_reason": ctx.match_reason,
             "relations": [{"uri": r.uri, "abstract": r.abstract} for r in ctx.relations],
+            "abstract": ctx.abstract,
+            "overview": ctx.overview,
         }
 
     def _query_to_dict(self, q: TypedQuery) -> Dict[str, Any]:
@@ -393,7 +393,7 @@ class FindResult:
             return MatchedContext(
                 uri=d.get("uri", ""),
                 context_type=ContextType(d.get("context_type", "resource")),
-                is_leaf=d.get("is_leaf", False),
+                level=d.get("level", 2),
                 abstract=d.get("abstract", ""),
                 overview=d.get("overview"),
                 category=d.get("category", ""),
