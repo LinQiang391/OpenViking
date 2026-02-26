@@ -80,8 +80,15 @@ class HeartbeatService:
     
     def _get_all_workspaces(self) -> dict[Path, list[SessionKey]] | None:
         workspaces: dict[Path, list[SessionKey]] = {}
-        for session in self.session_manager.list_sessions():
-            session_key: SessionKey = session.get('key')
+        for session_info in self.session_manager.list_sessions():
+            session_key: SessionKey = session_info.get('key')
+            
+            # Check if session should skip heartbeat from metadata
+            metadata = session_info.get('metadata', {})
+            if metadata.get("skip_heartbeat"):
+                logger.debug(f"Heartbeat: skipping session {session_key} (marked as skip_heartbeat)")
+                continue
+                
             if self.sandbox_mode == "shared":
                 sandbox_workspace = self.workspace / "shared"
             else:

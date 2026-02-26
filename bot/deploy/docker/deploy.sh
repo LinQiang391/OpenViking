@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Vikingbot 本地一键运行脚本
+# Vikingbot 一键部署脚本
 # 功能：
-# 1. 检查并构建镜像（如需要）
+# 1. 检查并构建镜像（如需要，自动适配本地架构）
 # 2. 初始化配置（如需要）
 # 3. 停止旧容器（如存在）
 # 4. 启动新容器
@@ -11,7 +11,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -26,17 +26,20 @@ IMAGE_NAME=${IMAGE_NAME:-vikingbot}
 IMAGE_TAG=${IMAGE_TAG:-latest}
 VIKINGBOT_DIR="$HOME/.vikingbot"
 CONFIG_FILE="$VIKINGBOT_DIR/config.json"
-HOST_PORT=${HOST_PORT:-18790}
-CONTAINER_PORT=${CONTAINER_PORT:-18790}
+HOST_PORT=${HOST_PORT:-18791}
+CONTAINER_PORT=${CONTAINER_PORT:-18791}
 COMMAND=${COMMAND:-gateway}
+AUTO_BUILD=${AUTO_BUILD:-true}
+# 平台配置：默认自动检测，也可手动指定
+PLATFORM=${PLATFORM:-}
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Vikingbot 本地一键启动${NC}"
+echo -e "${BLUE}  Vikingbot 一键部署${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
 # 1. 检查 Docker 是否安装
-echo -e "${GREEN}[1/7]${NC} 检查 Docker..."
+echo -e "${GREEN}[1/8]${NC} 检查 Docker..."
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}错误: Docker 未安装${NC}"
     echo "请先安装 Docker: https://www.docker.com/get-started"
@@ -44,23 +47,64 @@ if ! command -v docker &> /dev/null; then
 fi
 echo -e "  ${GREEN}✓${NC} Docker 已安装"
 
-# 2. 检查镜像是否存在
-echo -e "${GREEN}[2/7]${NC} 检查 Docker 镜像..."
+# 2. 检测本地架构
+echo -e "${GREEN}[2/8]${NC} 检测架构..."
+if [ -z "$PLATFORM" ]; then
+    # 自动检测本地架构
+    if [[ "$(uname -m)" == "arm64" ]] || [[ "$(uname -m)" == "aarch64" ]]; then
+        PLATFORM="linux/arm64"
+    else
+        PLATFORM="linux/amd64"
+    fi
+fi
+echo -e "  ${GREEN}✓${NC} 本地架构: ${PLATFORM}"
+
+# 3. 检查镜像是否存在，不存在则构建
+echo -e "${GREEN}[3/8]${NC} 检查 Docker 镜像..."
 if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${IMAGE_NAME}:${IMAGE_TAG}$"; then
-    echo -e "  ${YELLOW}镜像不存在，开始构建...${NC}"
-    cd "$PROJECT_ROOT"
-    docker build -f docker/Dockerfile -t "${IMAGE_NAME}:${IMAGE_TAG}" .
+    if [ "$AUTO_BUILD" = "true" ]; then
+        echo -e "  ${YELLOW}镜像不存在，开始构建...${NC}"
+        PLATFORM="$PLATFORM" "$SCRIPT_DIR/build-image.sh"
+    else
+        echo -e "${RED}错误: 镜像不存在且 AUTO_BUILD=false${NC}"
+        echo "请先运行: PLATFORM=$PLATFORM $SCRIPT_DIR/build-image.sh"
+        exit 1
+    fi
 else
     echo -e "  ${GREEN}✓${NC} 镜像已存在: ${IMAGE_NAME}:${IMAGE_TAG}"
 fi
 
-# 3. 初始化配置
-echo -e "${GREEN}[3/7]${NC} 检查配置文件..."
+# 4. 初始化配置目录
+echo -e "${GREEN}[4/8]${NC} 检查配置..."
+mkdir -p "$VIKINGBOT_DIR"
+mkdir -p "$VIKINGBOT_DIR/workspace"
+mkdir -p "$VIKINGBOT_DIR/sandboxes"
+mkdir -p "$VIKINGBOT_DIR/bridge"
+
+# 5. 检查配置文件
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo -e "  ${YELLOW}配置文件不存在，初始化...${NC}"
-    "$SCRIPT_DIR/init-config.sh"
+    echo -e "  ${YELLOW}配置文件不存在，创建默认配置...${NC}"
+    cat > "$CONFIG_FILE" << 'EOF'
+{
+  "providers": {
+    "openrouter": {
+      "apiKey": ""
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "openrouter/anthropic/claude-3.5-sonnet"
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18791
+  }
+}
+EOF
+    echo -e "  ${GREEN}✓${NC} 配置文件已创建"
     echo ""
-    echo -e "${YELLOW}⚠️  请先编辑配置文件并填入 API keys:${NC}"
+    echo -e "${YELLOW}⚠️  请编辑配置文件并填入 API keys:${NC}"
     echo -e "   ${YELLOW}$CONFIG_FILE${NC}"
     echo ""
     echo -e "编辑完成后重新运行此脚本。"
@@ -69,8 +113,8 @@ else
     echo -e "  ${GREEN}✓${NC} 配置文件已存在"
 fi
 
-# 4. 停止并删除旧容器（如存在）
-echo -e "${GREEN}[4/7]${NC} 清理旧容器..."
+# 6. 停止并删除旧容器（如存在）
+echo -e "${GREEN}[5/8]${NC} 清理旧容器..."
 if [ "$(docker ps -aq -f name=^/${CONTAINER_NAME}$)" ]; then
     if [ "$(docker ps -q -f name=^/${CONTAINER_NAME}$)" ]; then
         echo -e "  停止运行中的容器..."
@@ -83,17 +127,11 @@ else
     echo -e "  ${GREEN}✓${NC} 无旧容器需要清理"
 fi
 
-# 5. 创建配置目录（确保存在）
-echo -e "${GREEN}[5/7]${NC} 准备挂载目录..."
-mkdir -p "${VIKINGBOT_DIR}/workspace"
-mkdir -p "${VIKINGBOT_DIR}/sandboxes"
-mkdir -p "${VIKINGBOT_DIR}/bridge"
-echo -e "  ${GREEN}✓${NC} 目录已准备"
-
-# 6. 启动新容器
-echo -e "${GREEN}[6/7]${NC} 启动容器..."
+# 7. 启动新容器
+echo -e "${GREEN}[6/8]${NC} 启动容器..."
 echo "  容器名称: ${CONTAINER_NAME}"
 echo "  镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
+echo "  架构: ${PLATFORM}"
 echo "  命令: ${COMMAND}"
 echo "  端口映射: ${HOST_PORT}:${CONTAINER_PORT}"
 echo "  挂载: ${VIKINGBOT_DIR}:/root/.vikingbot"
@@ -101,6 +139,7 @@ echo "  挂载: ${VIKINGBOT_DIR}:/root/.vikingbot"
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
+  --platform "${PLATFORM}" \
   -v "${VIKINGBOT_DIR}:/root/.vikingbot" \
   -p "${HOST_PORT}:${CONTAINER_PORT}" \
   "${IMAGE_NAME}:${IMAGE_TAG}" \
@@ -108,19 +147,22 @@ docker run -d \
 
 echo -e "  ${GREEN}✓${NC} 容器已启动"
 
-# 7. 显示状态和日志
-echo -e "${GREEN}[7/7]${NC} 检查容器状态..."
-sleep 2
+# 8. 等待容器启动并显示状态
+echo -e "${GREEN}[7/8]${NC} 等待容器启动..."
+sleep 3
+
+echo -e "${GREEN}[8/8]${NC} 显示访问信息..."
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  启动成功!${NC}"
+echo -e "${GREEN}  部署成功!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 echo "容器信息:"
 echo "  名称: ${CONTAINER_NAME}"
 echo "  状态: $(docker inspect -f '{{.State.Status}}' "${CONTAINER_NAME}")"
-echo "  端口: ${HOST_PORT}"
+echo "  架构: ${PLATFORM}"
+echo "  控制台: ${YELLOW}http://localhost:${HOST_PORT}${NC}"
 echo ""
 echo "常用命令:"
 echo "  查看日志:    ${YELLOW}docker logs -f ${CONTAINER_NAME}${NC}"

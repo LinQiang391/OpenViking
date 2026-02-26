@@ -13,6 +13,7 @@ from vikingbot.bus.events import OutboundMessage
 from vikingbot.bus.queue import MessageBus
 from vikingbot.channels.base import BaseChannel
 from vikingbot.config.schema import TelegramChannelConfig
+from vikingbot.channels.utils import extract_image_paths, read_image_file
 
 
 def _markdown_to_telegram_html(text: str) -> str:
@@ -190,13 +191,34 @@ class TelegramChannel(BaseChannel):
         try:
             # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.session_key.chat_id)
-            # Convert markdown to Telegram HTML
-            html_content = _markdown_to_telegram_html(msg.content)
-            await self._app.bot.send_message(
-                chat_id=chat_id,
-                text=html_content,
-                parse_mode="HTML"
-            )
+            
+            # First extract local image file paths
+            local_image_paths, content_no_paths = extract_image_paths(msg.content)
+            
+            # Send local images first
+            if local_image_paths:
+                for img_path in local_image_paths:
+                    try:
+                        logger.debug(f"Processing local image file: {img_path}")
+                        image_bytes = read_image_file(img_path)
+                        from io import BytesIO
+                        await self._app.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=BytesIO(image_bytes)
+                        )
+                        logger.debug(f"Sent local image to {chat_id}: {img_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to process local image {img_path}: {e}")
+            
+            # Send remaining text content
+            if content_no_paths.strip():
+                # Convert markdown to Telegram HTML
+                html_content = _markdown_to_telegram_html(content_no_paths)
+                await self._app.bot.send_message(
+                    chat_id=chat_id,
+                    text=html_content,
+                    parse_mode="HTML"
+                )
         except ValueError:
             logger.exception(f"Invalid chat_id: {msg.session_key.chat_id}")
         except Exception as e:

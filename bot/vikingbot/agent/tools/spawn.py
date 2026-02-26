@@ -18,7 +18,6 @@ class SpawnTool(Tool):
     
     def __init__(self, manager: "SubagentManager"):
         self._manager = manager
-    
 
     @property
     def name(self) -> str:
@@ -49,10 +48,10 @@ class SpawnTool(Tool):
             "required": ["task"],
         }
     
-    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, tool_context: "ToolContext", task: str, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
         return await self._manager.spawn(
             task=task,
             label=label,
-            session_key=self._session_key,
+            session_key=tool_context.session_key,
         )

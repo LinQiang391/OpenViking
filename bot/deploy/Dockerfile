@@ -1,12 +1,19 @@
-FROM --platform=linux/amd64 node:20-bookworm-slim
+FROM python:3.13-slim-bookworm
 
-# Install Python, uv and required tools
+# Install Node.js (for WhatsApp bridge) using direct binary download
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv curl ca-certificates git ripgrep bubblewrap socat && \
+    apt-get install -y --no-install-recommends curl ca-certificates gnupg git ripgrep bubblewrap socat libfuse2 build-essential xz-utils && \
+    # Download and install Node.js 20 directly
+    ARCH=$(dpkg --print-architecture) && \
+    NODE_VERSION=20.18.1 && \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz" -o /tmp/node.tar.xz && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
+    # Install uv
     curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    # Clean up
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm -f /usr/lib/python3.11/EXTERNALLY-MANAGED /usr/lib/python3*/EXTERNALLY-MANAGED 2>/dev/null || true
+    rm -rf /var/lib/apt/lists/*
 
 # Make uv available in PATH
 ENV PATH="/root/.local/bin:$PATH"
@@ -28,9 +35,10 @@ RUN mkdir -p vikingbot
 # Copy bridge package files
 COPY bridge/package*.json ./bridge/
 
-# Install Python dependencies
+# Install Python dependencies - use pip install for openviking (no local build)
 ENV UV_HTTP_TIMEOUT=300
-RUN uv pip install --system --no-cache .
+RUN uv pip install --system --no-cache "openviking>=0.1.18" && \
+    uv pip install --system --no-cache .
 
 # Install global npm packages for sandbox
 RUN npm install -g @anthropic-ai/sandbox-runtime

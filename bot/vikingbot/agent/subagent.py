@@ -13,10 +13,6 @@ from vikingbot.bus.queue import MessageBus
 from vikingbot.config.schema import SessionKey
 from vikingbot.providers.base import LLMProvider
 from vikingbot.agent.tools.registry import ToolRegistry
-from vikingbot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from vikingbot.agent.tools.shell import ExecTool
-from vikingbot.agent.tools.web import WebFetchTool
-from vikingbot.agent.tools.websearch import WebSearchTool
 
 
 from vikingbot.sandbox.manager import SandboxManager
@@ -36,20 +32,16 @@ class SubagentManager:
         provider: LLMProvider,
         workspace: Path,
         bus: MessageBus,
+        config: "Config",
         model: str | None = None,
-        brave_api_key: str | None = None,
-        exa_api_key: str | None = None,
-        exec_config: "ExecToolConfig | None" = None,
         sandbox_manager: "SandboxManager | None" = None,
     ):
         from vikingbot.config.schema import ExecToolConfig
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
+        self.config = config
         self.model = model or provider.get_default_model()
-        self.brave_api_key = brave_api_key
-        self.exa_api_key = exa_api_key
-        self.exec_config = exec_config or ExecToolConfig()
         self.sandbox_manager = sandbox_manager
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
@@ -100,22 +92,12 @@ class SubagentManager:
         
         try:
             # Build subagent tools (no message tool, no spawn tool)
+            from vikingbot.agent.tools import register_subagent_tools
             tools = ToolRegistry()
-            tools.register(ReadFileTool(sandbox_manager=self.sandbox_manager))
-            tools.register(WriteFileTool(sandbox_manager=self.sandbox_manager))
-            tools.register(EditFileTool(sandbox_manager=self.sandbox_manager))
-            tools.register(ListDirTool(sandbox_manager=self.sandbox_manager))
-            tools.register(ExecTool(
-                working_dir=str(self.workspace),
-                timeout=self.exec_config.timeout,
-                sandbox_manager=self.sandbox_manager,
-            ))
-            tools.register(WebSearchTool(
-                backend="auto",
-                brave_api_key=self.brave_api_key,
-                exa_api_key=self.exa_api_key
-            ))
-            tools.register(WebFetchTool())
+            register_subagent_tools(
+                registry=tools,
+                config=self.config,
+            )
             
             # Build messages with subagent-specific prompt
             system_prompt = self._build_subagent_prompt(task)
@@ -161,7 +143,12 @@ class SubagentManager:
                     for tool_call in response.tool_calls:
                         args_str = json.dumps(tool_call.arguments)
                         logger.debug(f"Subagent [{task_id}] executing: {tool_call.name} with arguments: {args_str}")
-                        result = await tools.execute(tool_call.name, tool_call.arguments)
+                        result = await tools.execute(
+                            tool_call.name, 
+                            tool_call.arguments, 
+                            session_key=session_key,
+                            sandbox_manager=self.sandbox_manager
+                        )
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,

@@ -84,12 +84,13 @@ class SessionManager:
     def _get_session_path(self, session_key: SessionKey) -> Path:
         return self.sessions_dir / f"{session_key.safe_name()}.jsonl"
     
-    def get_or_create(self, key: SessionKey) -> Session:
+    def get_or_create(self, key: SessionKey, skip_heartbeat: bool = False) -> Session:
         """
         Get an existing session or create a new one.
 
         Args:
             key: Session key (usually channel:chat_id).
+            skip_heartbeat: Whether to skip heartbeat for this session.
 
         Returns:
             The session.
@@ -102,6 +103,8 @@ class SessionManager:
         session = self._load(key)
         if session is None:
             session = Session(key=key)
+            if skip_heartbeat:
+                session.metadata["skip_heartbeat"] = True
 
         self._cache[key] = session
 
@@ -230,10 +233,12 @@ class SessionManager:
                         data = json.loads(first_line)
                         if data.get("_type") == "metadata":
                             session_key = SessionKey.from_safe_name(data.get("session_key"))
+                            metadata = data.get("metadata", {})
                             sessions.append({
                                 "key": session_key,
                                 "created_at": data.get("created_at"),
                                 "updated_at": data.get("updated_at"),
+                                "metadata": metadata,
                                 "path": str(path)
                             })
             except Exception:

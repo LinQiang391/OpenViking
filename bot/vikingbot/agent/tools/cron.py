@@ -62,6 +62,7 @@ class CronTool(Tool):
     
     async def execute(
         self,
+        tool_context: "ToolContext",
         action: str,
         name: str= "",
         message: str = "",
@@ -72,17 +73,16 @@ class CronTool(Tool):
         **kwargs: Any
     ) -> str:
         if action == "add":
-            return self._add_job(name, message, every_seconds, cron_expr, at)
+            return self._add_job(name, message, every_seconds, cron_expr, at, tool_context.session_key)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
         return f"Unknown action: {action}"
     
-    def _add_job(self, name: str, message: str, every_seconds: int | None, cron_expr: str | None, at: str | None) -> str:
+    def _add_job(self, name: str, message: str, every_seconds: int | None, cron_expr: str | None, at: str | None, session_key: "SessionKey") -> str:
         if not message:
             return "Error: message is required for add"
-
         
         # Build schedule
         delete_after = False
@@ -104,7 +104,7 @@ class CronTool(Tool):
             schedule=schedule,
             message=message,
             deliver=True,
-            session_key=self._session_key,
+            session_key=session_key,
             delete_after_run=delete_after,
         )
         return f"Created job '{job.name}' (id: {job.id})"

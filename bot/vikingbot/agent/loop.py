@@ -20,16 +20,7 @@ from vikingbot.bus.queue import MessageBus
 from vikingbot.providers.base import LLMProvider
 from vikingbot.agent.context import ContextBuilder
 from vikingbot.agent.tools.registry import ToolRegistry
-from vikingbot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from vikingbot.agent.tools.ov_file import VikingReadTool, VikingListTool, VikingAddResourceTool, VikingSearchTool, \
-    VikingGrepTool, VikingGlobTool
-from vikingbot.agent.tools.shell import ExecTool
-from vikingbot.agent.tools.web import WebFetchTool
-from vikingbot.agent.tools.websearch import WebSearchTool
-from vikingbot.agent.tools.image import ImageGenerationTool
-from vikingbot.agent.tools.message import MessageTool
-from vikingbot.agent.tools.spawn import SpawnTool
-from vikingbot.agent.tools.cron import CronTool
+from vikingbot.agent.tools import register_default_tools
 from vikingbot.agent.memory import MemoryStore
 from vikingbot.agent.subagent import SubagentManager
 from vikingbot.session.manager import SessionManager
@@ -113,10 +104,8 @@ class AgentLoop:
             provider=provider,
             workspace=workspace,
             bus=bus,
+            config=self.config,
             model=self.model,
-            brave_api_key=brave_api_key,
-            exa_api_key=exa_api_key,
-            exec_config=self.exec_config,
             sandbox_manager=sandbox_manager,
         )
 
@@ -130,60 +119,13 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register default set of tools."""
-        # File tools (use sandbox manager for all file operations)
-        self.tools.register(ReadFileTool(
-            sandbox_manager=self.sandbox_manager,
-        ))
-        self.tools.register(WriteFileTool(
-            sandbox_manager=self.sandbox_manager,
-        ))
-        self.tools.register(EditFileTool(
-            sandbox_manager=self.sandbox_manager,
-        ))
-        self.tools.register(ListDirTool(
-            sandbox_manager=self.sandbox_manager,
-        ))
-
-        # Shell tool
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            sandbox_manager=self.sandbox_manager,
-        ))
-
-        # Web tools
-        self.tools.register(WebSearchTool(
-            backend="auto",
-            brave_api_key=self.brave_api_key,
-            exa_api_key=self.exa_api_key
-        ))
-        self.tools.register(WebFetchTool())
-
-        # Open Viking tool
-        self.tools.register(VikingReadTool())
-        self.tools.register(VikingListTool())
-        self.tools.register(VikingSearchTool())
-        self.tools.register(VikingGrepTool())
-        self.tools.register(VikingGlobTool())
-
-        # Image generation tool
-        self.tools.register(ImageGenerationTool(
-            gen_image_model=self.gen_image_model,
-            api_key=self.provider.api_key,
-            api_base=self.provider.api_base
-        ))
-
-        # Message tool
-        message_tool = MessageTool(send_callback=self.bus.publish_outbound)
-        self.tools.register(message_tool)
-
-        # Spawn tool (for subagents)
-        spawn_tool = SpawnTool(manager=self.subagents)
-        self.tools.register(spawn_tool)
-
-        # Cron tool (for scheduling)
-        if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
+        register_default_tools(
+            registry=self.tools,
+            config=self.config,
+            send_callback=self.bus.publish_outbound,
+            subagent_manager=self.subagents,
+            cron_service=self.cron_service,
+        )
 
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
@@ -239,7 +181,9 @@ class AgentLoop:
 
         # Get or create session
         session_key = msg.session_key
-        session = self.sessions.get_or_create(session_key)
+        # For CLI/direct sessions, skip heartbeat by default
+        skip_heartbeat = session_key.type in ("cli", "tui")
+        session = self.sessions.get_or_create(session_key, skip_heartbeat=skip_heartbeat)
 
         # Handle slash commands
         cmd = msg.content.strip().lower()
@@ -258,10 +202,7 @@ class AgentLoop:
             await self._consolidate_memory(session)
 
 
-        for tool_name in ["read_file", "write_file", "edit_file", "list_dir", "exec", "message", "spawn" , "cron"]:
-            tool = self.tools.get(tool_name)
-            if tool and hasattr(tool, "set_session_key"):
-                tool.set_session_key(msg.session_key)
+
 
         if self.sandbox_manager:
             message_workspace = self.sandbox_manager.get_workspace_path(session_key)
@@ -343,25 +284,17 @@ class AgentLoop:
                         ))
 
                     logger.info(f"[TOOL_CALL]: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments, session_key=session_key)
+                    result = await self.tools.execute(
+                        tool_call.name, 
+                        tool_call.arguments, 
+                        session_key=session_key,
+                        sandbox_manager=self.sandbox_manager
+                    )
                     logger.info(f"[RESULT]: {str(result)[:600]}")
-                    # Special handling for image generation tool
-                    if tool_call.name == "generate_image" and result and not result.startswith("Error"):
-                        # Send image directly as a separate message
-                        image_msg = OutboundMessage(
-                            session_key=msg.session_key,
-                            content=result,
-                            metadata=msg.metadata or {},
-                        )
-                        await self.bus.publish_outbound(image_msg)
-                        # Give LLM a short confirmation instead of the full base64
-                        result_for_llm = "Image generated successfully and sent to user."
-                    else:
-                        result_for_llm = result
 
                     # 回调：工具结果
                     if self.thinking_callback:
-                        result_str = str(result_for_llm)
+                        result_str = str(result)
                         if len(result_str) > 500:
                             result_str = result_str[:500] + "..."
                         self.thinking_callback(ThinkingStep(
@@ -371,7 +304,7 @@ class AgentLoop:
                         ))
 
                     messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result_for_llm
+                        messages, tool_call.id, tool_call.name, result
                     )
                 # Interleaved CoT: reflect before next action
                 messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
@@ -391,8 +324,6 @@ class AgentLoop:
         logger.info(f"Response to {msg.session_key}: {preview}")
 
 
-        # Trigger hooks for user and assistant messages
-        session_key_str = msg.session_key.safe_name()
 
         # Save to session (include tool names so consolidation sees what happened)
         session.add_message("user", msg.content)
@@ -417,18 +348,7 @@ class AgentLoop:
 
         session = self.sessions.get_or_create(msg.session_key)
 
-        # Update tool contexts
-        message_tool = self.tools.get("message")
-        if isinstance(message_tool, MessageTool):
-            message_tool.set_session_key(session_key=msg.session_key)
 
-        spawn_tool = self.tools.get("spawn")
-        if isinstance(spawn_tool, SpawnTool):
-            message_tool.set_session_key(session_key=msg.session_key)
-
-        cron_tool = self.tools.get("cron")
-        if isinstance(cron_tool, CronTool):
-            message_tool.set_session_key(session_key=msg.session_key)
 
         # Build messages with the announce content
         messages = await self.context.build_messages(
@@ -470,7 +390,12 @@ class AgentLoop:
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await self.tools.execute(
+                        tool_call.name, 
+                        tool_call.arguments, 
+                        session_key=msg.session_key,
+                        sandbox_manager=self.sandbox_manager
+                    )
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )

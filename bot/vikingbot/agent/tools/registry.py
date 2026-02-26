@@ -1,6 +1,20 @@
 """Tool registry for dynamic tool management."""
 from loguru import logger
 
+from typing import Any, TYPE_CHECKING
+
+from vikingbot.agent.tools.base import Tool, ToolContext
+from vikingbot.config.schema import SessionKey
+from vikingbot.hooks import HookContext
+from vikingbot.hooks.manager import hook_manager
+
+if TYPE_CHECKING:
+    from vikingbot.sandbox.manager import SandboxManager
+
+
+"""Tool registry for dynamic tool management."""
+from loguru import logger
+
 from typing import Any
 
 from vikingbot.agent.tools.base import Tool
@@ -39,13 +53,15 @@ class ToolRegistry:
         """Get all tool definitions in OpenAI format."""
         return [tool.to_schema() for tool in self._tools.values()]
     
-    async def execute(self, name: str, params: dict[str, Any], session_key: SessionKey) -> str:
+    async def execute(self, name: str, params: dict[str, Any], session_key: SessionKey, sandbox_manager: "SandboxManager | None" = None) -> str:
         """
         Execute a tool by name with given parameters.
         
         Args:
             name: Tool name.
             params: Tool parameters.
+            session_key: Session key for the current session.
+            sandbox_manager: Sandbox manager for file/shell operations.
         
         Returns:
             Tool execution result as string.
@@ -56,12 +72,18 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             return f"Error: Tool '{name}' not found"
+        
+        tool_context = ToolContext(
+            session_key=session_key,
+            sandbox_manager=sandbox_manager
+        )
+        
         result = None
         try:
             errors = tool.validate_params(params)
             if errors:
                 return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors)
-            result =  await tool.execute(**params)
+            result =  await tool.execute(tool_context, **params)
         except Exception as e:
             result = e
             logger.exception('Tool call fail: ', e)
