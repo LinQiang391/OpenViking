@@ -86,9 +86,9 @@ class ContextBuilder:
             parts.append(f"# Memory\n\n{memory}")
 
         # Viking memory
-        viking_memory = await self.memory.get_viking_memory_context(session_key.safe_name(), current_message, history)
-        if viking_memory:
-            parts.append(viking_memory)
+        # viking_memory = await self.memory.get_viking_memory_context(session_key.safe_name(), current_message, history)
+        # if viking_memory:
+        #     parts.append(viking_memory)
         
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content

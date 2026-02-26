@@ -208,13 +208,31 @@ class VikingClient:
     def close(self):
         """关闭客户端"""
         self.client.close()
-
+    def _parse_viking_memory(self, result: Any) -> str:
+        if result and len(result) > 0:
+            user_memories = []
+            for idx, memory in enumerate(result["user_memory"], start=1):
+                user_memories.append(f"{idx}. {getattr(result, "abstract", ""),}; "
+                                     f"uri: {getattr(result, "uri", "")}; "
+                                     f"isDir: {getattr(result, "is_leaf", False)}; "
+                                     f"related score: {getattr(result, "score", 0.0),}")
+            return "\n".join(user_memories)
+        return ""
+    async def get_viking_memory_context(self, session_id: str, current_message: str, history: list[dict[str, Any]]) -> str:
+        result = await self.search_memory(current_message, session_id, history)
+        if not result:
+            return ""
+        user_memory = self._parse_viking_memory(result["user_memory"])
+        agent_memory = self._parse_viking_memory(result["agent_memory"])
+        return (f"## Related openviking memories.Using tools to read more details.\n"
+                f"### user memories:\n{user_memory}\n"
+                f"### agent memories:\n{agent_memory}")
 
 async def main_test():
     client = await VikingClient.create()
     # res = client.list_resources()
     # res = await client.search("头有点疼", target_uri="viking://agent/memories")
-    res = await client.search_memory("头有点疼", session_id="test", messages=[])
+    res = await client.get_viking_memory_context("123", current_message="头疼", history=[])
     # res = await client.list_resources("viking://user/memories/events")
     # res = await client.read_content("viking://user/memories/events", level="overview")
     # res = await client.add_resource("/Users/bytedance/Documents/论文/吉比特年报.pdf", "吉比特年报")

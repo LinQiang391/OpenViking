@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 from vikingbot.openviking_mount.ov_server import VikingClient
-
+import asyncio
 
 from vikingbot.utils.helpers import ensure_dir
 
@@ -26,7 +26,7 @@ class MemoryStore:
             user_memories = []
             for idx, memory in enumerate(result["user_memory"], start=1):
                 user_memories.append(f"{idx}. {getattr(result, "abstract", ""),}; "
-                                     f"uri: {memory['uri']}; "
+                                     f"uri: {getattr(result, "uri", "")}; "
                                      f"isDir: {getattr(result, "is_leaf", False)}; "
                                      f"related score: {getattr(result, "score", 0.0),}")
             return "\n".join(user_memories)
