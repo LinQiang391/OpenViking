@@ -499,6 +499,7 @@ class AgentLoop:
         if not session.messages:
             return
 
+        # use openviking tools to extract memory
         await hook_manager.execute_hooks(
             context=HookContext(
                 event_type="message.compact",

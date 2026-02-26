@@ -11,6 +11,7 @@ from vikingbot.config.loader import load_config
 
 viking_resource_prefix = "viking://resources"
 uri_user_memory = "viking://user/memories/"
+uri_agent_memory = "viking://agent/memories/"
 
 
 class VikingClient:
@@ -165,6 +166,27 @@ class VikingClient:
             else []
         )
 
+    async def search_memory(self, query: str, session_id: str, messages: list[dict[str, Any]]) -> dict[str, list[Any]]:
+        """通过上下文消息，检索viking 的user、Agent memory"""
+        session = self.client.session(session_id)
+        for message in messages:
+            await session.add_message(role=message.get("role"), content=message.get("content"))
+        user_memory = await self.client.search(
+            query=query,
+            session=session,
+            target_uri=uri_user_memory,
+        )
+        agent_memory = await self.client.search(
+            query=query,
+            session=session,
+            target_uri=uri_agent_memory,
+        )
+        return {
+            "user_memory": user_memory.memories if hasattr(user_memory, "memories") else [],
+            "agent_memory": agent_memory.memories if hasattr(agent_memory, "memories") else [],
+        }
+
+
     async def grep(self, uri: str, pattern: str, case_insensitive: bool = False) -> Dict[str, Any]:
         """通过模式（正则表达式）搜索内容"""
         return await self.client.grep(uri, pattern, case_insensitive=case_insensitive)
@@ -191,23 +213,12 @@ class VikingClient:
 async def main_test():
     client = await VikingClient.create()
     # res = client.list_resources()
-    res = await client.search("头有点疼")
-    # res = client.search_user_memory("头有点疼")
-    # res = client.list_resources()
-    # result = []
-    # for entry in res:
-    #     item = {
-    #         "name": entry["name"],
-    #         "size": entry["uri"],
-    #         "uri": entry["uri"],
-    #         "isDir": entry["isDir"]
-    #     }
-    #     result.append(str(item))
-    # print("\n".join(result))
-    # res = client.read_content("viking://resources/bot_test/dutao/test/")
-    # res = client.add_resource("/Users/bytedance/.openviking/test.py", "一段代码")
+    # res = await client.search("头有点疼", target_uri="viking://agent/memories")
+    res = await client.search_memory("头有点疼", session_id="test", messages=[])
+    # res = await client.list_resources("viking://user/memories/events")
+    # res = await client.read_content("viking://user/memories/events", level="overview")
+    # res = await client.add_resource("/Users/bytedance/Documents/论文/吉比特年报.pdf", "吉比特年报")
     print(res)
-    client.close()
 
 
 if __name__ == "__main__":
