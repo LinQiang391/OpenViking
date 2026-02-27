@@ -11,11 +11,12 @@ import { createInterface } from "node:readline";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GITHUB_RAW =
   process.env.OPENVIKING_GITHUB_RAW ||
-  "https://raw.githubusercontent.com/OpenViking/OpenViking/main";
+  "https://raw.githubusercontent.com/volcengine/OpenViking/main";
 
 const IS_WIN = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
@@ -167,8 +168,10 @@ async function checkGpp() {
 
 async function checkOpenvikingModule() {
   const py = process.env.OPENVIKING_PYTHON || DEFAULT_PYTHON;
-  const { code } = await runCapture(py, ["-c", "import openviking"]);
-  return code === 0 ? { ok: true } : { ok: false };
+  const { code, err } = await runCapture(py, ["-c", "import openviking"]);
+  const ok = code === 0;
+  const illegalInstruction = code === 132 || (err && /illegal instruction/i.test(err));
+  return { ok, code, err, illegalInstruction };
 }
 
 async function checkOvvConf() {
@@ -368,6 +371,21 @@ async function installOpenviking(repoRoot) {
   await run(py, ["-m", "pip", "install", "openviking"]);
 }
 
+const DEFAULT_CLONE_URL = "https://github.com/volcengine/OpenViking.git";
+
+async function cloneOpenvikingRepo() {
+  const cloneDir = join(tmpdir(), `OpenViking-${Date.now()}`);
+  const cloneUrl = process.env.OPENVIKING_GITHUB_CLONE || DEFAULT_CLONE_URL;
+  log("Cloning OpenViking (PyPI wheel incompatible with your CPU, building from source)...");
+  await mkdir(cloneDir, { recursive: true });
+  await run("git", ["clone", "--depth", "1", cloneUrl, cloneDir]);
+  if (!existsSync(join(cloneDir, "pyproject.toml"))) {
+    await rm(cloneDir, { recursive: true, force: true });
+    throw new Error("Clone failed: pyproject.toml not found");
+  }
+  return cloneDir;
+}
+
 async function fetchPluginFromGitHub(dest) {
   log("Downloading memory-openviking plugin from GitHub...");
   const files = [
@@ -552,11 +570,12 @@ Steps:
   6. Write ~/.openclaw/openviking.env
 
 Env vars:
-  OPENVIKING_PYTHON       Python path
-  OPENVIKING_CONFIG_FILE  ov.conf path
-  OPENVIKING_REPO         Local OpenViking repo path (use local plugin if set)
-  OPENVIKING_ARK_API_KEY  Volcengine Ark API Key (used in -y mode, skip prompt)
-  OPENVIKING_GO_PATH      Go bin dir (when Go not in PATH, e.g. ~/local/go/bin)
+  OPENVIKING_PYTHON           Python path
+  OPENVIKING_CONFIG_FILE      ov.conf path
+  OPENVIKING_REPO             Local OpenViking repo path (use local source install if set)
+  OPENVIKING_ARK_API_KEY      Volcengine Ark API Key (used in -y mode, skip prompt)
+  OPENVIKING_GO_PATH          Go bin dir (when Go not in PATH, e.g. ~/local/go/bin)
+  OPENVIKING_AUTO_SOURCE_INSTALL  Set to 1 to auto-clone and build when PyPI wheel fails (Illegal instruction)
 `);
     process.exit(0);
   }
@@ -725,10 +744,71 @@ Env vars:
       }
     }
 
-    const recheck = await checkOpenvikingModule();
+    let recheck = await checkOpenvikingModule();
     if (!recheck.ok) {
-      log("openviking module installation failed. Check errors above.", "err");
-      process.exit(1);
+      const inferredRepoRoot = join(__dirname, "..", "..", "..");
+      const repoRoot = process.env.OPENVIKING_REPO || (existsSync(join(inferredRepoRoot, "pyproject.toml")) ? inferredRepoRoot : "");
+      const isIllegalInstruction = recheck.illegalInstruction || recheck.code === 132;
+
+      // PyPI wheel Illegal instruction: try source install (local repo or auto-clone)
+      if (isIllegalInstruction) {
+        let sourceRepo = repoRoot && existsSync(join(repoRoot, "pyproject.toml")) ? repoRoot : null;
+
+        if (!sourceRepo && !nonInteractive) {
+          const tryClone = await question(
+            "PyPI wheel 与当前 CPU 不兼容。是否自动 clone 仓库并从源码安装？(y/n) [y]:",
+            "y"
+          );
+          if (tryClone.toLowerCase() === "y") {
+            try {
+              sourceRepo = await cloneOpenvikingRepo();
+            } catch (e) {
+              log(`Clone failed: ${e.message}. Ensure git is installed.`, "err");
+            }
+          }
+        } else if (!sourceRepo && nonInteractive && process.env.OPENVIKING_AUTO_SOURCE_INSTALL === "1") {
+          try {
+            sourceRepo = await cloneOpenvikingRepo();
+          } catch (e) {
+            log(`Auto clone failed: ${e.message}`, "err");
+          }
+        }
+
+        if (sourceRepo) {
+          const py = process.env.OPENVIKING_PYTHON || DEFAULT_PYTHON;
+          log("Uninstalling PyPI openviking...");
+          await run(py, ["-m", "pip", "uninstall", "openviking", "-y"], { silent: true }).catch(() => {});
+          await installOpenviking(sourceRepo);
+          recheck = await checkOpenvikingModule();
+        }
+      }
+
+      if (!recheck.ok) {
+        const inferredRepoRoot2 = join(__dirname, "..", "..", "..");
+        const repoRoot2 = process.env.OPENVIKING_REPO || (existsSync(join(inferredRepoRoot2, "pyproject.toml")) ? inferredRepoRoot2 : "");
+        const isIllegalInstruction2 = recheck.illegalInstruction || recheck.code === 132;
+
+        if (isIllegalInstruction2) {
+          log("PyPI wheel incompatible with your CPU: import triggers Illegal instruction (engine.so).", "err");
+          console.log("\n  The pre-built wheel uses AVX-512 instructions not supported on your CPU (e.g. Intel 12th Gen).");
+          console.log("  Install from source to build for your CPU:\n");
+          console.log("    pip3 uninstall openviking -y");
+          if (repoRoot2) {
+            console.log(`    cd ${repoRoot2}`);
+            console.log("    pip3 install -e .");
+            console.log("\n  Then re-run: OPENVIKING_REPO=<path> sh examples/openclaw-memory-plugin/setup.sh");
+          } else {
+            console.log("    git clone https://github.com/volcengine/OpenViking.git");
+            console.log("    cd OpenViking && pip3 install -e .");
+            console.log("\n  Then re-run this setup.");
+            console.log("\n  Or run this setup again and choose 'y' when asked to auto-clone.");
+          }
+          console.log("\n  See INSTALL-ZH.md for details.");
+        } else {
+          log("openviking module installation failed. Check errors above.", "err");
+        }
+        process.exit(1);
+      }
     }
     log("openviking module: installed", "ok");
   }

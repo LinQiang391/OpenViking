@@ -4,7 +4,25 @@
 
 ---
 
-## 一、快速开始（让 OpenClaw 自动安装）
+## 一、快速开始
+
+### 方式一：一键安装（无需 clone 仓库）
+
+在已安装 Node.js >= 22 的 Linux/macOS 上执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/openclaw-memory-plugin/setup.sh | bash
+```
+
+非交互模式（使用默认配置）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/openclaw-memory-plugin/setup.sh | bash -s -- -y
+```
+
+脚本会依次完成：环境检查 → 安装 OpenClaw → 安装 OpenViking → 交互配置 ov.conf → 部署 memory-openviking 插件。
+
+### 方式二：让 OpenClaw 自动安装
 
 先将技能文件复制到 OpenClaw 技能目录，再让 OpenClaw 完成后续步骤：
 
@@ -450,10 +468,11 @@ npx ./examples/openclaw-memory-plugin/setup-helper [选项]
   -h, --help    显示帮助
 
 环境变量：
-  OPENVIKING_PYTHON       Python 解释器路径
-  OPENVIKING_CONFIG_FILE  自定义 ov.conf 路径
-  OPENVIKING_REPO         本地仓库路径（在仓库内运行时自动检测）
-  OPENVIKING_ARK_API_KEY  跳过 API Key 提示（用于 CI/脚本）
+  OPENVIKING_PYTHON             Python 解释器路径
+  OPENVIKING_CONFIG_FILE        自定义 ov.conf 路径
+  OPENVIKING_REPO               本地仓库路径（在仓库内运行 setup.sh 时自动检测）
+  OPENVIKING_ARK_API_KEY        跳过 API Key 提示（用于 CI/脚本）
+  OPENVIKING_AUTO_SOURCE_INSTALL 设为 1 时，PyPI wheel 不可用（Illegal instruction）时自动 clone 并源码安装
 ```
 
 ---
@@ -535,6 +554,26 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 ```bash
 rm -rf $(npm root -g)/openclaw $(npm root -g)/.openclaw-*
 npm install -g openclaw
+```
+
+#### Q: `pip install openviking` 成功，但 `import openviking` 报 `Illegal instruction (core dumped)`
+
+PyPI 预编译 wheel 中的 `engine.so` 使用了 AVX-512 指令，部分 CPU（如 Intel 12 代酷睿）不支持，导致导入时崩溃。需**从源码安装**以针对你的 CPU 重新编译。
+
+**方式一：安装助手自动处理（推荐）**  
+重新运行 setup，当提示「PyPI wheel 与当前 CPU 不兼容，是否自动 clone 仓库并从源码安装？」时选择 `y`，安装助手会自动 clone 并完成源码安装，过程对用户基本无感。
+
+**方式二：非交互模式自动 clone**  
+```bash
+OPENVIKING_AUTO_SOURCE_INSTALL=1 sh examples/openclaw-memory-plugin/setup.sh -y
+```
+
+**方式三：手动源码安装**  
+```bash
+pip3 uninstall openviking -y
+git clone https://github.com/volcengine/OpenViking.git
+cd OpenViking
+pip3 install -e .
 ```
 
 ### 运行阶段
