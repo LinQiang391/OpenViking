@@ -176,21 +176,28 @@ ensure_build_tools() {
       install_it=1
     fi
   elif [[ -t 1 ]] && [[ -c /dev/tty ]] 2>/dev/null; then
-    local resp
+    local resp user_choice=""
     printf '[openviking-installer] Build tools missing: %s.\n' "${missing[*]}"
     if "$has_sudo"; then
       printf '  [s] Install via sudo (needs root password)\n'
     fi
     if "$has_conda"; then
       printf '  [c] Install via conda (no sudo, user-level)\n'
+    else
+      printf '  [c] Install via conda (install Miniconda first if not available)\n'
     fi
     printf '  [n] Skip, show manual instructions\n'
     printf '  Choice [s/c/n]: '
     read -r resp </dev/tty 2>/dev/null || true
     case "${resp:-s}" in
-      [sS]) "$has_sudo" && method="sudo"  && install_it=1 ;;
-      [cC]) "$has_conda" && method="conda" && install_it=1 ;;
-      *)    install_it=0 ;;
+      [sS]) "$has_sudo" && method="sudo"  && install_it=1 ; user_choice="s" ;;
+      [cC]) user_choice="c"
+            if "$has_conda"; then
+              method="conda" && install_it=1
+            else
+              install_it=0
+            fi ;;
+      *)    install_it=0 ; user_choice="n" ;;
     esac
   fi
 
@@ -215,7 +222,18 @@ ensure_build_tools() {
     fi
   else
     build_tools_manual_help
-    die "Run again and choose an option, or install manually, or set SKIP_BUILD_TOOLS_CHECK=1."
+    if [[ "${user_choice:-}" == "c" ]] && ! "$has_conda"; then
+      die "Conda not found. Install Miniconda first (no sudo):
+  curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh
+  bash /tmp/miniconda.sh -b -p ~/miniconda3
+  ~/miniconda3/bin/conda init
+  source ~/.bashrc
+  Then run this script again and choose [c]."
+    elif [[ "${user_choice:-}" == "s" ]] && ! "$has_sudo"; then
+      die "Sudo not available. Use conda (option c) or ask your admin to install cmake and g++."
+    else
+      die "Run again and choose an option, or install manually, or set SKIP_BUILD_TOOLS_CHECK=1."
+    fi
   fi
 }
 
