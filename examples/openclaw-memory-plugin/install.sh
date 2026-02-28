@@ -6,6 +6,7 @@ DEFAULT_REF="${OV_MEMORY_DEFAULT_REF:-main}"
 REF_OVERRIDE=""
 SKIP_CHECKSUM="${SKIP_CHECKSUM:-0}"
 AUTO_INSTALL_NODE="${AUTO_INSTALL_NODE:-1}"
+AUTO_INSTALL_OPENCLAW="${AUTO_INSTALL_OPENCLAW:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 HELPER_ARGS=()
 
@@ -26,6 +27,7 @@ Environment:
   OV_MEMORY_REPO         Override GitHub repo (default: volcengine/OpenViking)
   OV_MEMORY_DEFAULT_REF  Fallback ref when OV_MEMORY_VERSION is not set (default: main)
   AUTO_INSTALL_NODE      Auto-install Node.js when missing/too old (default: 1)
+  AUTO_INSTALL_OPENCLAW  Auto-install OpenClaw when missing (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OPENVIKING_GITHUB_RAW  Override raw base URL used by helper and installer
   SKIP_CHECKSUM=1        Skip SHA256 checksum verification
@@ -85,6 +87,21 @@ ensure_node() {
   log "Node.js ready: $(node -v)"
 }
 
+ensure_openclaw() {
+  if command -v openclaw >/dev/null 2>&1; then
+    log "Detected OpenClaw: $(openclaw --version 2>/dev/null || openclaw -v 2>/dev/null || echo 'installed')"
+    return
+  fi
+
+  [[ "$AUTO_INSTALL_OPENCLAW" == "1" ]] || die "OpenClaw is not installed. Install it first: npm install -g openclaw"
+
+  log "OpenClaw is not installed. Installing via npm..."
+  npm install -g openclaw || die "Failed to install OpenClaw. Run 'npm install -g openclaw' manually."
+
+  command -v openclaw >/dev/null 2>&1 || die "OpenClaw installation finished but openclaw is still unavailable"
+  log "OpenClaw ready: $(openclaw --version 2>/dev/null || openclaw -v 2>/dev/null || echo 'installed')"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ref)
@@ -110,9 +127,7 @@ done
 require_cmd bash
 require_cmd curl
 ensure_node
-if ! command -v openclaw >/dev/null 2>&1; then
-  die "OpenClaw is not installed. Install it first: npm install -g openclaw"
-fi
+ensure_openclaw
 
 REF="${OV_MEMORY_VERSION:-${REF_OVERRIDE:-$DEFAULT_REF}}"
 if [[ -z "$REF" ]]; then
