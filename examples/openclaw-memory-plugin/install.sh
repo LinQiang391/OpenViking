@@ -207,7 +207,11 @@ ensure_build_tools() {
       log "Build tools OK: cmake, g++"
     else
       build_tools_manual_help
-      die "Failed to install build tools. See instructions above."
+      if ! "$has_conda"; then
+        die "Install failed. No sudo permission? Install conda (https://docs.conda.io) then run again and choose [c]. Or ask your admin to install cmake and g++."
+      else
+        die "Failed to install build tools. See instructions above."
+      fi
     fi
   else
     build_tools_manual_help
