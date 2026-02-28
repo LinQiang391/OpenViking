@@ -7,7 +7,9 @@ REF_OVERRIDE=""
 SKIP_CHECKSUM="${SKIP_CHECKSUM:-0}"
 AUTO_INSTALL_NODE="${AUTO_INSTALL_NODE:-1}"
 AUTO_INSTALL_OPENCLAW="${AUTO_INSTALL_OPENCLAW:-1}"
+USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
+NPM_REGISTRY_MIRROR="https://registry.npmmirror.com"
 HELPER_ARGS=()
 
 usage() {
@@ -28,6 +30,7 @@ Environment:
   OV_MEMORY_DEFAULT_REF  Fallback ref when OV_MEMORY_VERSION is not set (default: main)
   AUTO_INSTALL_NODE      Auto-install Node.js when missing/too old (default: 1)
   AUTO_INSTALL_OPENCLAW  Auto-install OpenClaw when missing (default: 1)
+  USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OPENVIKING_GITHUB_RAW  Override raw base URL used by helper and installer
   SKIP_CHECKSUM=1        Skip SHA256 checksum verification
@@ -96,7 +99,9 @@ ensure_openclaw() {
   [[ "$AUTO_INSTALL_OPENCLAW" == "1" ]] || die "OpenClaw is not installed. Install it first: npm install -g openclaw"
 
   log "OpenClaw is not installed. Installing via npm..."
-  npm install -g openclaw || die "Failed to install OpenClaw. Run 'npm install -g openclaw' manually."
+  local npm_opts=(-g openclaw)
+  [[ "$USE_MIRROR" == "1" ]] && npm_opts+=(--registry="$NPM_REGISTRY_MIRROR")
+  npm install "${npm_opts[@]}" || die "Failed to install OpenClaw. Run 'npm install -g openclaw' manually."
 
   command -v openclaw >/dev/null 2>&1 || die "OpenClaw installation finished but openclaw is still unavailable"
   log "OpenClaw ready: $(openclaw --version 2>/dev/null || openclaw -v 2>/dev/null || echo 'installed')"
