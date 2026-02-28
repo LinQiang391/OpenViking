@@ -84,6 +84,8 @@ Env vars:
 ```bash
 OV_MEMORY_VERSION      # Pin setup-helper download ref (for example: ocm@0.1.0)
 OV_MEMORY_REPO         # Override GitHub repo (default: volcengine/OpenViking)
+AUTO_INSTALL_NODE=1    # Auto-install Node.js when missing/too old (default: 1)
+OV_MEMORY_NODE_VERSION # Node.js version used by auto-install (default: 22)
 OPENVIKING_GITHUB_RAW  # Override raw base URL used by installer/helper
 SKIP_CHECKSUM=1        # Skip checksum verification (not recommended)
 ```
