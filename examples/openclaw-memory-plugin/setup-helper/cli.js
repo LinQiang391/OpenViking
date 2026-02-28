@@ -809,7 +809,8 @@ Env vars:
     pluginPath = PLUGIN_DEST;
   }
 
-  await configureOpenclaw(pluginPath, ovOpts?.serverPort);
+  const configMode = pluginPath === PLUGIN_DEST ? "path" : "link";
+  await configureOpenclaw(pluginPath, ovOpts?.serverPort, configMode);
   await writeOpenvikingEnv();
 
   // Done
