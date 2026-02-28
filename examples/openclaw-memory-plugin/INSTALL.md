@@ -4,11 +4,40 @@ Give [OpenClaw](https://github.com/openclaw/openclaw) long-term memory powered b
 
 ---
 
-## 1. Quick Start (Let OpenClaw Install It)
+## 1. Quick Start (No Source Download)
 
-Copy the skill file into OpenClaw's skill directory, then let OpenClaw handle the rest:
+If OpenClaw is already installed, run one command:
 
 **Linux / macOS:**
+
+```bash
+# Basic usage
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | bash
+
+# Recommended: pin helper download to the same tag
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+iwr https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.ps1 -UseBasicParsing | iex
+
+# Recommended: pin helper download to the same tag
+$env:OV_MEMORY_VERSION='ocm@<version>'; iwr https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.ps1 -UseBasicParsing | iex
+```
+
+**Non-interactive example (Linux/macOS):**
+
+```bash
+OPENVIKING_ARK_API_KEY=<your-api-key> \
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh \
+| OV_MEMORY_VERSION=ocm@<version> bash -s -- -y
+```
+
+## 1.1 Alternative: Let OpenClaw Install It
+
+Copy the skill file into OpenClaw's skill directory, then let OpenClaw handle the rest:
 
 ```bash
 mkdir -p ~/.openclaw/skills/install-openviking-memory
@@ -16,17 +45,7 @@ cp examples/openclaw-memory-plugin/skills/install-openviking-memory/SKILL.md \
    ~/.openclaw/skills/install-openviking-memory/
 ```
 
-**Windows (cmd):**
-
-```cmd
-mkdir "%USERPROFILE%\.openclaw\skills\install-openviking-memory"
-copy examples\openclaw-memory-plugin\skills\install-openviking-memory\SKILL.md ^
-     "%USERPROFILE%\.openclaw\skills\install-openviking-memory\"
-```
-
-Then tell OpenClaw: **"Install OpenViking memory"** — it will read the skill and complete the setup.
-
-For manual installation, continue reading.
+Then tell OpenClaw: **"Install OpenViking memory"**.
 
 ---
 
@@ -298,7 +317,13 @@ python3 -c "import openviking; print('ok')"
 
 ### 4.3 Run the Setup Helper
 
-From the OpenViking repo root:
+No repo clone required:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash
+```
+
+If you already cloned OpenViking, you can still run from repo root:
 
 ```bash
 npx ./examples/openclaw-memory-plugin/setup-helper
@@ -318,7 +343,9 @@ The helper will walk you through:
 5. **Deploy plugin** — registers `memory-openviking` with OpenClaw
 6. **Write env file** — generates `~/.openclaw/openviking.env`
 
-> Non-interactive mode: `npx ./examples/openclaw-memory-plugin/setup-helper -y`
+> Non-interactive mode (no clone): `OPENVIKING_ARK_API_KEY=<your-api-key> curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash -s -- -y`
+>
+> Non-interactive mode (local repo): `npx ./examples/openclaw-memory-plugin/setup-helper -y`
 
 ### 4.4 Start and Verify
 
@@ -456,6 +483,15 @@ Environment variables:
   OPENVIKING_ARK_API_KEY  Skip API key prompt (for CI/scripts)
 ```
 
+### Bootstrap Installer Options (`install.sh` / `install.ps1`)
+
+```bash
+OV_MEMORY_VERSION      # Pin setup-helper download ref (for example: ocm@0.1.0)
+OV_MEMORY_REPO         # Override GitHub repo (default: volcengine/OpenViking)
+OPENVIKING_GITHUB_RAW  # Override raw base URL used by installer/helper
+SKIP_CHECKSUM=1        # Skip SHA256 verification (not recommended)
+```
+
 ---
 
 ## 7. Troubleshooting
@@ -545,7 +581,8 @@ npm install -g openclaw
   - Linux/macOS: `source ~/.openclaw/openviking.env`
   - Windows: `call "%USERPROFILE%\.openclaw\openviking.env.bat"`
 - Run `openclaw status` to check plugin state
-- Re-run setup: `npx ./examples/openclaw-memory-plugin/setup-helper`
+- Re-run setup (no clone): `curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash`
+- Re-run setup (local repo): `npx ./examples/openclaw-memory-plugin/setup-helper`
 
 #### `health check timeout at http://127.0.0.1:1933`
 
@@ -584,7 +621,7 @@ Use an explicit Python path:
 ```bash
 python3.11 -m pip install -e .
 export OPENVIKING_PYTHON=python3.11
-npx ./examples/openclaw-memory-plugin/setup-helper
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash
 ```
 
 ---

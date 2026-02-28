@@ -4,11 +4,40 @@
 
 ---
 
-## 一、快速开始（让 OpenClaw 自动安装）
+## 一、快速开始（无需下载源码）
 
-先将技能文件复制到 OpenClaw 技能目录，再让 OpenClaw 完成后续步骤：
+OpenClaw 已安装后，可直接一条命令安装：
 
 **Linux / macOS：**
+
+```bash
+# 基础用法
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | bash
+
+# 推荐：显式将 helper 固定到同一 tag
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash
+```
+
+**Windows (PowerShell)：**
+
+```powershell
+iwr https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.ps1 -UseBasicParsing | iex
+
+# 推荐：显式将 helper 固定到同一 tag
+$env:OV_MEMORY_VERSION='ocm@<version>'; iwr https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.ps1 -UseBasicParsing | iex
+```
+
+**非交互示例（Linux/macOS）：**
+
+```bash
+OPENVIKING_ARK_API_KEY=<your-api-key> \
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh \
+| OV_MEMORY_VERSION=ocm@<version> bash -s -- -y
+```
+
+## 1.1 备选：让 OpenClaw 自动安装
+
+将技能文件复制到 OpenClaw 技能目录：
 
 ```bash
 mkdir -p ~/.openclaw/skills/install-openviking-memory
@@ -16,17 +45,7 @@ cp examples/openclaw-memory-plugin/skills/install-openviking-memory/SKILL.md \
    ~/.openclaw/skills/install-openviking-memory/
 ```
 
-**Windows (cmd)：**
-
-```cmd
-mkdir "%USERPROFILE%\.openclaw\skills\install-openviking-memory"
-copy examples\openclaw-memory-plugin\skills\install-openviking-memory\SKILL.md ^
-     "%USERPROFILE%\.openclaw\skills\install-openviking-memory\"
-```
-
-然后对 OpenClaw 说：**「安装 OpenViking 记忆」** — 它会读取技能并自动完成安装。
-
-如需手动安装，请继续阅读。
+然后对 OpenClaw 说：**「安装 OpenViking 记忆」**。
 
 ---
 
@@ -298,7 +317,13 @@ python3 -c "import openviking; print('ok')"
 
 ### 4.3 运行安装助手
 
-在 OpenViking 仓库根目录下执行：
+无需克隆仓库可直接执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash
+```
+
+如果你已经克隆了 OpenViking，也可以在仓库根目录执行：
 
 ```bash
 npx ./examples/openclaw-memory-plugin/setup-helper
@@ -318,7 +343,9 @@ npx ./examples/openclaw-memory-plugin/setup-helper
 5. **部署插件** — 将 `memory-openviking` 注册到 OpenClaw
 6. **写入环境文件** — 生成 `~/.openclaw/openviking.env`
 
-> 非交互模式：`npx ./examples/openclaw-memory-plugin/setup-helper -y`
+> 非交互模式（无需克隆）：`OPENVIKING_ARK_API_KEY=<your-api-key> curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash -s -- -y`
+>
+> 非交互模式（本地仓库）：`npx ./examples/openclaw-memory-plugin/setup-helper -y`
 
 ### 4.4 启动并验证
 
@@ -456,6 +483,15 @@ npx ./examples/openclaw-memory-plugin/setup-helper [选项]
   OPENVIKING_ARK_API_KEY  跳过 API Key 提示（用于 CI/脚本）
 ```
 
+### 一键安装器选项（`install.sh` / `install.ps1`）
+
+```bash
+OV_MEMORY_VERSION      # 固定 setup-helper 下载版本（例如：ocm@0.1.0）
+OV_MEMORY_REPO         # 覆盖 GitHub 仓库（默认：volcengine/OpenViking）
+OPENVIKING_GITHUB_RAW  # 覆盖 installer/helper 使用的 raw 基地址
+SKIP_CHECKSUM=1        # 跳过 SHA256 校验（不推荐）
+```
+
 ---
 
 ## 七、常见问题
@@ -545,7 +581,8 @@ npm install -g openclaw
   - Linux/macOS：`source ~/.openclaw/openviking.env`
   - Windows：`call "%USERPROFILE%\.openclaw\openviking.env.bat"`
 - 运行 `openclaw status` 检查插件状态
-- 重新执行安装助手：`npx ./examples/openclaw-memory-plugin/setup-helper`
+- 重新执行安装（无需克隆）：`curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash`
+- 重新执行安装（本地仓库）：`npx ./examples/openclaw-memory-plugin/setup-helper`
 
 #### Q: `health check timeout at http://127.0.0.1:1933`
 
@@ -584,7 +621,7 @@ Python 版本低于 3.10（`X | None` 语法是 3.10 引入的），需升级 Py
 ```bash
 python3.11 -m pip install -e .
 export OPENVIKING_PYTHON=python3.11
-npx ./examples/openclaw-memory-plugin/setup-helper
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash
 ```
 
 ---

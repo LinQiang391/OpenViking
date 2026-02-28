@@ -2,7 +2,35 @@
 
 Use OpenViking as the long-term memory backend for [OpenClaw](https://github.com/openclaw/openclaw).
 
-## Quick Start
+## Quick Start (No Source Download)
+
+Install directly after OpenClaw is installed:
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | bash
+
+# Linux / macOS (recommended: explicitly pin helper download ref)
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh | OV_MEMORY_VERSION=ocm@<version> bash
+```
+
+```powershell
+# Windows PowerShell
+iwr https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.ps1 -UseBasicParsing | iex
+
+# Windows PowerShell (recommended: explicitly pin helper download ref)
+$env:OV_MEMORY_VERSION='ocm@<version>'; iwr https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.ps1 -UseBasicParsing | iex
+```
+
+Non-interactive mode example:
+
+```bash
+OPENVIKING_ARK_API_KEY=<your-api-key> \
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/refs/tags/ocm@<version>/examples/openclaw-memory-plugin/install.sh \
+| OV_MEMORY_VERSION=ocm@<version> bash -s -- -y
+```
+
+## Quick Start (From Local Repo)
 
 ```bash
 cd /path/to/OpenViking
@@ -49,6 +77,15 @@ Env vars:
   OPENVIKING_CONFIG_FILE  ov.conf path
   OPENVIKING_REPO         Local OpenViking repo path
   OPENVIKING_ARK_API_KEY  Volcengine API Key (skip prompt in -y mode)
+```
+
+## Bootstrap Installer Env Vars
+
+```bash
+OV_MEMORY_VERSION      # Pin setup-helper download ref (for example: ocm@0.1.0)
+OV_MEMORY_REPO         # Override GitHub repo (default: volcengine/OpenViking)
+OPENVIKING_GITHUB_RAW  # Override raw base URL used by installer/helper
+SKIP_CHECKSUM=1        # Skip checksum verification (not recommended)
 ```
 
 ## ov.conf Example

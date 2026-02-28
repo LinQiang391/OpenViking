@@ -15,7 +15,7 @@ import { existsSync } from "node:fs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GITHUB_RAW =
   process.env.OPENVIKING_GITHUB_RAW ||
-  "https://raw.githubusercontent.com/OpenViking/OpenViking/main";
+  "https://raw.githubusercontent.com/volcengine/OpenViking/main";
 
 const IS_WIN = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
