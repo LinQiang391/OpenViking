@@ -143,8 +143,12 @@ build_tools_manual_help() {
 }
 
 ensure_build_tools() {
-  [[ "$SKIP_BUILD_TOOLS_CHECK" == "1" ]] && return 0
+  if [[ "$SKIP_BUILD_TOOLS_CHECK" == "1" ]]; then
+    log "Skipping build tools check (SKIP_BUILD_TOOLS_CHECK=1)"
+    return 0
+  fi
 
+  log "Checking build tools (cmake, g++)..."
   local missing=()
   command -v cmake >/dev/null 2>&1 || missing+=(cmake)
   command -v g++ >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || missing+=(g++)
