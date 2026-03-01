@@ -16,6 +16,9 @@ AUTO_INSTALL_MICROMAMBA="${AUTO_INSTALL_MICROMAMBA:-1}"
 OV_MEMORY_MM_ENV="${OV_MEMORY_MM_ENV:-$HOME/.openviking-installer-env}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
+OV_DOWNLOAD_RETRY="${OV_DOWNLOAD_RETRY:-3}"
+OV_DOWNLOAD_CONNECT_TIMEOUT="${OV_DOWNLOAD_CONNECT_TIMEOUT:-10}"
+OV_DOWNLOAD_MAX_TIME="${OV_DOWNLOAD_MAX_TIME:-120}"
 NPM_REGISTRY_MIRROR="https://registry.npmmirror.com"
 HELPER_ARGS=()
 
@@ -45,6 +48,9 @@ Environment:
   OV_MEMORY_MM_ENV       micromamba environment path (default: ~/.openviking-installer-env)
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
+  OV_DOWNLOAD_RETRY      curl retry count for helper download (default: 3)
+  OV_DOWNLOAD_CONNECT_TIMEOUT  curl connect timeout seconds (default: 10)
+  OV_DOWNLOAD_MAX_TIME   curl max time seconds per request (default: 120)
   OPENVIKING_GITHUB_RAW  Override raw base URL used by helper and installer
   SKIP_CHECKSUM=1        Skip SHA256 checksum verification
   SKIP_BUILD_TOOLS_CHECK=1  Skip cmake/g++ check (use when tools are in PATH from conda etc.)
@@ -59,6 +65,17 @@ die() { printf '[openviking-installer] ERROR: %s\n' "$*" >&2; exit 1; }
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+curl_download() {
+  local url="$1" out="$2"
+  curl -fL \
+    --retry "$OV_DOWNLOAD_RETRY" \
+    --retry-delay 2 \
+    --retry-all-errors \
+    --connect-timeout "$OV_DOWNLOAD_CONNECT_TIMEOUT" \
+    --max-time "$OV_DOWNLOAD_MAX_TIME" \
+    -o "$out" "$url"
 }
 
 node_major_version() {
@@ -625,11 +642,11 @@ PKG_PATH="${TMP_DIR}/package.json"
 
 log "Using ref: ${REF}"
 log "Downloading setup helper..."
-curl -fsSL "$HELPER_URL" -o "$HELPER_PATH" || die "Failed to download helper: $HELPER_URL"
+curl_download "$HELPER_URL" "$HELPER_PATH" || die "Failed to download helper: $HELPER_URL"
 
 if [[ "$SKIP_CHECKSUM" != "1" ]]; then
   log "Downloading checksum..."
-  if curl -fsSL "$CHECKSUM_URL" -o "$CHECKSUM_PATH"; then
+  if curl_download "$CHECKSUM_URL" "$CHECKSUM_PATH"; then
     EXPECTED="$(awk 'NF { print $1; exit }' "$CHECKSUM_PATH" | tr '[:upper:]' '[:lower:]')"
     if [[ -z "$EXPECTED" ]]; then
       warn "Checksum file is empty, skipping verification: $CHECKSUM_URL"
