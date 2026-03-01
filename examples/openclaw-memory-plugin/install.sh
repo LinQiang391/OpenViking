@@ -199,6 +199,14 @@ prepare_micromamba_toolchain() {
     else
       export LD_LIBRARY_PATH="$OV_MEMORY_MM_ENV/lib"
     fi
+    if [[ -f "$OV_MEMORY_MM_ENV/lib/libstdc++.so.6" ]]; then
+      export OPENVIKING_LD_PRELOAD="$OV_MEMORY_MM_ENV/lib/libstdc++.so.6"
+      if [[ -n "${LD_PRELOAD:-}" ]]; then
+        export LD_PRELOAD="$OV_MEMORY_MM_ENV/lib/libstdc++.so.6:$LD_PRELOAD"
+      else
+        export LD_PRELOAD="$OV_MEMORY_MM_ENV/lib/libstdc++.so.6"
+      fi
+    fi
   fi
 
   if [[ ! -x "$OV_MEMORY_MM_ENV/bin/g++" ]]; then
