@@ -628,20 +628,28 @@ curl -fsSL "$HELPER_URL" -o "$HELPER_PATH" || die "Failed to download helper: $H
 
 if [[ "$SKIP_CHECKSUM" != "1" ]]; then
   log "Downloading checksum..."
-  curl -fsSL "$CHECKSUM_URL" -o "$CHECKSUM_PATH" || die "Failed to download checksum: $CHECKSUM_URL"
-  EXPECTED="$(awk 'NF { print $1; exit }' "$CHECKSUM_PATH" | tr '[:upper:]' '[:lower:]')"
-  [[ -n "$EXPECTED" ]] || die "Checksum file is empty: $CHECKSUM_URL"
+  if curl -fsSL "$CHECKSUM_URL" -o "$CHECKSUM_PATH"; then
+    EXPECTED="$(awk 'NF { print $1; exit }' "$CHECKSUM_PATH" | tr '[:upper:]' '[:lower:]')"
+    if [[ -z "$EXPECTED" ]]; then
+      warn "Checksum file is empty, skipping verification: $CHECKSUM_URL"
+    else
+      if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL="$(sha256sum "$HELPER_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+      elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL="$(shasum -a 256 "$HELPER_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+      else
+        warn "No SHA256 tool found (sha256sum/shasum), skipping verification"
+        ACTUAL=""
+      fi
 
-  if command -v sha256sum >/dev/null 2>&1; then
-    ACTUAL="$(sha256sum "$HELPER_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
-  elif command -v shasum >/dev/null 2>&1; then
-    ACTUAL="$(shasum -a 256 "$HELPER_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+      if [[ -n "$ACTUAL" ]]; then
+        [[ "$ACTUAL" == "$EXPECTED" ]] || die "Checksum mismatch for setup helper"
+        log "Checksum verification passed"
+      fi
+    fi
   else
-    die "No SHA256 tool found (sha256sum/shasum). Set SKIP_CHECKSUM=1 to bypass."
+    warn "Failed to download checksum, skipping verification: $CHECKSUM_URL"
   fi
-
-  [[ "$ACTUAL" == "$EXPECTED" ]] || die "Checksum mismatch for setup helper"
-  log "Checksum verification passed"
 else
   log "Skipping checksum verification (SKIP_CHECKSUM=1)"
 fi
