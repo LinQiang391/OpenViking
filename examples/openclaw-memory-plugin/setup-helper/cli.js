@@ -536,8 +536,8 @@ async function writeOpenvikingEnv() {
     const lines = [];
     if (pyPath) lines.push(`export OPENVIKING_PYTHON='${pyPath}'`);
     if (goPath) lines.push(`export OPENVIKING_GO_PATH='${goPath}'`);
-    if (openclawPath) lines.push(`export PATH='${openclawPath}:$PATH'`);
-    else if (nodePath) lines.push(`export PATH='${nodePath}:$PATH'`);
+    if (openclawPath) lines.push(`export PATH="${openclawPath}:$PATH"`);
+    else if (nodePath) lines.push(`export PATH="${nodePath}:$PATH"`);
     // Normalize/validate proxy vars at runtime so openclaw won't crash on malformed values.
     lines.push(`for __ov_proxy_var in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY; do`);
     lines.push(`  __ov_proxy_val="$(printenv "$__ov_proxy_var" 2>/dev/null || true)"`);
