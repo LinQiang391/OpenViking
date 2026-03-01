@@ -83,6 +83,19 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
+ensure_npm_global_bin_in_path() {
+  command -v npm >/dev/null 2>&1 || return 0
+
+  local prefix global_bin
+  prefix="$(npm config get prefix 2>/dev/null || true)"
+  if [[ -n "$prefix" && "$prefix" != "undefined" && "$prefix" != "null" ]]; then
+    global_bin="$prefix/bin"
+    if [[ -d "$global_bin" ]]; then
+      export PATH="$global_bin:$PATH"
+    fi
+  fi
+}
+
 sanitize_proxy_env() {
   local var val
   for var in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY; do
@@ -752,7 +765,22 @@ ensure_openclaw() {
     fi
   fi
 
-  command -v openclaw >/dev/null 2>&1 || die "OpenClaw installation finished but openclaw is still unavailable"
+  ensure_npm_global_bin_in_path
+  hash -r 2>/dev/null || true
+
+  if ! command -v openclaw >/dev/null 2>&1; then
+    local prefix candidate
+    prefix="$(npm config get prefix 2>/dev/null || true)"
+    candidate="$prefix/bin/openclaw"
+    if [[ -x "$candidate" ]]; then
+      mkdir -p "$HOME/.local/bin"
+      ln -sf "$candidate" "$HOME/.local/bin/openclaw"
+      export PATH="$HOME/.local/bin:$PATH"
+      hash -r 2>/dev/null || true
+    fi
+  fi
+
+  command -v openclaw >/dev/null 2>&1 || die "OpenClaw installation finished but openclaw is still unavailable. Try: export PATH=\"$(npm config get prefix)/bin:\$PATH\""
   log "OpenClaw ready: $(openclaw --version 2>/dev/null || openclaw -v 2>/dev/null || echo 'installed')"
 }
 
@@ -782,6 +810,7 @@ require_cmd bash
 require_cmd curl
 sanitize_proxy_env
 ensure_node
+ensure_npm_global_bin_in_path
 ensure_xpm || true
 ensure_python
 ensure_build_tools
