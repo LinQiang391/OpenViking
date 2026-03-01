@@ -54,6 +54,7 @@ EOF
 }
 
 log() { printf '[openviking-installer] %s\n' "$*"; }
+warn() { printf '[openviking-installer] WARN: %s\n' "$*"; }
 die() { printf '[openviking-installer] ERROR: %s\n' "$*" >&2; exit 1; }
 
 require_cmd() {
