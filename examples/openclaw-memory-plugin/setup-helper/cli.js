@@ -538,6 +538,16 @@ async function writeOpenvikingEnv() {
     if (goPath) lines.push(`export OPENVIKING_GO_PATH='${goPath}'`);
     if (openclawPath) lines.push(`export PATH='${openclawPath}:$PATH'`);
     else if (nodePath) lines.push(`export PATH='${nodePath}:$PATH'`);
+    // Normalize proxy vars at runtime so openclaw won't crash on malformed values.
+    lines.push(`for __ov_proxy_var in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY; do`);
+    lines.push(`  __ov_proxy_val="$(eval "printf '%s' \${$__ov_proxy_var-}")"`);
+    lines.push(`  [ -z "$__ov_proxy_val" ] && continue`);
+    lines.push(`  case "$__ov_proxy_val" in`);
+    lines.push(`    http://*|https://*|socks5://*|socks5h://*) ;;`);
+    lines.push(`    *) export "$__ov_proxy_var"="http://$__ov_proxy_val" ;;`);
+    lines.push(`  esac`);
+    lines.push(`done`);
+    lines.push(`unset __ov_proxy_var __ov_proxy_val`);
     if (extraLdPath) lines.push(`export LD_LIBRARY_PATH='${extraLdPath}'`);
     if (extraLdPreload) lines.push(`export LD_PRELOAD='${extraLdPreload}'`);
     if (process.env.GOPATH) lines.push(`export OPENVIKING_GOPATH='${process.env.GOPATH}'`);
