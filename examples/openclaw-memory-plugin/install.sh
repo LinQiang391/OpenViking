@@ -17,6 +17,7 @@ OV_MEMORY_MM_ENV="${OV_MEMORY_MM_ENV:-$HOME/.openviking-installer-env}"
 OV_MICROMAMBA_URL="${OV_MICROMAMBA_URL:-}"
 OV_MICROMAMBA_CHANNEL="${OV_MICROMAMBA_CHANNEL:-conda-forge}"
 OV_MICROMAMBA_CREATE_TIMEOUT="${OV_MICROMAMBA_CREATE_TIMEOUT:-1800}"
+OV_MICROMAMBA_PROGRESS_ESTIMATE="${OV_MICROMAMBA_PROGRESS_ESTIMATE:-600}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 OV_DOWNLOAD_RETRY="${OV_DOWNLOAD_RETRY:-3}"
@@ -52,6 +53,7 @@ Environment:
   OV_MICROMAMBA_URL      Override micromamba download URL
   OV_MICROMAMBA_CHANNEL  micromamba channel (default: conda-forge)
   OV_MICROMAMBA_CREATE_TIMEOUT  timeout seconds for toolchain create (default: 1800)
+  OV_MICROMAMBA_PROGRESS_ESTIMATE  progress estimate seconds (default: 600)
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OV_DOWNLOAD_RETRY      curl retry count for helper download (default: 3)
@@ -71,6 +73,59 @@ die() { printf '[openviking-installer] ERROR: %s\n' "$*" >&2; exit 1; }
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+run_with_progress() {
+  local label="$1"
+  local estimate_seconds="$2"
+  shift 2
+
+  if [[ ! -t 1 ]]; then
+    "$@"
+    return $?
+  fi
+
+  local width=30 elapsed=0 percent=0 filled=0
+  local bar fill pad logfile pid rc
+  logfile="$(mktemp)"
+
+  (
+    "$@" >"$logfile" 2>&1
+  ) &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ "$estimate_seconds" -gt 0 ]]; then
+      percent=$(( elapsed * 100 / estimate_seconds ))
+      [[ "$percent" -gt 99 ]] && percent=99
+    else
+      percent=0
+    fi
+    filled=$(( percent * width / 100 ))
+
+    fill="$(printf '%*s' "$filled" '')"
+    fill="${fill// /#}"
+    pad="$(printf '%*s' "$((width - filled))" '')"
+    bar="${fill}${pad}"
+
+    printf '\r[openviking-installer] %s [%s] %3d%% (%ds)' "$label" "$bar" "$percent" "$elapsed"
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  wait "$pid"
+  rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    printf '\r[openviking-installer] %s [%s] 100%% (%ds)\n' "$label" "$(printf '%*s' "$width" '' | tr ' ' '#')" "$elapsed"
+    rm -f "$logfile"
+    return 0
+  fi
+
+  printf '\n'
+  warn "${label} failed (exit ${rc}), showing last logs:"
+  tail -n 30 "$logfile" >&2 || true
+  rm -f "$logfile"
+  return "$rc"
 }
 
 curl_download() {
@@ -220,12 +275,12 @@ prepare_micromamba_toolchain() {
     log "Preparing micromamba toolchain env: $OV_MEMORY_MM_ENV"
     log "This may take several minutes on first run..."
     if command -v timeout >/dev/null 2>&1; then
-      if ! timeout "$OV_MICROMAMBA_CREATE_TIMEOUT" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make gxx_linux-64; then
-        timeout "$OV_MICROMAMBA_CREATE_TIMEOUT" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make cxx-compiler || return 1
+      if ! run_with_progress "Setting up toolchain" "$OV_MICROMAMBA_PROGRESS_ESTIMATE" timeout "$OV_MICROMAMBA_CREATE_TIMEOUT" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make gxx_linux-64; then
+        run_with_progress "Setting up toolchain" "$OV_MICROMAMBA_PROGRESS_ESTIMATE" timeout "$OV_MICROMAMBA_CREATE_TIMEOUT" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make cxx-compiler || return 1
       fi
     else
-      if ! micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make gxx_linux-64; then
-        micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make cxx-compiler || return 1
+      if ! run_with_progress "Setting up toolchain" "$OV_MICROMAMBA_PROGRESS_ESTIMATE" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make gxx_linux-64; then
+        run_with_progress "Setting up toolchain" "$OV_MICROMAMBA_PROGRESS_ESTIMATE" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make cxx-compiler || return 1
       fi
     fi
   fi
