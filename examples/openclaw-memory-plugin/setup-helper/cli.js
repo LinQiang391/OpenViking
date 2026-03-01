@@ -530,8 +530,8 @@ async function writeOpenvikingEnv() {
     const lines = [];
     if (pyPath) lines.push(`export OPENVIKING_PYTHON='${pyPath}'`);
     if (goPath) lines.push(`export OPENVIKING_GO_PATH='${goPath}'`);
-    if (extraLdPath) lines.push(`export LD_LIBRARY_PATH='${extraLdPath}:$LD_LIBRARY_PATH'`);
-    if (extraLdPreload) lines.push(`export LD_PRELOAD='${extraLdPreload}:$LD_PRELOAD'`);
+    if (extraLdPath) lines.push(`export LD_LIBRARY_PATH='${extraLdPath}'`);
+    if (extraLdPreload) lines.push(`export LD_PRELOAD='${extraLdPreload}'`);
     if (process.env.GOPATH) lines.push(`export OPENVIKING_GOPATH='${process.env.GOPATH}'`);
     if (process.env.GOPROXY) lines.push(`export OPENVIKING_GOPROXY='${process.env.GOPROXY}'`);
     await writeFile(join(OPENCLAW_DIR, "openviking.env"), lines.join("\n") + "\n");
