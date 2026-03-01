@@ -16,6 +16,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const GITHUB_RAW =
   process.env.OPENVIKING_GITHUB_RAW ||
   "https://raw.githubusercontent.com/volcengine/OpenViking/main";
+const FETCH_TIMEOUT_MS = Number(process.env.OPENVIKING_FETCH_TIMEOUT_MS || "45000");
+const FETCH_RETRIES = Number(process.env.OPENVIKING_FETCH_RETRIES || "3");
 
 const IS_WIN = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
@@ -393,8 +395,25 @@ async function fetchPluginFromGitHub(dest) {
     const name = rel.split("/").pop();
     process.stdout.write(`  Downloading ${i + 1}/${files.length}: ${name} ... `);
     const url = `${GITHUB_RAW}/${rel}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Download failed: ${url}`);
+    let res;
+    for (let attempt = 1; attempt <= FETCH_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        res = await fetch(url, { signal: controller.signal });
+        if (res.ok) break;
+        if (attempt === FETCH_RETRIES) throw new Error(`HTTP ${res.status}`);
+      } catch (err) {
+        if (attempt === FETCH_RETRIES) {
+          throw new Error(`Download failed: ${url} (${err?.message || err})`);
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      process.stdout.write(`retry ${attempt}/${FETCH_RETRIES - 1} ... `);
+      await new Promise((r) => setTimeout(r, 1200 * attempt));
+    }
+    if (!res || !res.ok) throw new Error(`Download failed: ${url}`);
     const buf = await res.arrayBuffer();
     await writeFile(join(dest, name), Buffer.from(buf));
     process.stdout.write("\u2713\n");
