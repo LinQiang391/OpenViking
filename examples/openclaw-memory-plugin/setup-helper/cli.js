@@ -540,7 +540,7 @@ async function writeOpenvikingEnv() {
     else if (nodePath) lines.push(`export PATH='${nodePath}:$PATH'`);
     // Normalize proxy vars at runtime so openclaw won't crash on malformed values.
     lines.push(`for __ov_proxy_var in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY; do`);
-    lines.push(`  __ov_proxy_val="$(eval "printf '%s' \${$__ov_proxy_var-}")"`);
+    lines.push(`  __ov_proxy_val="$(printenv "$__ov_proxy_var" 2>/dev/null || true)"`);
     lines.push(`  [ -z "$__ov_proxy_val" ] && continue`);
     lines.push(`  case "$__ov_proxy_val" in`);
     lines.push(`    http://*|https://*|socks5://*|socks5h://*) ;;`);
