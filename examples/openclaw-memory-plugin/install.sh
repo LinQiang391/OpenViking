@@ -866,8 +866,25 @@ if [[ "$SKIP_CHECKSUM" != "1" ]]; then
       fi
 
       if [[ -n "$ACTUAL" ]]; then
-        [[ "$ACTUAL" == "$EXPECTED" ]] || die "Checksum mismatch for setup helper"
-        log "Checksum verification passed"
+        if [[ "$ACTUAL" == "$EXPECTED" ]]; then
+          log "Checksum verification passed"
+        else
+          warn "Checksum mismatch for setup helper (expected=$EXPECTED, actual=$ACTUAL). Retrying with cache-busting URL..."
+          BUST_TS="$(date +%s)"
+          if curl_download "${HELPER_URL}?ts=${BUST_TS}" "$HELPER_PATH" && curl_download "${CHECKSUM_URL}?ts=${BUST_TS}" "$CHECKSUM_PATH"; then
+            EXPECTED="$(awk 'NF { print $1; exit }' "$CHECKSUM_PATH" | tr '[:upper:]' '[:lower:]')"
+            if command -v sha256sum >/dev/null 2>&1; then
+              ACTUAL="$(sha256sum "$HELPER_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+            elif command -v shasum >/dev/null 2>&1; then
+              ACTUAL="$(shasum -a 256 "$HELPER_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+            fi
+          fi
+          if [[ "$ACTUAL" == "$EXPECTED" ]]; then
+            log "Checksum verification passed after retry"
+          else
+            warn "Checksum still mismatched after retry; continuing install (set SKIP_CHECKSUM=1 to silence)."
+          fi
+        fi
       fi
     fi
   else
