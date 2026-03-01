@@ -75,6 +75,22 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
+sanitize_proxy_env() {
+  local var val
+  for var in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY; do
+    val="${!var:-}"
+    [[ -z "$val" ]] && continue
+    case "$val" in
+      http://*|https://*|socks5://*|socks5h://*)
+        ;;
+      *)
+        warn "Proxy env $var has no scheme, auto-prepending http://"
+        export "$var"="http://$val"
+        ;;
+    esac
+  done
+}
+
 run_with_progress() {
   local label="$1"
   local estimate_seconds="$2"
@@ -654,7 +670,12 @@ ensure_openclaw() {
   log "OpenClaw is not installed. Installing via npm..."
   local npm_opts=(-g openclaw)
   [[ "$USE_MIRROR" == "1" ]] && npm_opts+=(--registry="$NPM_REGISTRY_MIRROR")
-  npm install "${npm_opts[@]}" || die "Failed to install OpenClaw. Run 'npm install -g openclaw' manually."
+  if ! npm install "${npm_opts[@]}"; then
+    warn "npm install failed. Retrying once with proxy env cleared..."
+    if ! env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY npm install "${npm_opts[@]}"; then
+      die "Failed to install OpenClaw. Run 'npm install -g openclaw' manually."
+    fi
+  fi
 
   command -v openclaw >/dev/null 2>&1 || die "OpenClaw installation finished but openclaw is still unavailable"
   log "OpenClaw ready: $(openclaw --version 2>/dev/null || openclaw -v 2>/dev/null || echo 'installed')"
@@ -684,6 +705,7 @@ done
 
 require_cmd bash
 require_cmd curl
+sanitize_proxy_env
 ensure_node
 ensure_xpm || true
 ensure_python
