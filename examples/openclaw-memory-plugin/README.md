@@ -87,6 +87,9 @@ OV_MEMORY_REPO         # Override GitHub repo (default: volcengine/OpenViking)
 AUTO_INSTALL_NODE=1    # Auto-install Node.js when missing/too old (default: 1)
 AUTO_INSTALL_PYTHON=1  # Auto-install Python >=3.10 when missing/too old (default: 1)
 AUTO_INSTALL_XPM=1     # Try xpm for missing deps before other methods (default: 1)
+ALLOW_SUDO_INSTALL=0   # Keep user-level only; set 1 to allow sudo fallback
+AUTO_INSTALL_MICROMAMBA=1 # User-level fallback for git/python/build tools (default: 1)
+OV_MEMORY_MM_ENV       # micromamba env path (default: ~/.openviking-installer-env)
 OV_MEMORY_NODE_VERSION # Node.js version used by auto-install (default: 22)
 OPENVIKING_GITHUB_RAW  # Override raw base URL used by installer/helper
 SKIP_CHECKSUM=1        # Skip checksum verification (not recommended)

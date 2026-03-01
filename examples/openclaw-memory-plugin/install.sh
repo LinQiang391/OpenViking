@@ -11,6 +11,9 @@ AUTO_INSTALL_OPENCLAW="${AUTO_INSTALL_OPENCLAW:-1}"
 AUTO_INSTALL_BUILD_TOOLS="${AUTO_INSTALL_BUILD_TOOLS:-0}"
 AUTO_INSTALL_PYTHON="${AUTO_INSTALL_PYTHON:-1}"
 AUTO_INSTALL_XPM="${AUTO_INSTALL_XPM:-1}"
+ALLOW_SUDO_INSTALL="${ALLOW_SUDO_INSTALL:-0}"
+AUTO_INSTALL_MICROMAMBA="${AUTO_INSTALL_MICROMAMBA:-1}"
+OV_MEMORY_MM_ENV="${OV_MEMORY_MM_ENV:-$HOME/.openviking-installer-env}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 NPM_REGISTRY_MIRROR="https://registry.npmmirror.com"
@@ -37,6 +40,9 @@ Environment:
   AUTO_INSTALL_BUILD_TOOLS  Auto-install cmake/g++ when missing, no prompt (default: 0)
   AUTO_INSTALL_PYTHON    Auto-install Python >=3.10 when missing/too old (default: 1)
   AUTO_INSTALL_XPM       Try xpm for missing deps before other methods (default: 1)
+  ALLOW_SUDO_INSTALL     Allow sudo-based dependency install (default: 0)
+  AUTO_INSTALL_MICROMAMBA  Use micromamba user env as fallback (default: 1)
+  OV_MEMORY_MM_ENV       micromamba environment path (default: ~/.openviking-installer-env)
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OPENVIKING_GITHUB_RAW  Override raw base URL used by helper and installer
@@ -133,6 +139,76 @@ install_build_tools_xpm() {
   "$cmake_ok" && "$cxx_ok"
 }
 
+ensure_micromamba() {
+  if command -v micromamba >/dev/null 2>&1; then
+    return 0
+  fi
+  [[ "$AUTO_INSTALL_MICROMAMBA" == "1" ]] || return 1
+
+  local os arch url tmpdir
+  case "$(uname -s)" in
+    Linux*) os="linux-64" ;;
+    Darwin*)
+      if [[ "$(uname -m)" == "arm64" ]]; then
+        os="osx-arm64"
+      else
+        os="osx-64"
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  # linux aarch64
+  if [[ "$os" == "linux-64" && "$(uname -m)" == "aarch64" ]]; then
+    os="linux-aarch64"
+  fi
+
+  url="https://micro.mamba.pm/api/micromamba/${os}/latest"
+  tmpdir="$(mktemp -d)"
+  mkdir -p "$HOME/.local/bin"
+  log "Installing micromamba (user-level)..."
+  if curl -fsSL "$url" | tar -xj -C "$tmpdir" >/dev/null 2>&1; then
+    if [[ -f "$tmpdir/bin/micromamba" ]]; then
+      cp "$tmpdir/bin/micromamba" "$HOME/.local/bin/micromamba"
+      chmod +x "$HOME/.local/bin/micromamba"
+      export PATH="$HOME/.local/bin:$PATH"
+      rm -rf "$tmpdir"
+      command -v micromamba >/dev/null 2>&1 && return 0
+    fi
+  fi
+  rm -rf "$tmpdir"
+  return 1
+}
+
+prepare_micromamba_toolchain() {
+  [[ "$AUTO_INSTALL_MICROMAMBA" == "1" ]] || return 1
+  ensure_micromamba || return 1
+
+  log "Preparing micromamba toolchain env: $OV_MEMORY_MM_ENV"
+  if ! micromamba create -y -p "$OV_MEMORY_MM_ENV" -c conda-forge python=3.11 git cmake make gxx_linux-64 >/dev/null 2>&1; then
+    micromamba create -y -p "$OV_MEMORY_MM_ENV" -c conda-forge python=3.11 git cmake make cxx-compiler >/dev/null 2>&1 || return 1
+  fi
+
+  export PATH="$OV_MEMORY_MM_ENV/bin:$PATH"
+  if [[ -x "$OV_MEMORY_MM_ENV/bin/python" ]]; then
+    export OPENVIKING_PYTHON="$OV_MEMORY_MM_ENV/bin/python"
+  fi
+
+  if [[ ! -x "$OV_MEMORY_MM_ENV/bin/g++" ]]; then
+    if [[ -x "$OV_MEMORY_MM_ENV/bin/x86_64-conda-linux-gnu-g++" ]]; then
+      ln -sf "$OV_MEMORY_MM_ENV/bin/x86_64-conda-linux-gnu-g++" "$OV_MEMORY_MM_ENV/bin/g++"
+    fi
+  fi
+  if [[ ! -x "$OV_MEMORY_MM_ENV/bin/gcc" ]]; then
+    if [[ -x "$OV_MEMORY_MM_ENV/bin/x86_64-conda-linux-gnu-gcc" ]]; then
+      ln -sf "$OV_MEMORY_MM_ENV/bin/x86_64-conda-linux-gnu-gcc" "$OV_MEMORY_MM_ENV/bin/gcc"
+    fi
+  fi
+
+  command -v python >/dev/null 2>&1 || return 1
+  command -v git >/dev/null 2>&1 || return 1
+  return 0
+}
+
 install_node_with_nvm() {
   local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
   local nvm_install_url="https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh"
@@ -148,6 +224,21 @@ install_node_with_nvm() {
 
   nvm install "${OV_MEMORY_NODE_VERSION}" || die "Failed to install Node.js ${OV_MEMORY_NODE_VERSION}"
   nvm use "${OV_MEMORY_NODE_VERSION}" >/dev/null || die "Failed to activate Node.js ${OV_MEMORY_NODE_VERSION}"
+}
+
+ensure_xpm() {
+  if command -v xpm >/dev/null 2>&1; then
+    return 0
+  fi
+
+  [[ "$AUTO_INSTALL_XPM" == "1" ]] || return 1
+  command -v npm >/dev/null 2>&1 || return 1
+
+  log "xpm not found, installing xpm via npm (user-level)..."
+  if npm install -g xpm >/dev/null 2>&1; then
+    command -v xpm >/dev/null 2>&1 && { log "xpm is ready"; return 0; }
+  fi
+  return 1
 }
 
 ensure_node() {
@@ -236,6 +327,13 @@ ensure_build_tools() {
     return
   fi
 
+  if prepare_micromamba_toolchain; then
+    command -v cmake >/dev/null 2>&1 && { command -v g++ >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; } && {
+      log "Build tools OK via micromamba: cmake, g++"
+      return
+    }
+  fi
+
   local has_sudo=false has_conda=false
   command -v sudo >/dev/null 2>&1 && has_sudo=true
   command -v conda >/dev/null 2>&1 || command -v mamba >/dev/null 2>&1 && has_conda=true
@@ -254,8 +352,10 @@ ensure_build_tools() {
   fi
   if [[ "$AUTO_INSTALL_BUILD_TOOLS" == "1" ]]; then
     if [[ -z "$method" ]] && command -v sudo >/dev/null 2>&1; then
-      method="sudo"
-      install_it=1
+      if [[ "$ALLOW_SUDO_INSTALL" == "1" ]]; then
+        method="sudo"
+        install_it=1
+      fi
     elif [[ -z "$method" ]] && "$has_conda"; then
       method="conda"
       install_it=1
@@ -306,7 +406,7 @@ ensure_build_tools() {
     else
       build_tools_manual_help
       if ! "$has_conda"; then
-        die "Install failed. Try xpm or conda, or ask your admin to install cmake and g++."
+        die "Install failed. Try xpm or conda, or ask your admin to install cmake and g++ without root."
       else
         die "Failed to install build tools. See instructions above."
       fi
@@ -383,7 +483,7 @@ ensure_python() {
     fi
   fi
 
-  if install_python_conda || install_python_sudo; then
+  if install_python_conda; then
     py="$(python_cmd || true)"
     if [[ -n "$py" ]] && python_is_compatible "$py"; then
       export OPENVIKING_PYTHON="$py"
@@ -392,7 +492,41 @@ ensure_python() {
     fi
   fi
 
-  die "Failed to provision Python >=3.10. Install manually, then rerun."
+  if prepare_micromamba_toolchain; then
+    py="$(python_cmd || true)"
+    if [[ -n "$py" ]] && python_is_compatible "$py"; then
+      export OPENVIKING_PYTHON="$py"
+      log "Python ready via micromamba: $("$py" --version 2>&1)"
+      return
+    fi
+  fi
+
+  if [[ "$ALLOW_SUDO_INSTALL" == "1" ]] && install_python_sudo; then
+    py="$(python_cmd || true)"
+    if [[ -n "$py" ]] && python_is_compatible "$py"; then
+      export OPENVIKING_PYTHON="$py"
+      log "Python ready: $("$py" --version 2>&1)"
+      return
+    fi
+  fi
+
+  die "Failed to provision Python >=3.10 with user-level methods (xpm/conda). Install Python without root or set ALLOW_SUDO_INSTALL=1 if you explicitly allow sudo."
+}
+
+ensure_git() {
+  if command -v git >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [[ "$AUTO_INSTALL_XPM" == "1" ]] && command -v xpm >/dev/null 2>&1; then
+    run_xpm_install_candidates "git" \
+      "install -y git" \
+      "install git -y" && command -v git >/dev/null 2>&1 && return 0
+  fi
+
+  prepare_micromamba_toolchain && command -v git >/dev/null 2>&1 && return 0
+
+  die "git is required for npm dependency resolution, and could not be provisioned with user-level methods."
 }
 
 ensure_openclaw() {
@@ -402,6 +536,7 @@ ensure_openclaw() {
   fi
 
   [[ "$AUTO_INSTALL_OPENCLAW" == "1" ]] || die "OpenClaw is not installed. Install it first: npm install -g openclaw"
+  ensure_git
 
   log "OpenClaw is not installed. Installing via npm..."
   local npm_opts=(-g openclaw)
@@ -437,8 +572,10 @@ done
 require_cmd bash
 require_cmd curl
 ensure_node
+ensure_xpm || true
 ensure_python
 ensure_build_tools
+ensure_git
 ensure_openclaw
 
 REF="${OV_MEMORY_VERSION:-${REF_OVERRIDE:-$DEFAULT_REF}}"

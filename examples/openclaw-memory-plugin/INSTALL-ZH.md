@@ -491,6 +491,9 @@ OV_MEMORY_REPO         # 覆盖 GitHub 仓库（默认：volcengine/OpenViking�
 AUTO_INSTALL_NODE=1    # Node 缺失或版本过低时自动安装（默认：1）
 AUTO_INSTALL_PYTHON=1  # Python 缺失或版本过低时自动安装（默认：1）
 AUTO_INSTALL_XPM=1     # 缺失依赖时优先尝试 xpm 安装（默认：1）
+ALLOW_SUDO_INSTALL=0   # 保持普通用户安装；设为 1 才允许 sudo 回退
+AUTO_INSTALL_MICROMAMBA=1 # 普通用户回退方案：补齐 git/python/构建工具（默认：1）
+OV_MEMORY_MM_ENV       # micromamba 环境目录（默认：~/.openviking-installer-env）
 OV_MEMORY_NODE_VERSION # 自动安装使用的 Node 版本（默认：22）
 OPENVIKING_GITHUB_RAW  # 覆盖 installer/helper 使用的 raw 基地址
 SKIP_CHECKSUM=1        # 跳过 SHA256 校验（不推荐）
