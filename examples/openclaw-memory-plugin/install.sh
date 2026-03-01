@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${OV_MEMORY_REPO:-volcengine/OpenViking}"
-DEFAULT_REF="${OV_MEMORY_DEFAULT_REF:-main}"
+REPO="${OV_MEMORY_REPO:-LinQiang391/OpenViking}"
+DEFAULT_REF="${OV_MEMORY_DEFAULT_REF:-setup}"
 REF_OVERRIDE=""
 SKIP_CHECKSUM="${SKIP_CHECKSUM:-0}"
 SKIP_BUILD_TOOLS_CHECK="${SKIP_BUILD_TOOLS_CHECK:-0}"
@@ -33,8 +33,8 @@ Options:
 
 Environment:
   OV_MEMORY_VERSION      Override git ref used to download setup helper
-  OV_MEMORY_REPO         Override GitHub repo (default: volcengine/OpenViking)
-  OV_MEMORY_DEFAULT_REF  Fallback ref when OV_MEMORY_VERSION is not set (default: main)
+  OV_MEMORY_REPO         Override GitHub repo (default: LinQiang391/OpenViking)
+  OV_MEMORY_DEFAULT_REF  Fallback ref when OV_MEMORY_VERSION is not set (default: setup)
   AUTO_INSTALL_NODE      Auto-install Node.js when missing/too old (default: 1)
   AUTO_INSTALL_OPENCLAW  Auto-install OpenClaw when missing (default: 1)
   AUTO_INSTALL_BUILD_TOOLS  Auto-install cmake/g++ when missing, no prompt (default: 0)
