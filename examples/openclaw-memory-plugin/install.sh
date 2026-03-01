@@ -14,6 +14,7 @@ AUTO_INSTALL_XPM="${AUTO_INSTALL_XPM:-1}"
 ALLOW_SUDO_INSTALL="${ALLOW_SUDO_INSTALL:-0}"
 AUTO_INSTALL_MICROMAMBA="${AUTO_INSTALL_MICROMAMBA:-1}"
 OV_MEMORY_MM_ENV="${OV_MEMORY_MM_ENV:-$HOME/.openviking-installer-env}"
+OV_MICROMAMBA_URL="${OV_MICROMAMBA_URL:-}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 OV_DOWNLOAD_RETRY="${OV_DOWNLOAD_RETRY:-3}"
@@ -46,6 +47,7 @@ Environment:
   ALLOW_SUDO_INSTALL     Allow sudo-based dependency install (default: 0)
   AUTO_INSTALL_MICROMAMBA  Use micromamba user env as fallback (default: 1)
   OV_MEMORY_MM_ENV       micromamba environment path (default: ~/.openviking-installer-env)
+  OV_MICROMAMBA_URL      Override micromamba download URL
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OV_DOWNLOAD_RETRY      curl retry count for helper download (default: 3)
@@ -163,7 +165,7 @@ ensure_micromamba() {
   fi
   [[ "$AUTO_INSTALL_MICROMAMBA" == "1" ]] || return 1
 
-  local os arch url tmpdir
+  local os url tmpdir archive
   case "$(uname -s)" in
     Linux*) os="linux-64" ;;
     Darwin*)
@@ -180,11 +182,17 @@ ensure_micromamba() {
     os="linux-aarch64"
   fi
 
-  url="https://micro.mamba.pm/api/micromamba/${os}/latest"
+  if [[ -n "$OV_MICROMAMBA_URL" ]]; then
+    url="$OV_MICROMAMBA_URL"
+  else
+    url="https://micro.mamba.pm/api/micromamba/${os}/latest"
+  fi
   tmpdir="$(mktemp -d)"
+  archive="$tmpdir/micromamba.tar.bz2"
   mkdir -p "$HOME/.local/bin"
   log "Installing micromamba (user-level)..."
-  if curl -fsSL "$url" | tar -xj -C "$tmpdir" >/dev/null 2>&1; then
+  log "Downloading micromamba package..."
+  if curl_download "$url" "$archive" && tar -xjf "$archive" -C "$tmpdir" >/dev/null 2>&1; then
     if [[ -f "$tmpdir/bin/micromamba" ]]; then
       cp "$tmpdir/bin/micromamba" "$HOME/.local/bin/micromamba"
       chmod +x "$HOME/.local/bin/micromamba"
