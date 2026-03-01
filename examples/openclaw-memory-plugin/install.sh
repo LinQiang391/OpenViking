@@ -18,15 +18,9 @@ OV_MICROMAMBA_URL="${OV_MICROMAMBA_URL:-}"
 OV_MICROMAMBA_CREATE_TIMEOUT="${OV_MICROMAMBA_CREATE_TIMEOUT:-1800}"
 OV_MICROMAMBA_PROGRESS_ESTIMATE="${OV_MICROMAMBA_PROGRESS_ESTIMATE:-600}"
 OV_PREFER_CN_MIRROR="${OV_PREFER_CN_MIRROR:-1}"
-OV_CN_CONDA_FORGE_MIRROR="${OV_CN_CONDA_FORGE_MIRROR:-https://mirrors.aliyun.com/anaconda/cloud/conda-forge}"
+OV_CN_CONDA_FORGE_MIRROR="${OV_CN_CONDA_FORGE_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge}"
+OV_CN_CONDA_FORGE_MIRRORS="${OV_CN_CONDA_FORGE_MIRRORS:-$OV_CN_CONDA_FORGE_MIRROR https://mirrors.bfsu.edu.cn/anaconda/cloud/conda-forge https://mirrors.aliyun.com/anaconda/cloud/conda-forge}"
 OV_MICROMAMBA_CHANNEL="${OV_MICROMAMBA_CHANNEL:-}"
-if [[ -z "$OV_MICROMAMBA_CHANNEL" ]]; then
-  if [[ "$OV_PREFER_CN_MIRROR" == "1" ]]; then
-    OV_MICROMAMBA_CHANNEL="$OV_CN_CONDA_FORGE_MIRROR"
-  else
-    OV_MICROMAMBA_CHANNEL="conda-forge"
-  fi
-fi
 OV_NVM_INSTALL_URL="${OV_NVM_INSTALL_URL:-}"
 OV_NODE_VERSION="${OV_NODE_VERSION:-22.22.0}"
 OV_ALLOW_NVM_FALLBACK="${OV_ALLOW_NVM_FALLBACK:-0}"
@@ -63,8 +57,9 @@ Environment:
   AUTO_INSTALL_MICROMAMBA  Use micromamba user env as fallback (default: 1)
   OV_MEMORY_MM_ENV       micromamba environment path (default: ~/.openviking-installer-env)
   OV_MICROMAMBA_URL      Override micromamba download URL
-  OV_MICROMAMBA_CHANNEL  micromamba channel (default: Aliyun conda-forge mirror when OV_PREFER_CN_MIRROR=1, else conda-forge)
-  OV_CN_CONDA_FORGE_MIRROR  Override default CN conda-forge mirror (default: https://mirrors.aliyun.com/anaconda/cloud/conda-forge)
+  OV_MICROMAMBA_CHANNEL  micromamba channel (highest priority override)
+  OV_CN_CONDA_FORGE_MIRROR  Preferred CN conda-forge mirror (default: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge)
+  OV_CN_CONDA_FORGE_MIRRORS  Candidate CN conda-forge mirrors (space-separated, auto-probed; default includes TUNA/BFSU/Aliyun)
   OV_MICROMAMBA_CREATE_TIMEOUT  timeout seconds for toolchain create (default: 1800)
   OV_MICROMAMBA_PROGRESS_ESTIMATE  progress estimate seconds (default: 600)
   OV_PREFER_CN_MIRROR    Prefer China mirrors for nvm/node/conda downloads (default: 1)
@@ -119,6 +114,41 @@ sanitize_proxy_env() {
         ;;
     esac
   done
+}
+
+channel_has_repodata() {
+  local channel="${1%/}"
+  if [[ "$channel" == "conda-forge" ]]; then
+    channel="https://conda.anaconda.org/conda-forge"
+  fi
+  [[ "$channel" =~ ^https?:// ]] || return 0
+  curl -fsL --connect-timeout 8 --max-time 25 "${channel}/linux-64/repodata.json" -o /dev/null &&
+    curl -fsL --connect-timeout 8 --max-time 25 "${channel}/noarch/repodata.json" -o /dev/null
+}
+
+resolve_micromamba_channel() {
+  if [[ -n "$OV_MICROMAMBA_CHANNEL" ]]; then
+    if channel_has_repodata "$OV_MICROMAMBA_CHANNEL"; then
+      return 0
+    fi
+    warn "Configured micromamba channel is unreachable: $OV_MICROMAMBA_CHANNEL"
+  fi
+
+  if [[ "$OV_PREFER_CN_MIRROR" == "1" ]]; then
+    local channel
+    for channel in $OV_CN_CONDA_FORGE_MIRRORS; do
+      if channel_has_repodata "$channel"; then
+        OV_MICROMAMBA_CHANNEL="$channel"
+        log "Selected reachable CN conda-forge mirror: $OV_MICROMAMBA_CHANNEL"
+        return 0
+      fi
+      warn "CN conda-forge mirror unreachable, trying next: $channel"
+    done
+    warn "No reachable CN conda-forge mirror found; falling back to official conda-forge"
+  fi
+
+  OV_MICROMAMBA_CHANNEL="conda-forge"
+  return 0
 }
 
 run_with_progress() {
@@ -819,6 +849,7 @@ done
 require_cmd bash
 require_cmd curl
 sanitize_proxy_env
+resolve_micromamba_channel
 ensure_node
 ensure_npm_global_bin_in_path
 ensure_xpm || true
