@@ -21,6 +21,7 @@ OV_MICROMAMBA_PROGRESS_ESTIMATE="${OV_MICROMAMBA_PROGRESS_ESTIMATE:-600}"
 OV_PREFER_CN_MIRROR="${OV_PREFER_CN_MIRROR:-1}"
 OV_NVM_INSTALL_URL="${OV_NVM_INSTALL_URL:-}"
 OV_NODE_VERSION="${OV_NODE_VERSION:-22.22.0}"
+OV_ALLOW_NVM_FALLBACK="${OV_ALLOW_NVM_FALLBACK:-0}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 OV_DOWNLOAD_RETRY="${OV_DOWNLOAD_RETRY:-3}"
@@ -60,6 +61,7 @@ Environment:
   OV_PREFER_CN_MIRROR    Prefer China mirrors for nvm/node downloads (default: 1)
   OV_NVM_INSTALL_URL     Override nvm install script URL directly
   OV_NODE_VERSION        Node version for direct user install fallback (default: 22.22.0)
+  OV_ALLOW_NVM_FALLBACK  Allow nvm fallback when direct node install fails (default: 0)
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OV_DOWNLOAD_RETRY      curl retry count for helper download (default: 3)
@@ -451,8 +453,12 @@ ensure_node() {
 
   [[ "$AUTO_INSTALL_NODE" == "1" ]] || die "Node.js >=22 is required. Set AUTO_INSTALL_NODE=1 or install Node manually."
   if ! install_node_direct_user; then
-    warn "Direct Node install failed, trying nvm fallback..."
-    install_node_with_nvm
+    if [[ "$OV_ALLOW_NVM_FALLBACK" == "1" ]]; then
+      warn "Direct Node install failed, trying nvm fallback..."
+      install_node_with_nvm
+    else
+      die "Direct Node install failed and nvm fallback is disabled (OV_ALLOW_NVM_FALLBACK=0). Set OV_ALLOW_NVM_FALLBACK=1 to enable nvm fallback."
+    fi
   fi
 
   command -v node >/dev/null 2>&1 || die "Node installation finished but node is still unavailable"
