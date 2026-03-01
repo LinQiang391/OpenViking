@@ -6,7 +6,7 @@
 
 ## 一、快速开始（无需下载源码）
 
-OpenClaw 已安装后，可直接一条命令安装：
+可直接一条命令安装 OpenClaw + OpenViking 记忆（安装器会自动检测并可自动安装缺失依赖）：
 
 **Linux / macOS：**
 
@@ -332,7 +332,7 @@ npx ./examples/openclaw-memory-plugin/setup-helper
 安装助手会依次完成：
 
 1. **环境检查** — 校验 cmake、g++、Python、Go、OpenClaw 是否就绪
-2. **安装 OpenViking**（如尚未安装）
+2. **安装 OpenViking**（如尚未安装；走 PyPI 安装时不需要 Go）
 3. **交互配置** — 提示输入以下信息：
    - 数据存储路径（默认为绝对路径，如 `/home/yourname/.openviking/data`）
    - 火山引擎 Ark API Key
@@ -489,6 +489,8 @@ npx ./examples/openclaw-memory-plugin/setup-helper [选项]
 OV_MEMORY_VERSION      # 固定 setup-helper 下载版本（例如：ocm@0.1.0）
 OV_MEMORY_REPO         # 覆盖 GitHub 仓库（默认：volcengine/OpenViking）
 AUTO_INSTALL_NODE=1    # Node 缺失或版本过低时自动安装（默认：1）
+AUTO_INSTALL_PYTHON=1  # Python 缺失或版本过低时自动安装（默认：1）
+AUTO_INSTALL_XPM=1     # 缺失依赖时优先尝试 xpm 安装（默认：1）
 OV_MEMORY_NODE_VERSION # 自动安装使用的 Node 版本（默认：22）
 OPENVIKING_GITHUB_RAW  # 覆盖 installer/helper 使用的 raw 基地址
 SKIP_CHECKSUM=1        # 跳过 SHA256 校验（不推荐）

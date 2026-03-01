@@ -9,6 +9,8 @@ SKIP_BUILD_TOOLS_CHECK="${SKIP_BUILD_TOOLS_CHECK:-0}"
 AUTO_INSTALL_NODE="${AUTO_INSTALL_NODE:-1}"
 AUTO_INSTALL_OPENCLAW="${AUTO_INSTALL_OPENCLAW:-1}"
 AUTO_INSTALL_BUILD_TOOLS="${AUTO_INSTALL_BUILD_TOOLS:-0}"
+AUTO_INSTALL_PYTHON="${AUTO_INSTALL_PYTHON:-1}"
+AUTO_INSTALL_XPM="${AUTO_INSTALL_XPM:-1}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 NPM_REGISTRY_MIRROR="https://registry.npmmirror.com"
@@ -33,6 +35,8 @@ Environment:
   AUTO_INSTALL_NODE      Auto-install Node.js when missing/too old (default: 1)
   AUTO_INSTALL_OPENCLAW  Auto-install OpenClaw when missing (default: 1)
   AUTO_INSTALL_BUILD_TOOLS  Auto-install cmake/g++ when missing, no prompt (default: 0)
+  AUTO_INSTALL_PYTHON    Auto-install Python >=3.10 when missing/too old (default: 1)
+  AUTO_INSTALL_XPM       Try xpm for missing deps before other methods (default: 1)
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OPENVIKING_GITHUB_RAW  Override raw base URL used by helper and installer
@@ -52,6 +56,81 @@ require_cmd() {
 
 node_major_version() {
   node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'
+}
+
+python_cmd() {
+  if command -v python3 >/dev/null 2>&1; then
+    echo "python3"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    echo "python"
+    return 0
+  fi
+  return 1
+}
+
+python_major_minor() {
+  local py="$1"
+  "$py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true
+}
+
+python_is_compatible() {
+  local py="$1"
+  local ver major minor
+  ver="$(python_major_minor "$py")"
+  [[ -n "$ver" ]] || return 1
+  major="${ver%%.*}"
+  minor="${ver##*.}"
+  [[ "$major" -gt 3 ]] || { [[ "$major" -eq 3 && "$minor" -ge 10 ]]; }
+}
+
+run_xpm_install_candidates() {
+  local package_name="$1"
+  shift || true
+  local args
+  for args in "$@"; do
+    if xpm $args >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_python_with_xpm() {
+  command -v xpm >/dev/null 2>&1 || return 1
+  [[ "$AUTO_INSTALL_XPM" == "1" ]] || return 1
+  log "Trying to install Python >=3.10 via xpm..."
+
+  run_xpm_install_candidates "python" \
+    "install -y python@3.11" \
+    "install python@3.11 -y" \
+    "install -y python3.11" \
+    "install python3.11 -y" \
+    "install -y python" \
+    "install python -y" || return 1
+
+  return 0
+}
+
+install_build_tools_xpm() {
+  command -v xpm >/dev/null 2>&1 || return 1
+  [[ "$AUTO_INSTALL_XPM" == "1" ]] || return 1
+  log "Trying to install build tools via xpm..."
+
+  local cmake_ok=false cxx_ok=false
+  run_xpm_install_candidates "cmake" \
+    "install -y cmake" \
+    "install cmake -y" && cmake_ok=true
+  run_xpm_install_candidates "g++" \
+    "install -y g++" \
+    "install g++ -y" \
+    "install -y gcc" \
+    "install gcc -y" \
+    "install -y cxx-compiler" \
+    "install cxx-compiler -y" && cxx_ok=true
+
+  "$cmake_ok" && "$cxx_ok"
 }
 
 install_node_with_nvm() {
@@ -160,24 +239,33 @@ ensure_build_tools() {
   local has_sudo=false has_conda=false
   command -v sudo >/dev/null 2>&1 && has_sudo=true
   command -v conda >/dev/null 2>&1 || command -v mamba >/dev/null 2>&1 && has_conda=true
+  local has_xpm=false
+  command -v xpm >/dev/null 2>&1 && has_xpm=true
 
-  if ! "$has_sudo" && ! "$has_conda"; then
+  if ! "$has_sudo" && ! "$has_conda" && ! "$has_xpm"; then
     build_tools_manual_help
-    die "No sudo or conda available. Install cmake and g++ manually, or use conda. Set SKIP_BUILD_TOOLS_CHECK=1 if already installed."
+    die "No sudo/conda/xpm available. Install cmake and g++ manually, or use conda/xpm. Set SKIP_BUILD_TOOLS_CHECK=1 if already installed."
   fi
 
   local install_it=0 method=""
+  if [[ "$AUTO_INSTALL_XPM" == "1" ]] && "$has_xpm"; then
+    method="xpm"
+    install_it=1
+  fi
   if [[ "$AUTO_INSTALL_BUILD_TOOLS" == "1" ]]; then
-    if command -v sudo >/dev/null 2>&1; then
+    if [[ -z "$method" ]] && command -v sudo >/dev/null 2>&1; then
       method="sudo"
       install_it=1
-    elif "$has_conda"; then
+    elif [[ -z "$method" ]] && "$has_conda"; then
       method="conda"
       install_it=1
     fi
   elif [[ -t 1 ]] && [[ -c /dev/tty ]] 2>/dev/null; then
     local resp user_choice=""
     printf '[openviking-installer] Build tools missing: %s.\n' "${missing[*]}"
+    if "$has_xpm"; then
+      printf '  [x] Install via xpm (no sudo, user-level)\n'
+    fi
     if "$has_sudo"; then
       printf '  [s] Install via sudo (needs root password)\n'
     fi
@@ -187,9 +275,10 @@ ensure_build_tools() {
       printf '  [c] Install via conda (install Miniconda first if not available)\n'
     fi
     printf '  [n] Skip, show manual instructions\n'
-    printf '  Choice [s/c/n]: '
+    printf '  Choice [x/s/c/n]: '
     read -r resp </dev/tty 2>/dev/null || true
-    case "${resp:-s}" in
+    case "${resp:-x}" in
+      [xX]) "$has_xpm" && method="xpm" && install_it=1 ; user_choice="x" ;;
       [sS]) "$has_sudo" && method="sudo"  && install_it=1 ; user_choice="s" ;;
       [cC]) user_choice="c"
             if "$has_conda"; then
@@ -203,7 +292,9 @@ ensure_build_tools() {
 
   if [[ "$install_it" -eq 1 ]] && [[ -n "$method" ]]; then
     local ok=false
-    if [[ "$method" == "sudo" ]] && "$has_sudo"; then
+    if [[ "$method" == "xpm" ]] && "$has_xpm"; then
+      install_build_tools_xpm && ok=true
+    elif [[ "$method" == "sudo" ]] && "$has_sudo"; then
       install_build_tools_sudo && ok=true
     elif [[ "$method" == "conda" ]] && "$has_conda"; then
       install_build_tools_conda && ok=true
@@ -215,14 +306,16 @@ ensure_build_tools() {
     else
       build_tools_manual_help
       if ! "$has_conda"; then
-        die "Install failed. No sudo permission? Install conda (https://docs.conda.io) then run again and choose [c]. Or ask your admin to install cmake and g++."
+        die "Install failed. Try xpm or conda, or ask your admin to install cmake and g++."
       else
         die "Failed to install build tools. See instructions above."
       fi
     fi
   else
     build_tools_manual_help
-    if [[ "${user_choice:-}" == "c" ]] && ! "$has_conda"; then
+    if [[ "${user_choice:-}" == "x" ]] && ! "$has_xpm"; then
+      die "xpm not found. Install xpm first, or use sudo/conda/manual installation."
+    elif [[ "${user_choice:-}" == "c" ]] && ! "$has_conda"; then
       die "Conda not found. Install Miniconda first (no sudo):
   curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh
   bash /tmp/miniconda.sh -b -p ~/miniconda3
@@ -235,6 +328,71 @@ ensure_build_tools() {
       die "Run again and choose an option, or install manually, or set SKIP_BUILD_TOOLS_CHECK=1."
     fi
   fi
+}
+
+install_python_sudo() {
+  log "Installing Python >=3.10 via package manager (sudo required)..."
+  if command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y python3 python3-devel python3-pip || return 1
+  elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y python3 python3-devel python3-pip || return 1
+  elif command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -qq && sudo apt-get install -y python3 python3-dev python3-pip || return 1
+  elif command -v zypper >/dev/null 2>&1; then
+    sudo zypper -n install python3 python3-devel python3-pip || return 1
+  elif command -v apk >/dev/null 2>&1; then
+    sudo apk add --no-cache python3 py3-pip python3-dev || return 1
+  elif command -v pacman >/dev/null 2>&1; then
+    sudo pacman -Sy --noconfirm python python-pip || return 1
+  elif command -v brew >/dev/null 2>&1; then
+    brew install python || return 1
+  else
+    return 1
+  fi
+}
+
+install_python_conda() {
+  local conda_cmd=""
+  command -v mamba >/dev/null 2>&1 && conda_cmd="mamba"
+  command -v conda >/dev/null 2>&1 && [[ -z "$conda_cmd" ]] && conda_cmd="conda"
+  [[ -z "$conda_cmd" ]] && return 1
+  log "Installing Python >=3.10 via $conda_cmd (no sudo)..."
+  $conda_cmd install -y -c conda-forge "python>=3.10" 2>/dev/null && return 0
+  $conda_cmd install -y "python>=3.10" 2>/dev/null && return 0
+  return 1
+}
+
+ensure_python() {
+  local py
+  py="$(python_cmd || true)"
+  if [[ -n "$py" ]] && python_is_compatible "$py"; then
+    export OPENVIKING_PYTHON="$py"
+    log "Detected Python: $("$py" --version 2>&1)"
+    return
+  fi
+
+  [[ "$AUTO_INSTALL_PYTHON" == "1" ]] || die "Python >=3.10 is required. Set AUTO_INSTALL_PYTHON=1 or install Python manually."
+  log "Python >=3.10 is missing or too old"
+
+  if install_python_with_xpm; then
+    py="$(python_cmd || true)"
+    if [[ -n "$py" ]] && python_is_compatible "$py"; then
+      export OPENVIKING_PYTHON="$py"
+      log "Python ready after xpm install: $("$py" --version 2>&1)"
+      return
+    fi
+  fi
+
+  if install_python_conda || install_python_sudo; then
+    py="$(python_cmd || true)"
+    if [[ -n "$py" ]] && python_is_compatible "$py"; then
+      export OPENVIKING_PYTHON="$py"
+      log "Python ready: $("$py" --version 2>&1)"
+      return
+    fi
+  fi
+
+  die "Failed to provision Python >=3.10. Install manually, then rerun."
 }
 
 ensure_openclaw() {
@@ -279,6 +437,7 @@ done
 require_cmd bash
 require_cmd curl
 ensure_node
+ensure_python
 ensure_build_tools
 ensure_openclaw
 

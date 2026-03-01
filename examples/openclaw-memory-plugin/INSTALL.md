@@ -6,7 +6,7 @@ Give [OpenClaw](https://github.com/openclaw/openclaw) long-term memory powered b
 
 ## 1. Quick Start (No Source Download)
 
-If OpenClaw is already installed, run one command:
+Run one command to install OpenClaw + OpenViking memory (installer auto-checks and can auto-install missing deps):
 
 **Linux / macOS:**
 
@@ -332,7 +332,7 @@ npx ./examples/openclaw-memory-plugin/setup-helper
 The helper will walk you through:
 
 1. **Environment check** — verifies cmake, g++, Python, Go, OpenClaw
-2. **Install OpenViking** (if not already installed)
+2. **Install OpenViking** (if not already installed; PyPI path does not require Go)
 3. **Interactive configuration** — prompts for:
    - Data storage path (defaults to absolute path, e.g. `/home/yourname/.openviking/data`)
    - Volcengine Ark API Key
@@ -489,6 +489,8 @@ Environment variables:
 OV_MEMORY_VERSION      # Pin setup-helper download ref (for example: ocm@0.1.0)
 OV_MEMORY_REPO         # Override GitHub repo (default: volcengine/OpenViking)
 AUTO_INSTALL_NODE=1    # Auto-install Node.js when missing/too old (default: 1)
+AUTO_INSTALL_PYTHON=1  # Auto-install Python >=3.10 when missing/too old (default: 1)
+AUTO_INSTALL_XPM=1     # Try xpm for missing deps before other methods (default: 1)
 OV_MEMORY_NODE_VERSION # Node.js version used by auto-install (default: 22)
 OPENVIKING_GITHUB_RAW  # Override raw base URL used by installer/helper
 SKIP_CHECKSUM=1        # Skip SHA256 verification (not recommended)

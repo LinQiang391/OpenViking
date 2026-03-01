@@ -362,6 +362,15 @@ async function installOpenviking(repoRoot) {
   const py = process.env.OPENVIKING_PYTHON || DEFAULT_PYTHON;
   log(`Installing openviking (using ${py})...`);
   if (repoRoot && existsSync(join(repoRoot, "pyproject.toml"))) {
+    if (IS_LINUX) {
+      const goCheck = await checkGo();
+      if (!goCheck.ok) {
+        throw new Error(
+          `Go >= 1.25 is required for source install on Linux (${goCheck.msg}). ` +
+          "Install Go or install from PyPI by unsetting OPENVIKING_REPO."
+        );
+      }
+    }
     await run(py, ["-m", "pip", "install", "-e", repoRoot]);
     return;
   }
@@ -600,13 +609,12 @@ Env vars:
     missing.push({ name: "Python >= 3.10", detail: pyResult.version ? `Current: ${pyResult.version}` : "Not found" });
   }
 
-  // Go check (required on Linux for source install)
+  // Go check (optional here; required only for Linux source install later)
   const goResult = await checkGo();
   if (goResult.ok) {
     log(`Go: ${goResult.msg}`, "ok");
   } else if (IS_LINUX) {
-    log(`Go: ${goResult.msg}`, "err");
-    missing.push({ name: "Go >= 1.25", detail: goResult.msg });
+    log(`Go: ${goResult.msg} (optional for PyPI install)`, "warn");
   } else {
     log(`Go: not found (not required on ${process.platform})`, "warn");
   }

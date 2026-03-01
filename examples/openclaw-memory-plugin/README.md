@@ -4,7 +4,7 @@ Use OpenViking as the long-term memory backend for [OpenClaw](https://github.com
 
 ## Quick Start (No Source Download)
 
-Install directly after OpenClaw is installed:
+Install with one command (installer can auto-install missing Node.js, OpenClaw, Python, and build tools):
 
 ```bash
 # Linux / macOS
@@ -85,6 +85,8 @@ Env vars:
 OV_MEMORY_VERSION      # Pin setup-helper download ref (for example: ocm@0.1.0)
 OV_MEMORY_REPO         # Override GitHub repo (default: volcengine/OpenViking)
 AUTO_INSTALL_NODE=1    # Auto-install Node.js when missing/too old (default: 1)
+AUTO_INSTALL_PYTHON=1  # Auto-install Python >=3.10 when missing/too old (default: 1)
+AUTO_INSTALL_XPM=1     # Try xpm for missing deps before other methods (default: 1)
 OV_MEMORY_NODE_VERSION # Node.js version used by auto-install (default: 22)
 OPENVIKING_GITHUB_RAW  # Override raw base URL used by installer/helper
 SKIP_CHECKSUM=1        # Skip checksum verification (not recommended)
