@@ -192,6 +192,14 @@ prepare_micromamba_toolchain() {
   if [[ -x "$OV_MEMORY_MM_ENV/bin/python" ]]; then
     export OPENVIKING_PYTHON="$OV_MEMORY_MM_ENV/bin/python"
   fi
+  if [[ -d "$OV_MEMORY_MM_ENV/lib" ]]; then
+    export OPENVIKING_LD_LIBRARY_PATH="$OV_MEMORY_MM_ENV/lib"
+    if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+      export LD_LIBRARY_PATH="$OV_MEMORY_MM_ENV/lib:$LD_LIBRARY_PATH"
+    else
+      export LD_LIBRARY_PATH="$OV_MEMORY_MM_ENV/lib"
+    fi
+  fi
 
   if [[ ! -x "$OV_MEMORY_MM_ENV/bin/g++" ]]; then
     if [[ -x "$OV_MEMORY_MM_ENV/bin/x86_64-conda-linux-gnu-g++" ]]; then

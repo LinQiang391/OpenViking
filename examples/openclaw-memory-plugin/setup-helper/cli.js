@@ -514,6 +514,7 @@ async function writeOpenvikingEnv() {
   const pyPath = await resolveCommand(pyCmd);
   const goOut = await resolveCommand("go");
   const goPath = goOut ? dirname(goOut) : "";
+  const extraLdPath = process.env.OPENVIKING_LD_LIBRARY_PATH || "";
   await mkdir(OPENCLAW_DIR, { recursive: true });
 
   if (IS_WIN) {
@@ -528,6 +529,7 @@ async function writeOpenvikingEnv() {
     const lines = [];
     if (pyPath) lines.push(`export OPENVIKING_PYTHON='${pyPath}'`);
     if (goPath) lines.push(`export OPENVIKING_GO_PATH='${goPath}'`);
+    if (extraLdPath) lines.push(`export LD_LIBRARY_PATH='${extraLdPath}:$LD_LIBRARY_PATH'`);
     if (process.env.GOPATH) lines.push(`export OPENVIKING_GOPATH='${process.env.GOPATH}'`);
     if (process.env.GOPROXY) lines.push(`export OPENVIKING_GOPROXY='${process.env.GOPROXY}'`);
     await writeFile(join(OPENCLAW_DIR, "openviking.env"), lines.join("\n") + "\n");
