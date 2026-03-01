@@ -15,10 +15,18 @@ ALLOW_SUDO_INSTALL="${ALLOW_SUDO_INSTALL:-0}"
 AUTO_INSTALL_MICROMAMBA="${AUTO_INSTALL_MICROMAMBA:-1}"
 OV_MEMORY_MM_ENV="${OV_MEMORY_MM_ENV:-$HOME/.openviking-installer-env}"
 OV_MICROMAMBA_URL="${OV_MICROMAMBA_URL:-}"
-OV_MICROMAMBA_CHANNEL="${OV_MICROMAMBA_CHANNEL:-conda-forge}"
 OV_MICROMAMBA_CREATE_TIMEOUT="${OV_MICROMAMBA_CREATE_TIMEOUT:-1800}"
 OV_MICROMAMBA_PROGRESS_ESTIMATE="${OV_MICROMAMBA_PROGRESS_ESTIMATE:-600}"
 OV_PREFER_CN_MIRROR="${OV_PREFER_CN_MIRROR:-1}"
+OV_CN_CONDA_FORGE_MIRROR="${OV_CN_CONDA_FORGE_MIRROR:-https://mirrors.aliyun.com/anaconda/cloud/conda-forge}"
+OV_MICROMAMBA_CHANNEL="${OV_MICROMAMBA_CHANNEL:-}"
+if [[ -z "$OV_MICROMAMBA_CHANNEL" ]]; then
+  if [[ "$OV_PREFER_CN_MIRROR" == "1" ]]; then
+    OV_MICROMAMBA_CHANNEL="$OV_CN_CONDA_FORGE_MIRROR"
+  else
+    OV_MICROMAMBA_CHANNEL="conda-forge"
+  fi
+fi
 OV_NVM_INSTALL_URL="${OV_NVM_INSTALL_URL:-}"
 OV_NODE_VERSION="${OV_NODE_VERSION:-22.22.0}"
 OV_ALLOW_NVM_FALLBACK="${OV_ALLOW_NVM_FALLBACK:-0}"
@@ -55,10 +63,11 @@ Environment:
   AUTO_INSTALL_MICROMAMBA  Use micromamba user env as fallback (default: 1)
   OV_MEMORY_MM_ENV       micromamba environment path (default: ~/.openviking-installer-env)
   OV_MICROMAMBA_URL      Override micromamba download URL
-  OV_MICROMAMBA_CHANNEL  micromamba channel (default: conda-forge)
+  OV_MICROMAMBA_CHANNEL  micromamba channel (default: Aliyun conda-forge mirror when OV_PREFER_CN_MIRROR=1, else conda-forge)
+  OV_CN_CONDA_FORGE_MIRROR  Override default CN conda-forge mirror (default: https://mirrors.aliyun.com/anaconda/cloud/conda-forge)
   OV_MICROMAMBA_CREATE_TIMEOUT  timeout seconds for toolchain create (default: 1800)
   OV_MICROMAMBA_PROGRESS_ESTIMATE  progress estimate seconds (default: 600)
-  OV_PREFER_CN_MIRROR    Prefer China mirrors for nvm/node downloads (default: 1)
+  OV_PREFER_CN_MIRROR    Prefer China mirrors for nvm/node/conda downloads (default: 1)
   OV_NVM_INSTALL_URL     Override nvm install script URL directly
   OV_NODE_VERSION        Node version for direct user install fallback (default: 22.22.0)
   OV_ALLOW_NVM_FALLBACK  Allow nvm fallback when direct node install fails (default: 0)
@@ -304,6 +313,7 @@ ensure_micromamba() {
 prepare_micromamba_toolchain() {
   [[ "$AUTO_INSTALL_MICROMAMBA" == "1" ]] || return 1
   ensure_micromamba || return 1
+  log "Using micromamba channel: $OV_MICROMAMBA_CHANNEL"
 
   # Reuse existing env to avoid repeated long solves/downloads.
   if [[ -x "$OV_MEMORY_MM_ENV/bin/python" && ( -x "$OV_MEMORY_MM_ENV/bin/g++" || -x "$OV_MEMORY_MM_ENV/bin/gcc" || -x "$OV_MEMORY_MM_ENV/bin/x86_64-conda-linux-gnu-g++" ) && -x "$OV_MEMORY_MM_ENV/bin/cmake" ]]; then
@@ -507,8 +517,8 @@ install_build_tools_conda() {
   command -v mamba >/dev/null 2>&1 && conda_cmd="mamba"
   command -v conda >/dev/null 2>&1 && [[ -z "$conda_cmd" ]] && conda_cmd="conda"
   [[ -z "$conda_cmd" ]] && return 1
-  log "Installing build tools (cmake, g++) via $conda_cmd (no sudo)..."
-  $conda_cmd install -y -c conda-forge cmake cxx-compiler 2>/dev/null && return 0
+  log "Installing build tools (cmake, g++) via $conda_cmd (channel: $OV_MICROMAMBA_CHANNEL)..."
+  $conda_cmd install -y -c "$OV_MICROMAMBA_CHANNEL" cmake cxx-compiler 2>/dev/null && return 0
   $conda_cmd install -y cmake cxx-compiler 2>/dev/null && return 0
   $conda_cmd install -y cmake compilers 2>/dev/null && return 0
   $conda_cmd install -y cmake 2>/dev/null && return 0
@@ -673,8 +683,8 @@ install_python_conda() {
   command -v mamba >/dev/null 2>&1 && conda_cmd="mamba"
   command -v conda >/dev/null 2>&1 && [[ -z "$conda_cmd" ]] && conda_cmd="conda"
   [[ -z "$conda_cmd" ]] && return 1
-  log "Installing Python >=3.10 via $conda_cmd (no sudo)..."
-  $conda_cmd install -y -c conda-forge "python>=3.10" 2>/dev/null && return 0
+  log "Installing Python >=3.10 via $conda_cmd (channel: $OV_MICROMAMBA_CHANNEL)..."
+  $conda_cmd install -y -c "$OV_MICROMAMBA_CHANNEL" "python>=3.10" 2>/dev/null && return 0
   $conda_cmd install -y "python>=3.10" 2>/dev/null && return 0
   return 1
 }
