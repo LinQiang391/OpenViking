@@ -20,6 +20,7 @@ OV_MICROMAMBA_CREATE_TIMEOUT="${OV_MICROMAMBA_CREATE_TIMEOUT:-1800}"
 OV_MICROMAMBA_PROGRESS_ESTIMATE="${OV_MICROMAMBA_PROGRESS_ESTIMATE:-600}"
 OV_PREFER_CN_MIRROR="${OV_PREFER_CN_MIRROR:-1}"
 OV_NVM_INSTALL_URL="${OV_NVM_INSTALL_URL:-}"
+OV_NODE_VERSION="${OV_NODE_VERSION:-22.22.0}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 OV_DOWNLOAD_RETRY="${OV_DOWNLOAD_RETRY:-3}"
@@ -58,6 +59,7 @@ Environment:
   OV_MICROMAMBA_PROGRESS_ESTIMATE  progress estimate seconds (default: 600)
   OV_PREFER_CN_MIRROR    Prefer China mirrors for nvm/node downloads (default: 1)
   OV_NVM_INSTALL_URL     Override nvm install script URL directly
+  OV_NODE_VERSION        Node version for direct user install fallback (default: 22.22.0)
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OV_DOWNLOAD_RETRY      curl retry count for helper download (default: 3)
@@ -377,6 +379,48 @@ install_node_with_nvm() {
   nvm use "${OV_MEMORY_NODE_VERSION}" >/dev/null || die "Failed to activate Node.js ${OV_MEMORY_NODE_VERSION}"
 }
 
+install_node_direct_user() {
+  local os arch tar_arch ext pkg node_root archive
+  ext="tar.xz"
+  case "$(uname -s)" in
+    Linux*) os="linux" ;;
+    Darwin*) os="darwin" ;;
+    *) return 1 ;;
+  esac
+
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) return 1 ;;
+  esac
+
+  pkg="node-v${OV_NODE_VERSION}-${os}-${arch}.${ext}"
+  archive="$(mktemp)"
+  node_root="$HOME/.local/node-v${OV_NODE_VERSION}-${os}-${arch}"
+  mkdir -p "$HOME/.local/bin"
+
+  log "Installing Node.js ${OV_NODE_VERSION} (user-level binary)..."
+  if [[ "$OV_PREFER_CN_MIRROR" == "1" ]]; then
+    if ! curl_download "https://npmmirror.com/mirrors/node/v${OV_NODE_VERSION}/${pkg}" "$archive"; then
+      warn "Failed to download Node from China mirror, falling back to nodejs.org"
+      curl_download "https://nodejs.org/dist/v${OV_NODE_VERSION}/${pkg}" "$archive" || return 1
+    fi
+  else
+    curl_download "https://nodejs.org/dist/v${OV_NODE_VERSION}/${pkg}" "$archive" || return 1
+  fi
+
+  rm -rf "$node_root"
+  mkdir -p "$node_root"
+  tar -xJf "$archive" -C "$node_root" --strip-components=1 || return 1
+  rm -f "$archive"
+
+  ln -sf "$node_root/bin/node" "$HOME/.local/bin/node"
+  ln -sf "$node_root/bin/npm" "$HOME/.local/bin/npm"
+  ln -sf "$node_root/bin/npx" "$HOME/.local/bin/npx"
+  export PATH="$HOME/.local/bin:$PATH"
+  return 0
+}
+
 ensure_xpm() {
   if command -v xpm >/dev/null 2>&1; then
     return 0
@@ -406,7 +450,10 @@ ensure_node() {
   fi
 
   [[ "$AUTO_INSTALL_NODE" == "1" ]] || die "Node.js >=22 is required. Set AUTO_INSTALL_NODE=1 or install Node manually."
-  install_node_with_nvm
+  if ! install_node_direct_user; then
+    warn "Direct Node install failed, trying nvm fallback..."
+    install_node_with_nvm
+  fi
 
   command -v node >/dev/null 2>&1 || die "Node installation finished but node is still unavailable"
   local major
