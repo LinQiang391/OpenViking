@@ -514,6 +514,10 @@ async function writeOpenvikingEnv() {
   const pyPath = await resolveCommand(pyCmd);
   const goOut = await resolveCommand("go");
   const goPath = goOut ? dirname(goOut) : "";
+  const nodeOut = await resolveCommand("node");
+  const nodePath = nodeOut ? dirname(nodeOut) : "";
+  const openclawOut = await resolveCommand("openclaw");
+  const openclawPath = openclawOut ? dirname(openclawOut) : "";
   const extraLdPath = process.env.OPENVIKING_LD_LIBRARY_PATH || "";
   const extraLdPreload = process.env.OPENVIKING_LD_PRELOAD || "";
   await mkdir(OPENCLAW_DIR, { recursive: true });
@@ -522,6 +526,8 @@ async function writeOpenvikingEnv() {
     const lines = [];
     if (pyPath) lines.push(`set OPENVIKING_PYTHON=${pyPath}`);
     if (goPath) lines.push(`set OPENVIKING_GO_PATH=${goPath}`);
+    if (openclawPath) lines.push(`set PATH=${openclawPath};%PATH%`);
+    else if (nodePath) lines.push(`set PATH=${nodePath};%PATH%`);
     if (process.env.GOPATH) lines.push(`set OPENVIKING_GOPATH=${process.env.GOPATH}`);
     if (process.env.GOPROXY) lines.push(`set OPENVIKING_GOPROXY=${process.env.GOPROXY}`);
     await writeFile(join(OPENCLAW_DIR, "openviking.env.bat"), lines.join("\r\n") + "\r\n");
@@ -530,6 +536,8 @@ async function writeOpenvikingEnv() {
     const lines = [];
     if (pyPath) lines.push(`export OPENVIKING_PYTHON='${pyPath}'`);
     if (goPath) lines.push(`export OPENVIKING_GO_PATH='${goPath}'`);
+    if (openclawPath) lines.push(`export PATH='${openclawPath}:$PATH'`);
+    else if (nodePath) lines.push(`export PATH='${nodePath}:$PATH'`);
     if (extraLdPath) lines.push(`export LD_LIBRARY_PATH='${extraLdPath}'`);
     if (extraLdPreload) lines.push(`export LD_PRELOAD='${extraLdPreload}'`);
     if (process.env.GOPATH) lines.push(`export OPENVIKING_GOPATH='${process.env.GOPATH}'`);
