@@ -18,6 +18,8 @@ OV_MICROMAMBA_URL="${OV_MICROMAMBA_URL:-}"
 OV_MICROMAMBA_CHANNEL="${OV_MICROMAMBA_CHANNEL:-conda-forge}"
 OV_MICROMAMBA_CREATE_TIMEOUT="${OV_MICROMAMBA_CREATE_TIMEOUT:-1800}"
 OV_MICROMAMBA_PROGRESS_ESTIMATE="${OV_MICROMAMBA_PROGRESS_ESTIMATE:-600}"
+OV_PREFER_CN_MIRROR="${OV_PREFER_CN_MIRROR:-1}"
+OV_NVM_INSTALL_URL="${OV_NVM_INSTALL_URL:-}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 OV_DOWNLOAD_RETRY="${OV_DOWNLOAD_RETRY:-3}"
@@ -54,6 +56,8 @@ Environment:
   OV_MICROMAMBA_CHANNEL  micromamba channel (default: conda-forge)
   OV_MICROMAMBA_CREATE_TIMEOUT  timeout seconds for toolchain create (default: 1800)
   OV_MICROMAMBA_PROGRESS_ESTIMATE  progress estimate seconds (default: 600)
+  OV_PREFER_CN_MIRROR    Prefer China mirrors for nvm/node downloads (default: 1)
+  OV_NVM_INSTALL_URL     Override nvm install script URL directly
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OV_DOWNLOAD_RETRY      curl retry count for helper download (default: 3)
@@ -340,16 +344,34 @@ prepare_micromamba_toolchain() {
 
 install_node_with_nvm() {
   local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
-  local nvm_install_url="https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh"
+  local nvm_install_url="${OV_NVM_INSTALL_URL:-https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh}"
+  local nvm_install_url_cn="https://npmmirror.com/mirrors/nvm/v0.40.3/install.sh"
+  local nvm_script_file
   export NVM_DIR="$nvm_dir"
 
   log "Installing Node.js ${OV_MEMORY_NODE_VERSION} via nvm..."
   if [[ ! -s "${nvm_dir}/nvm.sh" ]]; then
-    curl -fsSL "$nvm_install_url" | bash || die "Failed to install nvm"
+    nvm_script_file="$(mktemp)"
+    if [[ "$OV_PREFER_CN_MIRROR" == "1" && -z "${OV_NVM_INSTALL_URL:-}" ]]; then
+      if ! curl_download "$nvm_install_url_cn" "$nvm_script_file"; then
+        warn "Failed to download nvm from China mirror, falling back to GitHub"
+        curl_download "$nvm_install_url" "$nvm_script_file" || die "Failed to download nvm install script"
+      fi
+    else
+      curl_download "$nvm_install_url" "$nvm_script_file" || die "Failed to download nvm install script"
+    fi
+    bash "$nvm_script_file" || die "Failed to install nvm"
+    rm -f "$nvm_script_file"
   fi
 
   # shellcheck source=/dev/null
   [ -s "${nvm_dir}/nvm.sh" ] && . "${nvm_dir}/nvm.sh" || die "Failed to load nvm"
+
+  # Prefer domestic mirrors for Node binary downloads when requested.
+  if [[ "$OV_PREFER_CN_MIRROR" == "1" ]]; then
+    export NVM_NODEJS_ORG_MIRROR="${NVM_NODEJS_ORG_MIRROR:-https://npmmirror.com/mirrors/node}"
+    export NVM_IOJS_ORG_MIRROR="${NVM_IOJS_ORG_MIRROR:-https://npmmirror.com/mirrors/iojs}"
+  fi
 
   nvm install "${OV_MEMORY_NODE_VERSION}" || die "Failed to install Node.js ${OV_MEMORY_NODE_VERSION}"
   nvm use "${OV_MEMORY_NODE_VERSION}" >/dev/null || die "Failed to activate Node.js ${OV_MEMORY_NODE_VERSION}"
