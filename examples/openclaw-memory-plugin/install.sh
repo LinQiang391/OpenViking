@@ -677,4 +677,8 @@ cat >"$PKG_PATH" <<'EOF'
 EOF
 
 log "Running setup helper..."
-node "$HELPER_PATH" "${HELPER_ARGS[@]}"
+if [[ -r /dev/tty ]]; then
+  node "$HELPER_PATH" "${HELPER_ARGS[@]}" </dev/tty
+else
+  node "$HELPER_PATH" "${HELPER_ARGS[@]}"
+fi
