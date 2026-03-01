@@ -15,6 +15,8 @@ ALLOW_SUDO_INSTALL="${ALLOW_SUDO_INSTALL:-0}"
 AUTO_INSTALL_MICROMAMBA="${AUTO_INSTALL_MICROMAMBA:-1}"
 OV_MEMORY_MM_ENV="${OV_MEMORY_MM_ENV:-$HOME/.openviking-installer-env}"
 OV_MICROMAMBA_URL="${OV_MICROMAMBA_URL:-}"
+OV_MICROMAMBA_CHANNEL="${OV_MICROMAMBA_CHANNEL:-conda-forge}"
+OV_MICROMAMBA_CREATE_TIMEOUT="${OV_MICROMAMBA_CREATE_TIMEOUT:-1800}"
 USE_MIRROR="${USE_MIRROR:-1}"
 OV_MEMORY_NODE_VERSION="${OV_MEMORY_NODE_VERSION:-22}"
 OV_DOWNLOAD_RETRY="${OV_DOWNLOAD_RETRY:-3}"
@@ -48,6 +50,8 @@ Environment:
   AUTO_INSTALL_MICROMAMBA  Use micromamba user env as fallback (default: 1)
   OV_MEMORY_MM_ENV       micromamba environment path (default: ~/.openviking-installer-env)
   OV_MICROMAMBA_URL      Override micromamba download URL
+  OV_MICROMAMBA_CHANNEL  micromamba channel (default: conda-forge)
+  OV_MICROMAMBA_CREATE_TIMEOUT  timeout seconds for toolchain create (default: 1800)
   USE_MIRROR             Use npmmirror for npm when installing OpenClaw (default: 1)
   OV_MEMORY_NODE_VERSION Node.js major/minor used by auto-install (default: 22)
   OV_DOWNLOAD_RETRY      curl retry count for helper download (default: 3)
@@ -209,9 +213,21 @@ prepare_micromamba_toolchain() {
   [[ "$AUTO_INSTALL_MICROMAMBA" == "1" ]] || return 1
   ensure_micromamba || return 1
 
-  log "Preparing micromamba toolchain env: $OV_MEMORY_MM_ENV"
-  if ! micromamba create -y -p "$OV_MEMORY_MM_ENV" -c conda-forge python=3.11 git cmake make gxx_linux-64 >/dev/null 2>&1; then
-    micromamba create -y -p "$OV_MEMORY_MM_ENV" -c conda-forge python=3.11 git cmake make cxx-compiler >/dev/null 2>&1 || return 1
+  # Reuse existing env to avoid repeated long solves/downloads.
+  if [[ -x "$OV_MEMORY_MM_ENV/bin/python" && ( -x "$OV_MEMORY_MM_ENV/bin/g++" || -x "$OV_MEMORY_MM_ENV/bin/gcc" || -x "$OV_MEMORY_MM_ENV/bin/x86_64-conda-linux-gnu-g++" ) && -x "$OV_MEMORY_MM_ENV/bin/cmake" ]]; then
+    log "Reusing existing micromamba toolchain env: $OV_MEMORY_MM_ENV"
+  else
+    log "Preparing micromamba toolchain env: $OV_MEMORY_MM_ENV"
+    log "This may take several minutes on first run..."
+    if command -v timeout >/dev/null 2>&1; then
+      if ! timeout "$OV_MICROMAMBA_CREATE_TIMEOUT" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make gxx_linux-64; then
+        timeout "$OV_MICROMAMBA_CREATE_TIMEOUT" micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make cxx-compiler || return 1
+      fi
+    else
+      if ! micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make gxx_linux-64; then
+        micromamba create -y -p "$OV_MEMORY_MM_ENV" -c "$OV_MICROMAMBA_CHANNEL" python=3.11 git cmake make cxx-compiler || return 1
+      fi
+    fi
   fi
 
   export PATH="$OV_MEMORY_MM_ENV/bin:$PATH"
