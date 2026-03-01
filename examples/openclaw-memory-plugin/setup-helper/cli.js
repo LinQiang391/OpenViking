@@ -187,6 +187,7 @@ async function checkOvvConf() {
 
 const DEFAULT_SERVER_PORT = 1933;
 const DEFAULT_AGFS_PORT = 1833;
+const DEFAULT_PLUGIN_TIMEOUT_MS = 300000;
 const DEFAULT_VLM_MODEL = "doubao-seed-1-8-251228";
 const DEFAULT_EMBEDDING_MODEL = "doubao-embedding-vision-250615";
 
@@ -475,6 +476,7 @@ async function configureOpenclawViaJson(pluginPath, serverPort) {
       mode: "local",
       configPath: "~/.openviking/ov.conf",
       port: serverPort,
+      timeoutMs: DEFAULT_PLUGIN_TIMEOUT_MS,
       targetUri: "viking://",
       autoRecall: true,
       autoCapture: true,
@@ -504,6 +506,12 @@ async function configureOpenclawViaCli(pluginPath, serverPort, mode) {
   await runNoShell("openclaw", ["config", "set", "plugins.entries.memory-openviking.config.mode", "local"]);
   await runNoShell("openclaw", ["config", "set", "plugins.entries.memory-openviking.config.configPath", "~/.openviking/ov.conf"]);
   await runNoShell("openclaw", ["config", "set", "plugins.entries.memory-openviking.config.port", String(serverPort)]);
+  await runNoShell("openclaw", [
+    "config",
+    "set",
+    "plugins.entries.memory-openviking.config.timeoutMs",
+    String(DEFAULT_PLUGIN_TIMEOUT_MS),
+  ]);
   await runNoShell("openclaw", ["config", "set", "plugins.entries.memory-openviking.config.targetUri", "viking://"]);
   await runNoShell("openclaw", ["config", "set", "plugins.entries.memory-openviking.config.autoRecall", "true", "--json"]);
   await runNoShell("openclaw", ["config", "set", "plugins.entries.memory-openviking.config.autoCapture", "true", "--json"]);
