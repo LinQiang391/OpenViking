@@ -143,7 +143,7 @@ print_install_hints() {
 
   if printf '%s\n' "${missing[@]}" | grep -q "Python"; then
     echo "  # 安装 Python 3.10+（推荐 3.11）"
-    echo "  # Ubuntu/Debian: sudo apt install python3.11 python3.11-venv"
+    echo "  # Ubuntu/Debian: apt install python3.11 python3.11-venv"
     echo "  # 或从源码: https://www.python.org/downloads/"
     echo "  # 安装后运行: python3 --version 确认 >= 3.10"
     echo ""
@@ -152,11 +152,11 @@ print_install_hints() {
   if printf '%s\n' "${missing[@]}" | grep -q "Node"; then
     echo "  # 安装 Node.js 22+"
     if [[ "$DISTRO" == "rhel" ]]; then
-      echo "  curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -"
-      echo "  sudo dnf install -y nodejs"
+      echo "  curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -"
+      echo "  dnf install -y nodejs"
     elif [[ "$DISTRO" == "debian" ]]; then
-      echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -"
-      echo "  sudo apt install -y nodejs"
+      echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
+      echo "  apt install -y nodejs"
     else
       echo "  # 使用 nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
       echo "  # 然后: nvm install 22 && nvm use 22"
@@ -207,7 +207,7 @@ install_openclaw() {
   fi
   info "正在安装 OpenClaw..."
   npm install -g openclaw || {
-    err "OpenClaw 安装失败，请检查 npm 权限或使用 sudo"
+    err "OpenClaw 安装失败，请检查 npm 全局安装权限（普通用户可改用 nvm 环境）"
     exit 1
   }
   info "OpenClaw 安装完成 ✓"
