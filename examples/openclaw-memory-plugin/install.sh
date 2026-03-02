@@ -271,7 +271,7 @@ configure_openviking_conf() {
     read -r -p "AGFS 端口 [${agfs_port}]: " _agfs_port < /dev/tty || true
     read -r -p "VLM 模型 [${vlm_model}]: " _vlm_model < /dev/tty || true
     read -r -p "Embedding 模型 [${embedding_model}]: " _embedding_model < /dev/tty || true
-    read -r -p "火山引擎 Ark API Key（可留空）: " _api_key < /dev/tty || true
+    read -r -p "模型 API Key（可留空，可后续在 ov.conf 自由修改）: " _api_key < /dev/tty || true
 
     workspace="${_workspace:-$workspace}"
     server_port="${_server_port:-$server_port}"
@@ -409,9 +409,7 @@ main() {
   echo "  3) source ~/.openclaw/openviking.env && openclaw gateway"
   echo "  4) openclaw status"
   echo ""
-  info "首次使用前，请先配置火山引擎 Ark API Key："
-  echo "  文件: ${OPENVIKING_DIR}/ov.conf"
-  echo "  地址: https://console.volcengine.com/ark"
+  info "你可以按需自由修改配置文件: ${OPENVIKING_DIR}/ov.conf"
   echo ""
 }
 
