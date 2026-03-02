@@ -6,7 +6,7 @@
 
 ## 一键安装（Linux / macOS）
 
-**前置条件：** Python >= 3.10、Node.js >= 22、cmake、g++。脚本会自动校验这些依赖，若有缺失会给出安装指引。
+**前置条件：** Python >= 3.10、Node.js >= 22。脚本会自动校验这些依赖，若有缺失会给出安装指引。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OpenViking/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash

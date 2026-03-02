@@ -6,7 +6,7 @@ Give [OpenClaw](https://github.com/openclaw/openclaw) long-term memory powered b
 
 ## One-Click Install (Linux / macOS)
 
-**Prerequisites:** Python >= 3.10, Node.js >= 22, cmake, g++. The script checks these and prompts you to install any missing components.
+**Prerequisites:** Python >= 3.10, Node.js >= 22. The script checks these and prompts you to install any missing components.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OpenViking/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash

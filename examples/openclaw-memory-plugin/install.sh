@@ -113,24 +113,6 @@ check_node() {
   return 0
 }
 
-check_cmake() {
-  if command -v cmake &>/dev/null; then
-    echo "ok|$(cmake --version 2>/dev/null | head -1)"
-    return 0
-  fi
-  echo "fail||cmake 未找到"
-  return 1
-}
-
-check_gpp() {
-  if command -v g++ &>/dev/null; then
-    echo "ok|$(g++ --version 2>/dev/null | head -1)"
-    return 0
-  fi
-  echo "fail||g++ (C++ 编译器) 未找到"
-  return 1
-}
-
 # 输出缺失组件的安装指引
 print_install_hints() {
   local missing=("$@")
@@ -195,16 +177,6 @@ validate_environment() {
   r=$(check_node) || missing+=("Node.js 22+ | $(echo "$r" | cut -d'|' -f3)")
   if [[ "${r%%|*}" == "ok" ]]; then
     info "  Node.js: $(echo "$r" | cut -d'|' -f2) ✓"
-  fi
-
-  r=$(check_cmake) || missing+=("cmake | $(echo "$r" | cut -d'|' -f3)")
-  if [[ "${r%%|*}" == "ok" ]]; then
-    info "  cmake: 已安装 ✓"
-  fi
-
-  r=$(check_gpp) || missing+=("g++ (gcc-c++) | $(echo "$r" | cut -d'|' -f3)")
-  if [[ "${r%%|*}" == "ok" ]]; then
-    info "  g++: 已安装 ✓"
   fi
 
   if [[ ${#missing[@]} -gt 0 ]]; then
