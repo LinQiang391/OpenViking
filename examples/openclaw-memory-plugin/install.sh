@@ -18,6 +18,15 @@ BRANCH="${BRANCH:-main}"
 INSTALL_YES="${OPENVIKING_INSTALL_YES:-0}"
 SKIP_OC="${SKIP_OPENCLAW:-0}"
 SKIP_OV="${SKIP_OPENVIKING:-0}"
+HOME_DIR="${HOME:-$USERPROFILE}"
+OPENCLAW_DIR="${HOME_DIR}/.openclaw"
+OPENVIKING_DIR="${HOME_DIR}/.openviking"
+PLUGIN_DEST="${OPENCLAW_DIR}/extensions/memory-openviking"
+DEFAULT_SERVER_PORT=1933
+DEFAULT_AGFS_PORT=1833
+DEFAULT_VLM_MODEL="doubao-seed-1-8-251228"
+DEFAULT_EMBED_MODEL="doubao-embedding-vision-250615"
+SELECTED_SERVER_PORT="${DEFAULT_SERVER_PORT}"
 
 # 解析 -y 参数 (通过 curl | bash -s -y 传入)
 for arg in "$@"; do
@@ -218,28 +227,132 @@ install_openviking() {
   info "OpenViking 安装完成 ✓"
 }
 
-run_setup_helper() {
+configure_openviking_conf() {
+  mkdir -p "${OPENVIKING_DIR}"
+
+  local workspace="${OPENVIKING_DIR}/data"
+  local server_port="${DEFAULT_SERVER_PORT}"
+  local agfs_port="${DEFAULT_AGFS_PORT}"
+  local vlm_model="${DEFAULT_VLM_MODEL}"
+  local embedding_model="${DEFAULT_EMBED_MODEL}"
+  local api_key="${OPENVIKING_ARK_API_KEY:-}"
+  local conf_path="${OPENVIKING_DIR}/ov.conf"
+  local api_json="null"
+
+  if [[ "$INSTALL_YES" != "1" ]]; then
+    echo ""
+    read -r -p "OpenViking 数据目录 [${workspace}]: " _workspace
+    read -r -p "OpenViking HTTP 端口 [${server_port}]: " _server_port
+    read -r -p "AGFS 端口 [${agfs_port}]: " _agfs_port
+    read -r -p "VLM 模型 [${vlm_model}]: " _vlm_model
+    read -r -p "Embedding 模型 [${embedding_model}]: " _embedding_model
+    read -r -p "火山引擎 Ark API Key（可留空）: " _api_key
+
+    workspace="${_workspace:-$workspace}"
+    server_port="${_server_port:-$server_port}"
+    agfs_port="${_agfs_port:-$agfs_port}"
+    vlm_model="${_vlm_model:-$vlm_model}"
+    embedding_model="${_embedding_model:-$embedding_model}"
+    api_key="${_api_key:-$api_key}"
+  fi
+
+  if [[ -n "${api_key}" ]]; then
+    api_json="\"${api_key}\""
+  fi
+
+  mkdir -p "${workspace}"
+  cat > "${conf_path}" <<EOF
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": ${server_port},
+    "root_api_key": null,
+    "cors_origins": ["*"]
+  },
+  "storage": {
+    "workspace": "${workspace}",
+    "vectordb": { "name": "context", "backend": "local", "project": "default" },
+    "agfs": { "port": ${agfs_port}, "log_level": "warn", "backend": "local", "timeout": 10, "retry_times": 3 }
+  },
+  "embedding": {
+    "dense": {
+      "backend": "volcengine",
+      "api_key": ${api_json},
+      "model": "${embedding_model}",
+      "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+      "dimension": 1024,
+      "input": "multimodal"
+    }
+  },
+  "vlm": {
+    "backend": "volcengine",
+    "api_key": ${api_json},
+    "model": "${vlm_model}",
+    "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+    "temperature": 0.1,
+    "max_retries": 3
+  }
+}
+EOF
+  SELECTED_SERVER_PORT="${server_port}"
+  info "已生成配置: ${conf_path}"
+}
+
+download_plugin() {
   local gh_raw="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
-  local cli_url="${gh_raw}/examples/openclaw-memory-plugin/setup-helper/cli.js"
-  local tmp_dir
-  tmp_dir=$(mktemp -d 2>/dev/null || echo "/tmp/openviking-install-$$")
-  trap "rm -rf '$tmp_dir'" EXIT
+  local files=(
+    "examples/openclaw-memory-plugin/index.ts"
+    "examples/openclaw-memory-plugin/config.ts"
+    "examples/openclaw-memory-plugin/openclaw.plugin.json"
+    "examples/openclaw-memory-plugin/package.json"
+    "examples/openclaw-memory-plugin/package-lock.json"
+    "examples/openclaw-memory-plugin/.gitignore"
+  )
 
-  info "正在下载配置助手..."
-  if ! curl -fsSL -o "$tmp_dir/cli.js" "$cli_url"; then
-    err "下载配置助手失败: $cli_url"
-    err "请检查网络或 REPO/BRANCH 配置"
+  mkdir -p "${PLUGIN_DEST}"
+  info "正在下载 memory-openviking 插件..."
+  for rel in "${files[@]}"; do
+    local name="${rel##*/}"
+    local url="${gh_raw}/${rel}"
+    curl -fsSL -o "${PLUGIN_DEST}/${name}" "${url}" || {
+      err "下载失败: ${url}"
+      exit 1
+    }
+  done
+  (cd "${PLUGIN_DEST}" && npm install --no-audit --no-fund) || {
+    err "插件依赖安装失败: ${PLUGIN_DEST}"
     exit 1
-  fi
+  }
+  info "插件部署完成: ${PLUGIN_DEST}"
+}
 
-  info "正在运行配置助手..."
-  export OPENVIKING_GITHUB_RAW="$gh_raw"
-  # 不设置 OPENVIKING_REPO，setup-helper 会通过 curl 从 GitHub 拉取插件
-  if [[ "$INSTALL_YES" == "1" ]]; then
-    node "$tmp_dir/cli.js" -y
-  else
-    node "$tmp_dir/cli.js"
-  fi
+configure_openclaw_plugin() {
+  local server_port="${SELECTED_SERVER_PORT}"
+  local config_path="~/.openviking/ov.conf"
+  info "正在配置 OpenClaw 插件..."
+
+  openclaw config set plugins.enabled true
+  openclaw config set plugins.allow '["memory-openviking"]' --json
+  openclaw config set gateway.mode local
+  openclaw config set plugins.slots.memory memory-openviking
+  openclaw config set plugins.load.paths "[\"${PLUGIN_DEST}\"]" --json
+  openclaw config set plugins.entries.memory-openviking.config.mode local
+  openclaw config set plugins.entries.memory-openviking.config.configPath "${config_path}"
+  openclaw config set plugins.entries.memory-openviking.config.port "${server_port}"
+  openclaw config set plugins.entries.memory-openviking.config.targetUri viking://
+  openclaw config set plugins.entries.memory-openviking.config.autoRecall true --json
+  openclaw config set plugins.entries.memory-openviking.config.autoCapture true --json
+  info "OpenClaw 插件配置完成"
+}
+
+write_openviking_env() {
+  local py_path
+  py_path="$(command -v python3 || command -v python || true)"
+  mkdir -p "${OPENCLAW_DIR}"
+  cat > "${OPENCLAW_DIR}/openviking.env" <<EOF
+export OPENVIKING_PYTHON='${py_path}'
+EOF
+  info "已生成环境文件: ${OPENCLAW_DIR}/openviking.env"
 }
 
 # ─── 主流程 ───
@@ -254,7 +367,10 @@ main() {
 
   install_openclaw
   install_openviking
-  run_setup_helper
+  configure_openviking_conf
+  download_plugin
+  configure_openclaw_plugin
+  write_openviking_env
 
   echo ""
   bold "═══════════════════════════════════════════════════════════"
