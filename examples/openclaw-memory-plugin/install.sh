@@ -142,25 +142,23 @@ print_install_hints() {
   echo ""
 
   if printf '%s\n' "${missing[@]}" | grep -q "Python"; then
-    echo "  # 安装 Python 3.10+（推荐 3.11）"
-    echo "  # Ubuntu/Debian: apt install python3.11 python3.11-venv"
-    echo "  # 或从源码: https://www.python.org/downloads/"
-    echo "  # 安装后运行: python3 --version 确认 >= 3.10"
+    echo "  # 普通用户安装 Python 3.10+（推荐 pyenv）"
+    echo "  curl https://pyenv.run | bash"
+    echo "  export PATH=\"\$HOME/.pyenv/bin:\$PATH\""
+    echo "  eval \"\$(pyenv init -)\""
+    echo "  pyenv install 3.11.12"
+    echo "  pyenv global 3.11.12"
+    echo "  python3 --version    # 确认 >= 3.10"
     echo ""
   fi
 
   if printf '%s\n' "${missing[@]}" | grep -q "Node"; then
-    echo "  # 安装 Node.js 22+"
-    if [[ "$DISTRO" == "rhel" ]]; then
-      echo "  curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -"
-      echo "  dnf install -y nodejs"
-    elif [[ "$DISTRO" == "debian" ]]; then
-      echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
-      echo "  apt install -y nodejs"
-    else
-      echo "  # 使用 nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
-      echo "  # 然后: nvm install 22 && nvm use 22"
-    fi
+    echo "  # 普通用户安装 Node.js 22+（nvm）"
+    echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
+    echo "  source ~/.bashrc"
+    echo "  nvm install 22"
+    echo "  nvm use 22"
+    echo "  node -v            # 确认 >= v22"
     echo ""
   fi
 
