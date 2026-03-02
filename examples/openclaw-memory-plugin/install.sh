@@ -7,8 +7,10 @@
 #   REPO=owner/repo          - GitHub 仓库 (默认: OpenViking/OpenViking)
 #   BRANCH=branch            - 克隆的分支 (默认: main)
 #   OPENVIKING_INSTALL_YES=1 - 非交互模式 (等同于 -y)
-#   SKIP_OPENCLAW=1          - 跳过 OpenClaw 安装 (已安装时使用)
+#   SKIP_OPENCLAW=1          - 跳过 OpenClaw 校验
 #   SKIP_OPENVIKING=1        - 跳过 OpenViking 安装 (已安装时使用)
+#   NPM_REGISTRY=url         - npm 镜像源 (默认: https://registry.npmmirror.com)
+#   PIP_INDEX_URL=url        - pip 镜像源 (默认: https://pypi.tuna.tsinghua.edu.cn/simple)
 #
 
 set -e
@@ -18,6 +20,8 @@ BRANCH="${BRANCH:-main}"
 INSTALL_YES="${OPENVIKING_INSTALL_YES:-0}"
 SKIP_OC="${SKIP_OPENCLAW:-0}"
 SKIP_OV="${SKIP_OPENVIKING:-0}"
+NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 HOME_DIR="${HOME:-$USERPROFILE}"
 OPENCLAW_DIR="${HOME_DIR}/.openclaw"
 OPENVIKING_DIR="${HOME_DIR}/.openviking"
@@ -200,15 +204,26 @@ validate_environment() {
 
 install_openclaw() {
   if [[ "$SKIP_OC" == "1" ]]; then
-    info "跳过 OpenClaw 安装 (SKIP_OPENCLAW=1)"
+    info "跳过 OpenClaw 校验 (SKIP_OPENCLAW=1)"
     return 0
   fi
-  info "正在安装 OpenClaw..."
-  npm install -g openclaw || {
-    err "OpenClaw 安装失败，请检查 npm 全局安装权限（普通用户可改用 nvm 环境）"
-    exit 1
-  }
-  info "OpenClaw 安装完成 ✓"
+  info "正在校验 OpenClaw..."
+  if command -v openclaw >/dev/null 2>&1; then
+    info "OpenClaw 已安装 ✓"
+    return 0
+  fi
+
+  err "未检测到 OpenClaw，请先手动安装后再执行本脚本"
+  echo ""
+  echo "推荐命令（普通用户，国内镜像）："
+  echo "  npm install -g openclaw --registry ${NPM_REGISTRY}"
+  echo ""
+  echo "如遇全局权限问题，建议先用 nvm 安装 Node 后再执行上述命令。"
+  echo "安装完成后，运行："
+  echo "  openclaw --version"
+  echo "  openclaw onboard"
+  echo ""
+  exit 1
 }
 
 install_openviking() {
@@ -217,8 +232,9 @@ install_openviking() {
     return 0
   fi
   info "正在安装 OpenViking (PyPI)..."
-  python3 -m pip install --upgrade pip -q
-  python3 -m pip install openviking || {
+  info "使用 pip 镜像源: ${PIP_INDEX_URL}"
+  python3 -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}"
+  python3 -m pip install openviking -i "${PIP_INDEX_URL}" || {
     err "OpenViking 安装失败，请检查 Python 版本 (需 >= 3.10) 及 pip"
     exit 1
   }
