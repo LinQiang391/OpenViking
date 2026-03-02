@@ -9,13 +9,13 @@
 **前置条件：** Python >= 3.10、Node.js >= 22。脚本会自动校验这些依赖，若有缺失会给出安装指引。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OpenViking/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash
 ```
 
 非交互模式（使用默认配置）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OpenViking/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash -s -y
+curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash -s -y
 ```
 
 脚本会：1) 校验 OpenViking 运行环境；2) 安装 OpenClaw 和 OpenViking；3) 运行配置助手完成记忆插件部署。
