@@ -4,8 +4,8 @@
 # 使用方式: curl -fsSL https://raw.githubusercontent.com/OpenViking/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash
 #
 # 支持的环境变量:
-#   REPO=owner/repo          - GitHub 仓库 (默认: LinQiang391/OpenViking)
-#   BRANCH=branch            - 克隆的分支 (默认: install)
+#   REPO=owner/repo          - GitHub 仓库 (默认: volcengine/OpenViking)
+#   BRANCH=branch            - 克隆的分支 (默认: main)
 #   OPENVIKING_INSTALL_YES=1 - 非交互模式 (等同于 -y)
 #   SKIP_OPENCLAW=1          - 跳过 OpenClaw 校验
 #   SKIP_OPENVIKING=1        - 跳过 OpenViking 安装 (已安装时使用)
@@ -15,8 +15,8 @@
 
 set -e
 
-REPO="${REPO:-LinQiang391/OpenViking}"
-BRANCH="${BRANCH:-install}"
+REPO="${REPO:-volcengine/OpenViking}"
+BRANCH="${BRANCH:-main}"
 INSTALL_YES="${OPENVIKING_INSTALL_YES:-0}"
 SKIP_OC="${SKIP_OPENCLAW:-0}"
 SKIP_OV="${SKIP_OPENVIKING:-0}"
