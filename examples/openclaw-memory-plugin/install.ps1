@@ -285,18 +285,50 @@ function Configure-OpenClawPlugin {
   param([int]$ServerPort)
   Info (T "Configuring OpenClaw plugin..." "正在配置 OpenClaw 插件...")
 
-  $pathsJson = @($PluginDest) | ConvertTo-Json -Compress
-  & openclaw config set plugins.enabled true | Out-Host
-  & openclaw config set plugins.allow '["memory-openviking"]' --json | Out-Host
-  & openclaw config set gateway.mode local | Out-Host
-  & openclaw config set plugins.slots.memory memory-openviking | Out-Host
-  & openclaw config set plugins.load.paths $pathsJson --json | Out-Host
-  & openclaw config set plugins.entries.memory-openviking.config.mode local | Out-Host
-  & openclaw config set plugins.entries.memory-openviking.config.configPath "~/.openviking/ov.conf" | Out-Host
-  & openclaw config set plugins.entries.memory-openviking.config.port "$ServerPort" | Out-Host
-  & openclaw config set plugins.entries.memory-openviking.config.targetUri "viking://" | Out-Host
-  & openclaw config set plugins.entries.memory-openviking.config.autoRecall true --json | Out-Host
-  & openclaw config set plugins.entries.memory-openviking.config.autoCapture true --json | Out-Host
+  $cfgPath = Join-Path $OpenClawDir "openclaw.json"
+  $cfg = @{}
+  if (Test-Path $cfgPath) {
+    try {
+      $raw = Get-Content -Raw -Path $cfgPath
+      if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        $obj = $raw | ConvertFrom-Json -AsHashtable
+        if ($obj) { $cfg = $obj }
+      }
+    } catch {
+      Warn (T "Existing openclaw.json is invalid. Rebuilding required sections." "检测到已有 openclaw.json 非法，将重建相关配置节点。")
+    }
+  }
+
+  if (-not $cfg.ContainsKey("plugins")) { $cfg["plugins"] = @{} }
+  if (-not $cfg.ContainsKey("gateway")) { $cfg["gateway"] = @{} }
+  if (-not $cfg["plugins"].ContainsKey("slots")) { $cfg["plugins"]["slots"] = @{} }
+  if (-not $cfg["plugins"].ContainsKey("load")) { $cfg["plugins"]["load"] = @{} }
+  if (-not $cfg["plugins"].ContainsKey("entries")) { $cfg["plugins"]["entries"] = @{} }
+
+  # Keep plugin load paths unique.
+  $existingPaths = @()
+  if ($cfg["plugins"]["load"].ContainsKey("paths") -and $cfg["plugins"]["load"]["paths"]) {
+    $existingPaths = @($cfg["plugins"]["load"]["paths"])
+  }
+  $mergedPaths = @($existingPaths + @($PluginDest) | Select-Object -Unique)
+
+  $cfg["plugins"]["enabled"] = $true
+  $cfg["plugins"]["allow"] = @("memory-openviking")
+  $cfg["plugins"]["slots"]["memory"] = "memory-openviking"
+  $cfg["plugins"]["load"]["paths"] = $mergedPaths
+  $cfg["plugins"]["entries"]["memory-openviking"] = @{
+    config = @{
+      mode = "local"
+      configPath = "~/.openviking/ov.conf"
+      port = $ServerPort
+      targetUri = "viking://"
+      autoRecall = $true
+      autoCapture = $true
+    }
+  }
+  $cfg["gateway"]["mode"] = "local"
+
+  $cfg | ConvertTo-Json -Depth 20 | Set-Content -Path $cfgPath -Encoding UTF8
 
   Info (T "OpenClaw plugin configured" "OpenClaw 插件配置完成")
 }
