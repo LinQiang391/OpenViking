@@ -3,22 +3,36 @@ use std::path::PathBuf;
 
 use crate::error::{Error, Result};
 
+const OPENVIKING_CLI_CONFIG_ENV: &str = "OPENVIKING_CLI_CONFIG_FILE";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_url")]
     pub url: String,
     pub api_key: Option<String>,
-    pub user: Option<String>,
+    pub agent_id: Option<String>,
+    #[serde(default = "default_timeout")]
+    pub timeout: f64,
     #[serde(default = "default_output_format")]
     pub output: String,
+    #[serde(default = "default_echo_command")]
+    pub echo_command: bool,
 }
 
 fn default_url() -> String {
     "http://localhost:1933".to_string()
 }
 
+fn default_timeout() -> f64 {
+    60.0
+}
+
 fn default_output_format() -> String {
     "table".to_string()
+}
+
+fn default_echo_command() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -26,8 +40,10 @@ impl Default for Config {
         Self {
             url: "http://localhost:1933".to_string(),
             api_key: None,
-            user: None,
+            agent_id: None,
+            timeout: 60.0,
             output: "table".to_string(),
+            echo_command: true,
         }
     }
 }
@@ -39,6 +55,14 @@ impl Config {
     }
 
     pub fn load_default() -> Result<Self> {
+        // Resolution order: env var > default path
+        if let Ok(env_path) = std::env::var(OPENVIKING_CLI_CONFIG_ENV) {
+            let p = PathBuf::from(env_path);
+            if p.exists() {
+                return Self::from_file(&p.to_string_lossy());
+            }
+        }
+
         let config_path = default_config_path()?;
         if config_path.exists() {
             Self::from_file(&config_path.to_string_lossy())

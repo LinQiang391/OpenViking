@@ -22,17 +22,16 @@ from datetime import datetime
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from pyagfs import AGFSClient
 from pyagfs.exceptions import AGFSHTTPError
 
 from openviking.server.identity import RequestContext, Role
-from openviking.storage.vikingdb_interface import VikingDBInterface
 from openviking.utils.time_utils import format_simplified, get_current_timestamp, parse_iso_datetime
 from openviking_cli.session.user_id import UserIdentifier
 from openviking_cli.utils.logger import get_logger
 from openviking_cli.utils.uri import VikingURI
 
 if TYPE_CHECKING:
+    from openviking.storage.viking_vector_index_backend import VikingVectorIndexBackend
     from openviking_cli.utils.config import RerankConfig
 
 logger = get_logger(__name__)
@@ -69,30 +68,30 @@ _instance: Optional["VikingFS"] = None
 
 
 def init_viking_fs(
-    agfs_url: str = "http://localhost:8080",
+    agfs: Any,
     query_embedder: Optional[Any] = None,
     rerank_config: Optional["RerankConfig"] = None,
-    vector_store: Optional["VikingDBInterface"] = None,
+    vector_store: Optional["VikingVectorIndexBackend"] = None,
     timeout: int = 10,
     enable_recorder: bool = False,
 ) -> "VikingFS":
     """Initialize VikingFS singleton.
 
     Args:
-        agfs_url: AGFS service URL
+        agfs: Pre-initialized AGFS client (HTTP or Binding)
+        agfs_config: AGFS configuration object for backend settings
         query_embedder: Embedder instance
         rerank_config: Rerank configuration
         vector_store: Vector store instance
-        timeout: Request timeout in seconds
         enable_recorder: Whether to enable IO recording
     """
     global _instance
+
     _instance = VikingFS(
-        agfs_url=agfs_url,
+        agfs=agfs,
         query_embedder=query_embedder,
         rerank_config=rerank_config,
         vector_store=vector_store,
-        timeout=timeout,
     )
 
     if enable_recorder:
@@ -153,24 +152,27 @@ class VikingFS:
     APIs are divided into two categories:
     - AGFS basic commands (direct forwarding): read, ls, write, mkdir, rm, mv, grep, stat
     - VikingFS specific capabilities: abstract, overview, find, search, relations, link, unlink
+
+    Supports two modes:
+    - HTTP mode: Use AGFSClient to connect to AGFS server via HTTP
+    - Binding mode: Use AGFSBindingClient to directly use AGFS implementation
     """
 
     def __init__(
         self,
-        agfs_url: str = "http://localhost:8080",
+        agfs: Any,
         query_embedder: Optional[Any] = None,
         rerank_config: Optional["RerankConfig"] = None,
-        vector_store: Optional["VikingDBInterface"] = None,
+        vector_store: Optional["VikingVectorIndexBackend"] = None,
         timeout: int = 10,
     ):
-        self.agfs = AGFSClient(api_base_url=agfs_url, timeout=timeout)
+        self.agfs = agfs
         self.query_embedder = query_embedder
         self.rerank_config = rerank_config
         self.vector_store = vector_store
         self._bound_ctx: contextvars.ContextVar[Optional[RequestContext]] = contextvars.ContextVar(
             "vikingfs_bound_ctx", default=None
         )
-        logger.info(f"[VikingFS] Initialized with agfs_url={agfs_url}")
 
     @staticmethod
     def _default_ctx() -> RequestContext:
@@ -382,6 +384,7 @@ class VikingFS:
         abs_limit: int = 256,
         show_all_hidden: bool = False,
         node_limit: int = 1000,
+        level_limit: int = 3,
         ctx: Optional[RequestContext] = None,
     ) -> List[Dict[str, Any]]:
         """
@@ -392,6 +395,8 @@ class VikingFS:
             output: str = "original" or "agent"
             abs_limit: int = 256 (for agent output abstract truncation)
             show_all_hidden: bool = False (list all hidden files, like -a)
+            node_limit: int = 1000 (maximum number of nodes to list)
+            level_limit: int = 3 (maximum depth level to traverse)
 
         output="original"
         [{'name': '.abstract.md', 'size': 100, 'mode': 420, 'modTime': '2026-02-11T16:52:16.256334192+08:00', 'isDir': False, 'meta': {...}, 'rel_path': '.abstract.md', 'uri': 'viking://resources...'}]
@@ -401,9 +406,11 @@ class VikingFS:
         """
         self._ensure_access(uri, ctx)
         if output == "original":
-            return await self._tree_original(uri, show_all_hidden, node_limit, ctx=ctx)
+            return await self._tree_original(uri, show_all_hidden, node_limit, level_limit, ctx=ctx)
         elif output == "agent":
-            return await self._tree_agent(uri, abs_limit, show_all_hidden, node_limit, ctx=ctx)
+            return await self._tree_agent(
+                uri, abs_limit, show_all_hidden, node_limit, level_limit, ctx=ctx
+            )
         else:
             raise ValueError(f"Invalid output format: {output}")
 
@@ -412,6 +419,7 @@ class VikingFS:
         uri: str,
         show_all_hidden: bool = False,
         node_limit: int = 1000,
+        level_limit: int = 3,
         ctx: Optional[RequestContext] = None,
     ) -> List[Dict[str, Any]]:
         """Recursively list all contents (original format)."""
@@ -419,8 +427,8 @@ class VikingFS:
         all_entries = []
         real_ctx = self._ctx_or_default(ctx)
 
-        async def _walk(current_path: str, current_rel: str):
-            if len(all_entries) >= node_limit:
+        async def _walk(current_path: str, current_rel: str, current_depth: int):
+            if len(all_entries) >= node_limit or current_depth > level_limit:
                 return
             for entry in self._ls_entries(current_path):
                 if len(all_entries) >= node_limit:
@@ -436,13 +444,13 @@ class VikingFS:
                     continue
                 if entry.get("isDir"):
                     all_entries.append(new_entry)
-                    await _walk(f"{current_path}/{name}", rel_path)
+                    await _walk(f"{current_path}/{name}", rel_path, current_depth + 1)
                 elif not name.startswith("."):
                     all_entries.append(new_entry)
                 elif show_all_hidden:
                     all_entries.append(new_entry)
 
-        await _walk(path, "")
+        await _walk(path, "", 0)
         return all_entries
 
     async def _tree_agent(
@@ -451,6 +459,7 @@ class VikingFS:
         abs_limit: int,
         show_all_hidden: bool = False,
         node_limit: int = 1000,
+        level_limit: int = 3,
         ctx: Optional[RequestContext] = None,
     ) -> List[Dict[str, Any]]:
         """Recursively list all contents (agent format with abstracts)."""
@@ -459,8 +468,8 @@ class VikingFS:
         now = datetime.now()
         real_ctx = self._ctx_or_default(ctx)
 
-        async def _walk(current_path: str, current_rel: str):
-            if len(all_entries) >= node_limit:
+        async def _walk(current_path: str, current_rel: str, current_depth: int):
+            if len(all_entries) >= node_limit or current_depth > level_limit:
                 return
             for entry in self._ls_entries(current_path):
                 if len(all_entries) >= node_limit:
@@ -480,13 +489,13 @@ class VikingFS:
                     continue
                 if entry.get("isDir"):
                     all_entries.append(new_entry)
-                    await _walk(f"{current_path}/{name}", rel_path)
+                    await _walk(f"{current_path}/{name}", rel_path, current_depth + 1)
                 elif not name.startswith("."):
                     all_entries.append(new_entry)
                 elif show_all_hidden:
                     all_entries.append(new_entry)
 
-        await _walk(path, "")
+        await _walk(path, "", 0)
 
         await self._batch_fetch_abstracts(all_entries, abs_limit, ctx=ctx)
 
@@ -604,7 +613,7 @@ class VikingFS:
             ctx=self._ctx_or_default(ctx),
             limit=limit,
             score_threshold=score_threshold,
-            metadata_filter=filter,
+            scope_dsl=filter,
         )
 
         # Convert QueryResult to FindResult
@@ -721,7 +730,7 @@ class VikingFS:
                 ctx=self._ctx_or_default(ctx),
                 limit=limit,
                 score_threshold=score_threshold,
-                metadata_filter=filter,
+                scope_dsl=filter,
             )
 
         query_results = await asyncio.gather(*[_execute(tq) for tq in typed_queries])
@@ -958,7 +967,36 @@ class VikingFS:
             except Exception:
                 return b""
 
+    def _decode_bytes(self, data: bytes) -> str:
+        """Robustly decode bytes to string."""
+        if not data:
+            return ""
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                # Try common encoding for Windows/legacy files in China
+                return data.decode("gbk")
+            except UnicodeDecodeError:
+                try:
+                    return data.decode("latin-1")
+                except UnicodeDecodeError:
+                    return data.decode("utf-8", errors="replace")
+
     def _handle_agfs_content(self, result: Union[bytes, Any, None]) -> str:
+        """Handle AGFSClient content return types consistently."""
+        if isinstance(result, bytes):
+            return self._decode_bytes(result)
+        elif hasattr(result, "content") and result.content is not None:
+            return self._decode_bytes(result.content)
+        elif result is None:
+            return ""
+        else:
+            # Try to convert to string
+            try:
+                return str(result)
+            except Exception:
+                return ""
         """Handle AGFSClient content return types consistently."""
         if isinstance(result, bytes):
             return result.decode("utf-8")
@@ -1016,40 +1054,19 @@ class VikingFS:
     ) -> None:
         """Delete records with specified URIs from vector store.
 
-        Uses storage.remove_by_uri method, which implements recursive deletion of child nodes.
+        Uses tenant-safe URI deletion semantics from vector store.
         """
-        storage = self._get_vector_store()
-        if not storage:
+        vector_store = self._get_vector_store()
+        if not vector_store:
             return
         real_ctx = self._ctx_or_default(ctx)
 
-        for uri in uris:
-            try:
-                filter_conds: List[Dict[str, Any]] = [
-                    {"op": "must", "field": "account_id", "conds": [real_ctx.account_id]},
-                    {
-                        "op": "or",
-                        "conds": [
-                            {"op": "must", "field": "uri", "conds": [uri]},
-                            {"op": "must", "field": "uri", "conds": [f"{uri}/"]},
-                        ],
-                    },
-                ]
-                if real_ctx.role == Role.USER and uri.startswith(
-                    ("viking://user/", "viking://agent/")
-                ):
-                    owner_space = (
-                        real_ctx.user.user_space_name()
-                        if uri.startswith("viking://user/")
-                        else real_ctx.user.agent_space_name()
-                    )
-                    filter_conds.append(
-                        {"op": "must", "field": "owner_space", "conds": [owner_space]}
-                    )
-                await storage.batch_delete("context", {"op": "and", "conds": filter_conds})
+        try:
+            await vector_store.delete_uris(real_ctx, uris)
+            for uri in uris:
                 logger.info(f"[VikingFS] Deleted from vector store: {uri}")
-            except Exception as e:
-                logger.warning(f"[VikingFS] Failed to delete {uri} from vector store: {e}")
+        except Exception as e:
+            logger.warning(f"[VikingFS] Failed to delete from vector store: {e}")
 
     async def _update_vector_store_uris(
         self,
@@ -1062,8 +1079,8 @@ class VikingFS:
 
         Preserves vector data, only updates uri and parent_uri fields, no need to regenerate embeddings.
         """
-        storage = self._get_vector_store()
-        if not storage:
+        vector_store = self._get_vector_store()
+        if not vector_store:
             return
 
         old_base_uri = self._path_to_uri(old_base, ctx=ctx)
@@ -1071,19 +1088,9 @@ class VikingFS:
 
         for uri in uris:
             try:
-                records = await storage.filter(
-                    collection="context",
-                    filter={
-                        "op": "and",
-                        "conds": [
-                            {"op": "must", "field": "uri", "conds": [uri]},
-                            {
-                                "op": "must",
-                                "field": "account_id",
-                                "conds": [self._ctx_or_default(ctx).account_id],
-                            },
-                        ],
-                    },
+                records = await vector_store.get_context_by_uri(
+                    account_id=self._ctx_or_default(ctx).account_id,
+                    uri=uri,
                     limit=1,
                 )
 
@@ -1091,7 +1098,6 @@ class VikingFS:
                     continue
 
                 record = records[0]
-                record_id = record["id"]
 
                 new_uri = uri.replace(old_base_uri, new_base_uri, 1)
 
@@ -1100,19 +1106,17 @@ class VikingFS:
                     old_parent_uri.replace(old_base_uri, new_base_uri, 1) if old_parent_uri else ""
                 )
 
-                await storage.update(
-                    "context",
-                    record_id,
-                    {
-                        "uri": new_uri,
-                        "parent_uri": new_parent_uri,
-                    },
+                await vector_store.update_uri_mapping(
+                    ctx=self._ctx_or_default(ctx),
+                    uri=uri,
+                    new_uri=new_uri,
+                    new_parent_uri=new_parent_uri,
                 )
                 logger.info(f"[VikingFS] Updated URI: {uri} -> {new_uri}")
             except Exception as e:
                 logger.warning(f"[VikingFS] Failed to update {uri} in vector store: {e}")
 
-    def _get_vector_store(self) -> Optional["VikingDBInterface"]:
+    def _get_vector_store(self) -> Optional["VikingVectorIndexBackend"]:
         """Get vector store instance."""
         return self.vector_store
 
@@ -1282,7 +1286,7 @@ class VikingFS:
             existing = ""
             try:
                 existing_bytes = self._handle_agfs_read(self.agfs.read(path))
-                existing = existing_bytes.decode("utf-8")
+                existing = self._decode_bytes(existing_bytes)
             except Exception:
                 pass
 

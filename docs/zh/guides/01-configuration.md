@@ -289,6 +289,40 @@ OpenViking 使用 JSON 配置文件（`ov.conf`）进行设置。配置文件支
 
 如果未配置 VLM，L0/L1 将直接从内容生成（语义性较弱），多模态资源的描述可能有限。
 
+### code
+
+通过 `code_summary_mode` 控制代码文件的摘要生成方式。以下两种写法等价：
+
+```json
+{
+  "code": {
+    "code_summary_mode": "ast"
+  }
+}
+```
+
+```json
+{
+  "parsers": {
+    "code": {
+      "code_summary_mode": "ast"
+    }
+  }
+}
+```
+
+将 `code_summary_mode` 设置为以下三个值之一：
+
+| 值 | 说明 | 默认 |
+|----|------|------|
+| `"ast"` | 对 ≥100 行的代码文件提取 AST 骨架（类名、方法签名、首行注释、import），跳过 LLM 调用。**推荐用于大规模代码索引** | ✓ |
+| `"llm"` | 全部走 LLM 生成摘要（成本较高） | |
+| `"ast_llm"` | 先提取 AST 骨架（含完整注释），再将骨架作为上下文辅助 LLM 生成摘要（质量最高，成本居中） | |
+
+AST 提取支持：Python、JavaScript/TypeScript、Rust、Go、Java、C/C++。其他语言、提取失败或骨架为空时自动 fallback 到 LLM。
+
+详见 [代码骨架提取](../concepts/06-extraction.md#代码骨架提取ast-模式)。
+
 ### rerank
 
 用于搜索结果精排的 Rerank 模型。
@@ -313,7 +347,16 @@ OpenViking 使用 JSON 配置文件（`ov.conf`）进行设置。配置文件支
 
 ### storage
 
-存储后端配置。
+用于存储上下文数据 ，包括文件存储（AGFS）和向量库存储（VectorDB）。
+
+#### 根级配置
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `workspace` | str | 本地数据存储路径（主要配置） | "./data" |
+| `agfs` | object | agfs 配置 | {} |
+| `vectordb` | object | 向量库存储配置 | {} |
+
 
 ```json
 {
@@ -329,6 +372,171 @@ OpenViking 使用 JSON 配置文件（`ov.conf`）进行设置。配置文件支
   }
 }
 ```
+
+#### agfs
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `mode` | str | `"http-client"` 或 `"binding-client"` | `"http-client"` |
+| `backend` | str | `"local"`、`"s3"` 或 `"memory"` | `"local"` |
+| `url` | str | `http-client` 模式下的 AGFS 服务地址 | `"http://localhost:1833"` |
+| `timeout` | float | 请求超时时间（秒） | `10.0` |
+| `s3` | object | S3 backend configuration (when backend is 's3') | - |
+
+
+**配置示例**
+
+<details>
+<summary><b>HTTP Client（默认）</b></summary>
+
+通过 HTTP 连接到远程或本地的 AGFS 服务。
+
+```json
+{
+  "storage": {
+    "agfs": {
+      "mode": "http-client",
+      "url": "http://localhost:1833",
+      "timeout": 10.0
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Binding Client（高性能）</b></summary>
+
+通过共享库直接使用 AGFS 的 Go 实现。
+
+**配置**：
+```json
+{
+  "storage": {
+    "agfs": {
+      "mode": "binding-client",
+      "backend": "local"
+    }
+  }
+}
+```
+
+</details>
+
+
+##### S3 后端配置
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `bucket` | str | S3 存储桶名称 | null |
+| `region` | str | 存储桶所在的 AWS 区域（例如 us-east-1, cn-beijing） | null |
+| `access_key` | str | S3 访问密钥 ID | null |
+| `secret_key` | str | 与访问密钥 ID 对应的 S3 秘密访问密钥 | null |
+| `endpoint` | str | 自定义 S3 端点 URL，对于 MinIO 或 LocalStack 等 S3 兼容服务是必需的 | null |
+| `prefix` | str | 用于命名空间隔离的可选键前缀 | "" |
+| `use_ssl` | bool | 为 S3 连接启用/禁用 SSL（HTTPS） | true |
+| `use_path_style` | bool | true 表示对 MinIO 和某些 S3 兼容服务使用 PathStyle；false 表示对 TOS 和某些 S3 兼容服务使用 VirtualHostStyle | true |
+
+</details>
+
+<details>
+<summary><b>PathStyle S3</b></summary>
+支持 PathStyle 模式的 S3 存储， 如 MinIO、SeaweedFS.
+
+```json
+{
+  "storage": {
+    "agfs": {
+      "backend": "s3",
+      "s3": {
+        "bucket": "my-bucket",
+        "endpoint": "s3.amazonaws.com",
+        "region": "us-east-1",
+        "access_key": "your-ak",
+        "secret_key": "your-sk"
+      }
+    }
+  }
+}
+```
+</details>
+
+
+<details>
+<summary><b>VirtualHostStyle S3</b></summary>
+支持 VirtualHostStyle 模式的 S3 存储， 如 TOS.
+
+```json
+{
+  "storage": {
+    "agfs": {
+      "backend": "s3",
+      "s3": {
+        "bucket": "my-bucket",
+        "endpoint": "s3.amazonaws.com",
+        "region": "us-east-1",
+        "access_key": "your-ak",
+        "secret_key": "your-sk",
+        "use_path_style": false
+      }
+    }
+  }
+}
+```
+
+</details>
+
+
+#### vectordb
+
+向量库存储的配置 
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `backend` | str | VectorDB 后端类型: 'local'（基于文件）, 'http'（远程服务）, 'volcengine'（云上VikingDB）或 'vikingdb'（私有部署） | "local" |
+| `name` | str | VectorDB 的集合名称 | "context" |
+| `url` | str | 'http' 类型的远程服务 URL（例如 'http://localhost:5000'） | null |
+| `project_name` | str | 项目名称（别名 project） | "default" |
+| `distance_metric` | str | 向量相似度搜索的距离度量（例如 'cosine', 'l2', 'ip'） | "cosine" |
+| `dimension` | int | 向量嵌入的维度 | 0 |
+| `sparse_weight` | float | 混合向量搜索的稀疏权重，仅在使用混合索引时生效 | 0.0 |
+| `volcengine` | object | 'volcengine' 类型的 VikingDB 配置 | - |
+| `vikingdb` | object | 'vikingdb' 类型的私有部署配置 | - |
+
+默认使用本地模式
+```
+{
+  "storage": {
+    "vectordb": {
+      "backend": "local"
+    }
+  }
+}
+```
+
+<details>
+<summary><b>volcengine vikingDB</b></summary>
+支持火山引擎云上部署的 VikingDB
+
+```json
+{
+  "storage": {
+    "vectordb": {
+      "name": "context",
+      "backend": "volcengine",
+      "project": "default",
+      "volcengine": {
+        "region": "cn-beijing",
+        "ak": "your-access-key",
+        "sk": "your-secret-key"
+      }
+  }
+}
+```
+</details>
+
+
 
 ## 配置文件
 
@@ -443,6 +651,9 @@ HTTP 客户端（`SyncHTTPClient` / `AsyncHTTPClient`）和 CLI 工具连接远�
       "url": "string",
       "project": "string"
     }
+  },
+  "code": {
+    "code_summary_mode": "ast"
   },
   "server": {
     "host": "string",

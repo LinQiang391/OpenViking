@@ -29,7 +29,12 @@ impl CliContext {
     }
 
     pub fn get_client(&self) -> client::HttpClient {
-        client::HttpClient::new(&self.config.url, self.config.api_key.clone())
+        client::HttpClient::new(
+            &self.config.url,
+            self.config.api_key.clone(),
+            self.config.agent_id.clone(),
+            self.config.timeout,
+        )
     }
 }
 
@@ -69,9 +74,24 @@ enum Commands {
         /// Wait until processing is complete
         #[arg(long)]
         wait: bool,
-        /// Wait timeout in seconds
+        /// Wait timeout in seconds (only used with --wait)
         #[arg(long)]
         timeout: Option<f64>,
+        /// No strict mode for directory scanning
+        #[arg(long = "no-strict", default_value_t = false)]
+        no_strict: bool,
+        /// Ignore directories, e.g. --ignore-dirs "node_modules,dist"
+        #[arg(long)]
+        ignore_dirs: Option<String>,
+        /// Include files extensions, e.g. --include "*.pdf,*.md"
+        #[arg(long)]
+        include: Option<String>,
+        /// Exclude files extensions, e.g. --exclude "*.tmp,*.log"
+        #[arg(long)]
+        exclude: Option<String>,
+        /// Do not directly upload media files
+        #[arg(long = "no-directly-upload-media", default_value_t = false)]
+        no_directly_upload_media: bool,
     },
     /// Add a skill into OpenViking
     AddSkill {
@@ -175,7 +195,7 @@ enum Commands {
         #[arg(short, long)]
         all: bool,
         /// Maximum number of nodes to list
-        #[arg(long = "node-limit", short = 'n', default_value = "1000")]
+        #[arg(long = "node-limit", short = 'n', default_value = "256")]
         node_limit: i32,
     },
     /// Get directory tree
@@ -189,8 +209,11 @@ enum Commands {
         #[arg(short, long)]
         all: bool,
         /// Maximum number of nodes to list
-        #[arg(long = "node-limit", short = 'n', default_value = "1000")]
+        #[arg(long = "node-limit", short = 'n', default_value = "256")]
         node_limit: i32,
+        /// Maximum depth level to traverse (default: 3)
+        #[arg(short = 'L', long = "level-limit", default_value = "3")]
+        level_limit: i32,
     },
     /// Create directory
     Mkdir {
@@ -447,8 +470,34 @@ async fn main() {
     };
 
     let result = match cli.command {
-        Commands::AddResource { path, to, reason, instruction, wait, timeout } => {
-            handle_add_resource(path, to, reason, instruction, wait, timeout, ctx).await
+        Commands::AddResource {
+            path,
+            to,
+            reason,
+            instruction,
+            wait,
+            timeout,
+            no_strict,
+            ignore_dirs,
+            include,
+            exclude,
+            no_directly_upload_media,
+        } => {
+            handle_add_resource(
+                path,
+                to,
+                reason,
+                instruction,
+                wait,
+                timeout,
+                no_strict,
+                ignore_dirs,
+                include,
+                exclude,
+                no_directly_upload_media,
+                ctx,
+            )
+            .await
         }
         Commands::AddSkill { data, wait, timeout } => {
             handle_add_skill(data, wait, timeout, ctx).await
@@ -484,8 +533,8 @@ async fn main() {
         Commands::Ls { uri, simple, recursive, abs_limit, all, node_limit } => {
             handle_ls(uri, simple, recursive, abs_limit, all, node_limit, ctx).await
         }
-        Commands::Tree { uri, abs_limit, all, node_limit } => {
-            handle_tree(uri, abs_limit, all, node_limit, ctx).await
+        Commands::Tree { uri, abs_limit, all, node_limit, level_limit } => {
+            handle_tree(uri, abs_limit, all, node_limit, level_limit, ctx).await
         }
         Commands::Mkdir { uri } => {
             handle_mkdir(uri, ctx).await
@@ -540,6 +589,11 @@ async fn handle_add_resource(
     instruction: String,
     wait: bool,
     timeout: Option<f64>,
+    no_strict: bool,
+    ignore_dirs: Option<String>,
+    include: Option<String>,
+    exclude: Option<String>,
+    no_directly_upload_media: bool,
     ctx: CliContext,
 ) -> Result<()> {
     // Validate path: if it's a local path, check if it exists
@@ -570,9 +624,25 @@ async fn handle_add_resource(
         path = unescaped_path;
     }
     
+    let strict = !no_strict;
+    let directly_upload_media = !no_directly_upload_media;
+
     let client = ctx.get_client();
     commands::resources::add_resource(
-        &client, &path, to, reason, instruction, wait, timeout, ctx.output_format, ctx.compact
+        &client,
+        &path,
+        to,
+        reason,
+        instruction,
+        wait,
+        timeout,
+        strict,
+        ignore_dirs,
+        include,
+        exclude,
+        directly_upload_media,
+        ctx.output_format,
+        ctx.compact,
     ).await
 }
 
@@ -810,16 +880,42 @@ async fn handle_search(
     commands::search::search(&client, &query, &uri, session_id, limit, threshold, ctx.output_format, ctx.compact).await
 }
 
+/// Print command with specified parameters for debugging
+fn print_command_echo(command: &str, params: &str, echo_enabled: bool) {
+    if echo_enabled {
+        println!("cmd: {} {}", command, params);
+    }
+}
+
 async fn handle_ls(uri: String, simple: bool, recursive: bool, abs_limit: i32, show_all_hidden: bool, node_limit: i32, ctx: CliContext) -> Result<()> {
+    let mut params = vec![
+        uri.clone(),
+        format!("-l {}", abs_limit),
+        format!("-n {}", node_limit),
+    ];
+    if simple { params.push("-s".to_string()); }
+    if recursive { params.push("-r".to_string()); }
+    if show_all_hidden { params.push("-a".to_string()); }
+    print_command_echo("ov ls", &params.join(" "), ctx.config.echo_command);
+
     let client = ctx.get_client();
     let api_output = if ctx.compact { "agent" } else { "original" };
     commands::filesystem::ls(&client, &uri, simple, recursive, api_output, abs_limit, show_all_hidden, node_limit, ctx.output_format, ctx.compact).await
 }
 
-async fn handle_tree(uri: String, abs_limit: i32, show_all_hidden: bool, node_limit: i32, ctx: CliContext) -> Result<()> {
+async fn handle_tree(uri: String, abs_limit: i32, show_all_hidden: bool, node_limit: i32, level_limit: i32, ctx: CliContext) -> Result<()> {
+    let mut params = vec![
+        uri.clone(),
+        format!("-l {}", abs_limit),
+        format!("-n {}", node_limit),
+        format!("-L {}", level_limit),
+    ];
+    if show_all_hidden { params.push("-a".to_string()); }
+    print_command_echo("ov tree", &params.join(" "), ctx.config.echo_command);
+
     let client = ctx.get_client();
     let api_output = if ctx.compact { "agent" } else { "original" };
-    commands::filesystem::tree(&client, &uri, api_output, abs_limit, show_all_hidden, node_limit, ctx.output_format, ctx.compact).await
+    commands::filesystem::tree(&client, &uri, api_output, abs_limit, show_all_hidden, node_limit, level_limit, ctx.output_format, ctx.compact).await
 }
 
 async fn handle_mkdir(uri: String, ctx: CliContext) -> Result<()> {

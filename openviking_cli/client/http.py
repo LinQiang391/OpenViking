@@ -132,6 +132,7 @@ class AsyncHTTPClient(BaseClient):
         url: Optional[str] = None,
         api_key: Optional[str] = None,
         agent_id: Optional[str] = None,
+        timeout: float = 60.0,
     ):
         """Initialize AsyncHTTPClient.
 
@@ -139,6 +140,7 @@ class AsyncHTTPClient(BaseClient):
             url: OpenViking Server URL. If not provided, reads from ovcli.conf.
             api_key: API key for authentication. If not provided, reads from ovcli.conf.
             agent_id: Agent identifier. If not provided, reads from ovcli.conf.
+            timeout: HTTP request timeout in seconds. Default 60.0.
         """
         if url is None:
             config_path = resolve_config_path(None, OPENVIKING_CLI_CONFIG_ENV, DEFAULT_OVCLI_CONF)
@@ -147,6 +149,8 @@ class AsyncHTTPClient(BaseClient):
                 url = cfg.get("url")
                 api_key = api_key or cfg.get("api_key")
                 agent_id = agent_id or cfg.get("agent_id")
+                if timeout == 60.0:  # only override default with config value
+                    timeout = cfg.get("timeout", 60.0)
         if not url:
             raise ValueError(
                 "url is required. Pass it explicitly or configure in "
@@ -156,6 +160,7 @@ class AsyncHTTPClient(BaseClient):
         self._api_key = api_key
         self._agent_id = agent_id
         self._user = UserIdentifier.the_default_user()
+        self._timeout = timeout
         self._http: Optional[httpx.AsyncClient] = None
         self._observer: Optional[_HTTPObserver] = None
 
@@ -171,14 +176,17 @@ class AsyncHTTPClient(BaseClient):
         self._http = httpx.AsyncClient(
             base_url=self._url,
             headers=headers,
-            timeout=60.0,
+            timeout=self._timeout,
         )
         self._observer = _HTTPObserver(self)
 
     async def close(self) -> None:
         """Close the HTTP client."""
         if self._http:
-            await self._http.aclose()
+            try:
+                await self._http.aclose()
+            except RuntimeError:
+                pass
             self._http = None
 
     # ============= Internal Helpers =============
@@ -275,6 +283,11 @@ class AsyncHTTPClient(BaseClient):
         instruction: str = "",
         wait: bool = False,
         timeout: Optional[float] = None,
+        strict: bool = True,
+        ignore_dirs: Optional[str] = None,
+        include: Optional[str] = None,
+        exclude: Optional[str] = None,
+        directly_upload_media: bool = True,
     ) -> Dict[str, Any]:
         """Add resource to OpenViking."""
         request_data = {
@@ -283,16 +296,27 @@ class AsyncHTTPClient(BaseClient):
             "instruction": instruction,
             "wait": wait,
             "timeout": timeout,
+            "strict": strict,
+            "ignore_dirs": ignore_dirs,
+            "include": include,
+            "exclude": exclude,
+            "directly_upload_media": directly_upload_media,
         }
 
         path_obj = Path(path)
-        if path_obj.exists() and path_obj.is_dir() and not self._is_local_server():
-            zip_path = self._zip_directory(path)
-            try:
-                temp_path = await self._upload_temp_file(zip_path)
+        if path_obj.exists() and not self._is_local_server():
+            if path_obj.is_dir():
+                zip_path = self._zip_directory(path)
+                try:
+                    temp_path = await self._upload_temp_file(zip_path)
+                    request_data["temp_path"] = temp_path
+                finally:
+                    Path(zip_path).unlink(missing_ok=True)
+            elif path_obj.is_file():
+                temp_path = await self._upload_temp_file(path)
                 request_data["temp_path"] = temp_path
-            finally:
-                Path(zip_path).unlink(missing_ok=True)
+            else:
+                request_data["path"] = path
         else:
             request_data["path"] = path
 
@@ -309,21 +333,44 @@ class AsyncHTTPClient(BaseClient):
         timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Add skill to OpenViking."""
+        request_data = {
+            "wait": wait,
+            "timeout": timeout,
+        }
+
+        if isinstance(data, str):
+            path_obj = Path(data)
+            if path_obj.exists() and not self._is_local_server():
+                if path_obj.is_dir():
+                    zip_path = self._zip_directory(data)
+                    try:
+                        temp_path = await self._upload_temp_file(zip_path)
+                        request_data["temp_path"] = temp_path
+                    finally:
+                        Path(zip_path).unlink(missing_ok=True)
+                elif path_obj.is_file():
+                    temp_path = await self._upload_temp_file(data)
+                    request_data["temp_path"] = temp_path
+                else:
+                    request_data["data"] = data
+            else:
+                request_data["data"] = data
+        else:
+            request_data["data"] = data
+
         response = await self._http.post(
             "/api/v1/skills",
-            json={
-                "data": data,
-                "wait": wait,
-                "timeout": timeout,
-            },
+            json=request_data,
         )
         return self._handle_response(response)
 
     async def wait_processed(self, timeout: Optional[float] = None) -> Dict[str, Any]:
         """Wait for all processing to complete."""
+        http_timeout = timeout if timeout else 600.0
         response = await self._http.post(
             "/api/v1/system/wait",
             json={"timeout": timeout},
+            timeout=http_timeout,
         )
         return self._handle_response(response)
 
@@ -751,21 +798,45 @@ class AsyncHTTPClient(BaseClient):
 
     # ============= New methods for BaseClient interface =============
 
-    def session(self, session_id: Optional[str] = None) -> Any:
+    def session(self, session_id: Optional[str] = None, must_exist: bool = False) -> Any:
         """Create a new session or load an existing one.
 
         Args:
             session_id: Session ID, creates a new session if None
+            must_exist: If True and session_id is provided, raises NotFoundError
+                        when the session does not exist.
+                        If session_id is None, must_exist is ignored.
 
         Returns:
             Session object
+
+        Raises:
+            NotFoundError: If must_exist=True and the session does not exist.
         """
         from openviking.client.session import Session
 
         if not session_id:
             result = run_async(self.create_session())
             session_id = result.get("session_id", "")
+        elif must_exist:
+            # get_session() raises NotFoundError (via _handle_response) for 404.
+            run_async(self.get_session(session_id))
         return Session(self, session_id, self._user)
+
+    async def session_exists(self, session_id: str) -> bool:
+        """Check whether a session exists in storage.
+
+        Args:
+            session_id: Session ID to check
+
+        Returns:
+            True if the session exists, False otherwise
+        """
+        try:
+            await self.get_session(session_id)
+            return True
+        except NotFoundError:
+            return False
 
     def get_status(self) -> Dict[str, Any]:
         """Get system status.

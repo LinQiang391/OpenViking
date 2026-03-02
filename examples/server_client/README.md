@@ -23,9 +23,9 @@ uv sync
 #    参见 ov.conf.example 了解完整配置项
 
 # 2. 启动 Server（另开终端）
-openviking serve                            # 从默认路径读取 ov.conf
-openviking serve --config ./ov.conf         # 指定配置文件
-openviking serve --host 0.0.0.0 --port 1933 # 覆盖 host/port
+openviking-server                            # 从默认路径读取 ov.conf
+openviking-server --config ./ov.conf         # 指定配置文件
+openviking-server --host 0.0.0.0 --port 1933 # 覆盖 host/port
 
 # 3. 配置 CLI 连接（ovcli.conf）
 #    CLI 读取配置的优先级：
@@ -89,16 +89,16 @@ pyproject.toml      # 项目依赖
 
 ```bash
 # 基本启动（从 ~/.openviking/ov.conf 或 $OPENVIKING_CONFIG_FILE 读取配置）
-openviking serve
+openviking-server
 
 # 指定配置文件
-openviking serve --config ./ov.conf
+openviking-server --config ./ov.conf
 
 # 覆盖 host/port
-openviking serve --host 0.0.0.0 --port 1933
+openviking-server --host 0.0.0.0 --port 1933
 ```
 
-`serve` 命令支持 `--config`、`--host`、`--port` 三个选项。认证密钥等其他配置通过 ov.conf 的 `server` 段设置。
+`openviking-server` 命令支持 `--config`、`--host`、`--port` 三个选项。认证密钥等其他配置通过 ov.conf 的 `server` 段设置。
 
 ### Python 脚本
 
@@ -114,7 +114,7 @@ main()
 ```python
 import openviking as ov
 
-client = ov.SyncHTTPClient(url="http://localhost:1933", api_key="your-key")
+client = ov.SyncHTTPClient(url="http://localhost:1933", api_key="your-key", timeout=120.0)
 client.initialize()
 
 client.add_resource(path="./document.md")
@@ -129,7 +129,7 @@ client.close()
 ```python
 import openviking as ov
 
-client = ov.AsyncHTTPClient(url="http://localhost:1933", api_key="your-key")
+client = ov.AsyncHTTPClient(url="http://localhost:1933", api_key="your-key", timeout=120.0)
 await client.initialize()
 
 await client.add_resource(path="./document.md")
@@ -142,11 +142,13 @@ await client.close()
 ### CLI
 
 ```bash
-# CLI 从 ~/.openviking/ovcli.conf 或 $OPENVIKING_CLI_CONFIG_FILE 读取连接配置
+# CLI 从 ~/.openviking/ovcli.conf 或 $s 读取连接配置
 
 # 基本操作
 openviking health
-openviking add-resource ./document.md
+openviking add-resource ./document.md   # 上传文件
+openviking add-resource ./dir --exclude "*.tmp,*.log" --ignore-dirs "subdir-a,subdir-b/subsubdir-c" # 上传文件夹
+
 openviking wait
 openviking find "search query"
 

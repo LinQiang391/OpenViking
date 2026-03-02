@@ -16,13 +16,19 @@ pub struct HttpClient {
     http: ReqwestClient,
     base_url: String,
     api_key: Option<String>,
+    agent_id: Option<String>,
 }
 
 impl HttpClient {
     /// Create a new HTTP client
-    pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        agent_id: Option<String>,
+        timeout_secs: f64,
+    ) -> Self {
         let http = ReqwestClient::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs_f64(timeout_secs))
             .build()
             .expect("Failed to build HTTP client");
 
@@ -30,6 +36,7 @@ impl HttpClient {
             http,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key,
+            agent_id,
         }
     }
 
@@ -93,9 +100,14 @@ impl HttpClient {
 
         let form = reqwest::multipart::Form::new().part("file", part);
 
+        let mut headers = self.build_headers();
+        // Remove Content-Type: application/json, let reqwest set multipart/form-data automatically
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
         let response = self
             .http
             .post(&url)
+            .headers(headers)
             .multipart(form)
             .send()
             .await
@@ -118,6 +130,11 @@ impl HttpClient {
         if let Some(api_key) = &self.api_key {
             if let Ok(value) = reqwest::header::HeaderValue::from_str(api_key) {
                 headers.insert("X-API-Key", value);
+            }
+        }
+        if let Some(agent_id) = &self.agent_id {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(agent_id) {
+                headers.insert("X-OpenViking-Agent", value);
             }
         }
         headers
@@ -305,13 +322,14 @@ impl HttpClient {
         self.get("/api/v1/fs/ls", &params).await
     }
 
-    pub async fn tree(&self, uri: &str, output: &str, abs_limit: i32, show_all_hidden: bool, node_limit: i32) -> Result<serde_json::Value> {
+    pub async fn tree(&self, uri: &str, output: &str, abs_limit: i32, show_all_hidden: bool, node_limit: i32, level_limit: i32) -> Result<serde_json::Value> {
         let params = vec![
             ("uri".to_string(), uri.to_string()),
             ("output".to_string(), output.to_string()),
             ("abs_limit".to_string(), abs_limit.to_string()),
             ("show_all_hidden".to_string(), show_all_hidden.to_string()),
             ("node_limit".to_string(), node_limit.to_string()),
+            ("level_limit".to_string(), level_limit.to_string()),
         ];
         self.get("/api/v1/fs/tree", &params).await
     }
@@ -408,27 +426,70 @@ impl HttpClient {
         instruction: &str,
         wait: bool,
         timeout: Option<f64>,
+        strict: bool,
+        ignore_dirs: Option<String>,
+        include: Option<String>,
+        exclude: Option<String>,
+        directly_upload_media: bool,
     ) -> Result<serde_json::Value> {
         let path_obj = Path::new(path);
-        
-        // Check if it's a local directory and not a local server
-        if path_obj.exists() && path_obj.is_dir() && !self.is_local_server() {
-            // Zip the directory
-            let zip_file = self.zip_directory(path_obj)?;
-            let temp_path = self.upload_temp_file(zip_file.path()).await?;
-            
-            let body = serde_json::json!({
-                "temp_path": temp_path,
-                "target": target,
-                "reason": reason,
-                "instruction": instruction,
-                "wait": wait,
-                "timeout": timeout,
-            });
-            
-            self.post("/api/v1/resources", &body).await
+
+        if path_obj.exists() && !self.is_local_server() {
+            if path_obj.is_dir() {
+                let zip_file = self.zip_directory(path_obj)?;
+                let temp_path = self.upload_temp_file(zip_file.path()).await?;
+
+                let body = serde_json::json!({
+                    "temp_path": temp_path,
+                    "target": target,
+                    "reason": reason,
+                    "instruction": instruction,
+                    "wait": wait,
+                    "timeout": timeout,
+                    "strict": strict,
+                    "ignore_dirs": ignore_dirs,
+                    "include": include,
+                    "exclude": exclude,
+                    "directly_upload_media": directly_upload_media,
+                });
+
+                self.post("/api/v1/resources", &body).await
+            } else if path_obj.is_file() {
+                let temp_path = self.upload_temp_file(path_obj).await?;
+
+                let body = serde_json::json!({
+                    "temp_path": temp_path,
+                    "target": target,
+                    "reason": reason,
+                    "instruction": instruction,
+                    "wait": wait,
+                    "timeout": timeout,
+                    "strict": strict,
+                    "ignore_dirs": ignore_dirs,
+                    "include": include,
+                    "exclude": exclude,
+                    "directly_upload_media": directly_upload_media,
+                });
+
+                self.post("/api/v1/resources", &body).await
+            } else {
+                let body = serde_json::json!({
+                    "path": path,
+                    "target": target,
+                    "reason": reason,
+                    "instruction": instruction,
+                    "wait": wait,
+                    "timeout": timeout,
+                    "strict": strict,
+                    "ignore_dirs": ignore_dirs,
+                    "include": include,
+                    "exclude": exclude,
+                    "directly_upload_media": directly_upload_media,
+                });
+
+                self.post("/api/v1/resources", &body).await
+            }
         } else {
-            // Regular case - use path directly
             let body = serde_json::json!({
                 "path": path,
                 "target": target,
@@ -436,8 +497,13 @@ impl HttpClient {
                 "instruction": instruction,
                 "wait": wait,
                 "timeout": timeout,
+                "strict": strict,
+                "ignore_dirs": ignore_dirs,
+                "include": include,
+                "exclude": exclude,
+                "directly_upload_media": directly_upload_media,
             });
-            
+
             self.post("/api/v1/resources", &body).await
         }
     }
@@ -448,12 +514,44 @@ impl HttpClient {
         wait: bool,
         timeout: Option<f64>,
     ) -> Result<serde_json::Value> {
-        let body = serde_json::json!({
-            "data": data,
-            "wait": wait,
-            "timeout": timeout,
-        });
-        self.post("/api/v1/skills", &body).await
+        let path_obj = Path::new(data);
+
+        if path_obj.exists() && !self.is_local_server() {
+            if path_obj.is_dir() {
+                let zip_file = self.zip_directory(path_obj)?;
+                let temp_path = self.upload_temp_file(zip_file.path()).await?;
+
+                let body = serde_json::json!({
+                    "temp_path": temp_path,
+                    "wait": wait,
+                    "timeout": timeout,
+                });
+                self.post("/api/v1/skills", &body).await
+            } else if path_obj.is_file() {
+                let temp_path = self.upload_temp_file(path_obj).await?;
+
+                let body = serde_json::json!({
+                    "temp_path": temp_path,
+                    "wait": wait,
+                    "timeout": timeout,
+                });
+                self.post("/api/v1/skills", &body).await
+            } else {
+                let body = serde_json::json!({
+                    "data": data,
+                    "wait": wait,
+                    "timeout": timeout,
+                });
+                self.post("/api/v1/skills", &body).await
+            }
+        } else {
+            let body = serde_json::json!({
+                "data": data,
+                "wait": wait,
+                "timeout": timeout,
+            });
+            self.post("/api/v1/skills", &body).await
+        }
     }
 
     // ============ Relation Methods ============

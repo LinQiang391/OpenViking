@@ -25,8 +25,8 @@ from openviking_cli.session.user_id import UserIdentifier
 # Paths
 # ---------------------------------------------------------------------------
 
-TEST_ROOT = Path(__file__).parent
-TEST_TMP_DIR = TEST_ROOT / ".tmp_server"
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+TEST_TMP_DIR = PROJECT_ROOT / "test_data" / "tmp_server"
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -51,11 +51,13 @@ This is a sample markdown document for server testing.
 
 @pytest.fixture(scope="function")
 def temp_dir():
-    """Create temp directory, auto-cleanup."""
-    shutil.rmtree(TEST_TMP_DIR, ignore_errors=True)
-    TEST_TMP_DIR.mkdir(parents=True, exist_ok=True)
-    yield TEST_TMP_DIR
-    shutil.rmtree(TEST_TMP_DIR, ignore_errors=True)
+    """Create a unique temp directory per test, auto-cleanup."""
+    import uuid
+
+    unique_dir = TEST_TMP_DIR / uuid.uuid4().hex[:8]
+    unique_dir.mkdir(parents=True, exist_ok=True)
+    yield unique_dir
+    shutil.rmtree(unique_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
