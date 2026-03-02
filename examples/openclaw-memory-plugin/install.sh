@@ -410,7 +410,7 @@ main() {
   echo "  4) openclaw status"
   echo ""
   info "首次使用前，请先配置火山引擎 Ark API Key："
-  echo "  文件: ~/.openviking/ov.conf"
+  echo "  文件: ${OPENVIKING_DIR}/ov.conf"
   echo "  地址: https://console.volcengine.com/ark"
   echo ""
 }
