@@ -1,19 +1,19 @@
 #!/bin/bash
 #
-# OpenClaw + OpenViking 一键安装脚本
-# 使用方式: curl -fsSL https://raw.githubusercontent.com/OpenViking/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash
+# OpenClaw + OpenViking one-click installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash
 #
-# 支持的环境变量:
-#   REPO=owner/repo          - GitHub 仓库 (默认: volcengine/OpenViking)
-#   BRANCH=branch            - 克隆的分支 (默认: main)
-#   OPENVIKING_INSTALL_YES=1 - 非交互模式 (等同于 -y)
-#   SKIP_OPENCLAW=1          - 跳过 OpenClaw 校验
-#   SKIP_OPENVIKING=1        - 跳过 OpenViking 安装 (已安装时使用)
-#   NPM_REGISTRY=url         - npm 镜像源 (默认: https://registry.npmmirror.com)
-#   PIP_INDEX_URL=url        - pip 镜像源 (默认: https://pypi.tuna.tsinghua.edu.cn/simple)
-#   OPENVIKING_VLM_API_KEY   - VLM 模型 API Key（可选）
-#   OPENVIKING_EMBEDDING_API_KEY - Embedding 模型 API Key（可选）
-#   OPENVIKING_ARK_API_KEY   - 兼容旧变量：未单独设置时作为两个 Key 的默认值
+# Environment variables:
+#   REPO=owner/repo               - GitHub repository (default: volcengine/OpenViking)
+#   BRANCH=branch                 - Git branch/tag/commit (default: main)
+#   OPENVIKING_INSTALL_YES=1      - non-interactive mode (same as -y)
+#   SKIP_OPENCLAW=1               - skip OpenClaw check
+#   SKIP_OPENVIKING=1             - skip OpenViking installation
+#   NPM_REGISTRY=url              - npm registry (default: https://registry.npmmirror.com)
+#   PIP_INDEX_URL=url             - pip index URL (default: https://pypi.tuna.tsinghua.edu.cn/simple)
+#   OPENVIKING_VLM_API_KEY        - VLM model API key (optional)
+#   OPENVIKING_EMBEDDING_API_KEY  - Embedding model API key (optional)
+#   OPENVIKING_ARK_API_KEY        - legacy fallback for both keys
 #
 
 set -e
@@ -34,30 +34,43 @@ DEFAULT_AGFS_PORT=1833
 DEFAULT_VLM_MODEL="doubao-seed-1-8-251228"
 DEFAULT_EMBED_MODEL="doubao-embedding-vision-250615"
 SELECTED_SERVER_PORT="${DEFAULT_SERVER_PORT}"
+LANG_UI="en"
 
-# 解析 -y 参数 (通过 curl | bash -s -y 传入)
+# Parse args (supports curl | bash -s -- ...)
 for arg in "$@"; do
   [[ "$arg" == "-y" || "$arg" == "--yes" ]] && INSTALL_YES="1"
+  [[ "$arg" == "--zh" ]] && LANG_UI="zh"
   [[ "$arg" == "-h" || "$arg" == "--help" ]] && {
-    echo "Usage: curl -fsSL <INSTALL_URL> | bash [-s -y]"
+    echo "Usage: curl -fsSL <INSTALL_URL> | bash [-s -- -y --zh]"
     echo ""
     echo "Options:"
     echo "  -y, --yes   Non-interactive mode"
+    echo "  --zh        Chinese prompts"
     echo "  -h, --help  Show this help"
     echo ""
-    echo "Env vars: REPO, BRANCH, OPENVIKING_INSTALL_YES, SKIP_OPENCLAW, SKIP_OPENVIKING"
+    echo "Env vars: REPO, BRANCH, OPENVIKING_INSTALL_YES, SKIP_OPENCLAW, SKIP_OPENVIKING, NPM_REGISTRY, PIP_INDEX_URL"
     exit 0
   }
 done
 
-# 交互优先：即使 curl | bash，也尝试通过 /dev/tty 读取用户输入。
-# 仅在没有可用终端时，才自动回退到默认配置模式。
+tr() {
+  local en="$1"
+  local zh="$2"
+  if [[ "$LANG_UI" == "zh" ]]; then
+    echo "$zh"
+  else
+    echo "$en"
+  fi
+}
+
+# Prefer interactive mode. Even with curl | bash, try reading from /dev/tty.
+# Fall back to defaults only when no interactive TTY is available.
 if [[ ! -t 0 && "$INSTALL_YES" != "1" ]]; then
   if [[ ! -r /dev/tty ]]; then
     INSTALL_YES="1"
-    echo "[WARN] 未检测到可交互终端，自动切换为默认配置模式（等同于 -y）"
+    echo "[WARN] $(tr "No interactive TTY detected. Falling back to defaults (-y)." "未检测到可交互终端，自动切换为默认配置模式（等同于 -y）")"
   else
-    echo "[INFO] 检测到管道执行，将通过 /dev/tty 进入交互配置"
+    echo "[INFO] $(tr "Pipeline execution detected. Interactive prompts will use /dev/tty." "检测到管道执行，将通过 /dev/tty 进入交互配置")"
   fi
 fi
 
@@ -73,7 +86,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 err()   { echo -e "${RED}[ERROR]${NC} $1"; }
 bold()  { echo -e "${BOLD}$1${NC}"; }
 
-# 检测系统
+# Detect OS
 detect_os() {
   case "$(uname -s)" in
     Linux*)   OS="linux";;
@@ -82,12 +95,12 @@ detect_os() {
     *)        OS="unknown";;
   esac
   if [[ "$OS" == "windows" ]]; then
-    err "Windows 暂不支持此一键安装脚本，请参考 INSTALL.md 或 INSTALL-ZH.md 手动安装。"
+    err "$(tr "Windows is not supported by this installer yet. Please follow the docs for manual setup." "Windows 暂不支持此一键安装脚本，请参考文档手动安装。")"
     exit 1
   fi
 }
 
-# 检测 Linux 发行版
+# Detect Linux distro
 detect_distro() {
   DISTRO="unknown"
   if [[ -f /etc/os-release ]]; then
@@ -104,19 +117,19 @@ detect_distro() {
   fi
 }
 
-# ─── 环境校验 ───
+# ─── Environment checks ───
 
 check_python() {
   local py="${OPENVIKING_PYTHON:-python3}"
   local out
   if ! out=$("$py" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null); then
-    echo "fail|$py|Python 未找到，请安装 Python >= 3.10"
+    echo "fail|$py|$(tr "Python not found. Install Python >= 3.10." "Python 未找到，请安装 Python >= 3.10")"
     return 1
   fi
   local major minor
   IFS=. read -r major minor <<< "$out"
   if [[ "$major" -lt 3 ]] || [[ "$major" -eq 3 && "$minor" -lt 10 ]]; then
-    echo "fail|$out|Python 版本 $out 过低，需要 >= 3.10"
+    echo "fail|$out|$(tr "Python $out is too old. Need >= 3.10." "Python 版本 $out 过低，需要 >= 3.10")"
     return 1
   fi
   echo "ok|$out|$py"
@@ -126,69 +139,69 @@ check_python() {
 check_node() {
   local out
   if ! out=$(node -v 2>/dev/null); then
-    echo "fail||Node.js 未找到，请安装 Node.js >= 22"
+    echo "fail||$(tr "Node.js not found. Install Node.js >= 22." "Node.js 未找到，请安装 Node.js >= 22")"
     return 1
   fi
   local v="${out#v}"
   local major
   major="${v%%.*}"
   if [[ -z "$major" ]] || [[ "$major" -lt 22 ]]; then
-    echo "fail|$out|Node.js 版本 $out 过低，需要 >= 22"
+    echo "fail|$out|$(tr "Node.js $out is too old. Need >= 22." "Node.js 版本 $out 过低，需要 >= 22")"
     return 1
   fi
   echo "ok|$out|node"
   return 0
 }
 
-# 输出缺失组件的安装指引
+# Print guidance for missing dependencies
 print_install_hints() {
   local missing=("$@")
   bold "\n═══════════════════════════════════════════════════════════"
-  bold "  环境校验未通过，请先安装以下缺失组件："
+  bold "  $(tr "Environment check failed. Install missing dependencies first:" "环境校验未通过，请先安装以下缺失组件：")"
   bold "═══════════════════════════════════════════════════════════\n"
 
   for item in "${missing[@]}"; do
     local name="${item%%|*}"
     local rest="${item#*|}"
-    err "缺失: $name"
+    err "$(tr "Missing: $name" "缺失: $name")"
     [[ -n "$rest" ]] && echo "  $rest"
     echo ""
   done
 
   detect_distro
-  echo "根据你的系统 ($DISTRO)，可执行以下命令安装："
+  echo "$(tr "Based on your system ($DISTRO), you can run:" "根据你的系统 ($DISTRO)，可执行以下命令安装：")"
   echo ""
 
   if printf '%s\n' "${missing[@]}" | grep -q "Python"; then
-    echo "  # 普通用户安装 Python 3.10+（推荐 pyenv）"
+    echo "  # $(tr "Install Python 3.10+ (pyenv recommended)" "安装 Python 3.10+（推荐 pyenv）")"
     echo "  curl https://pyenv.run | bash"
     echo "  export PATH=\"\$HOME/.pyenv/bin:\$PATH\""
     echo "  eval \"\$(pyenv init -)\""
     echo "  pyenv install 3.11.12"
     echo "  pyenv global 3.11.12"
-    echo "  python3 --version    # 确认 >= 3.10"
+    echo "  python3 --version    # $(tr "verify >= 3.10" "确认 >= 3.10")"
     echo ""
   fi
 
   if printf '%s\n' "${missing[@]}" | grep -q "Node"; then
-    echo "  # 普通用户安装 Node.js 22+（nvm）"
+    echo "  # $(tr "Install Node.js 22+ (nvm)" "安装 Node.js 22+（nvm）")"
     echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
     echo "  source ~/.bashrc"
     echo "  nvm install 22"
     echo "  nvm use 22"
-    echo "  node -v            # 确认 >= v22"
+    echo "  node -v            # $(tr "verify >= v22" "确认 >= v22")"
     echo ""
   fi
 
-  bold "安装完成后，请重新运行本脚本。"
-  bold "详细说明见: https://github.com/${REPO}/blob/${BRANCH}/examples/openclaw-memory-plugin/INSTALL-ZH.md"
+  bold "$(tr "After installation, rerun this script." "安装完成后，请重新运行本脚本。")"
+  bold "$(tr "See details: https://github.com/${REPO}/blob/${BRANCH}/examples/openclaw-memory-plugin/INSTALL.md" "详细说明见: https://github.com/${REPO}/blob/${BRANCH}/examples/openclaw-memory-plugin/INSTALL-ZH.md")"
   echo ""
   exit 1
 }
 
-# 执行环境校验
+# Validate environment
 validate_environment() {
-  info "正在校验 OpenViking 运行环境..."
+  info "$(tr "Checking OpenViking runtime environment..." "正在校验 OpenViking 运行环境...")"
   echo ""
 
   local missing=()
@@ -210,30 +223,30 @@ validate_environment() {
   fi
 
   echo ""
-  info "环境校验通过 ✓"
+  info "$(tr "Environment check passed ✓" "环境校验通过 ✓")"
   echo ""
 }
 
-# ─── 安装流程 ───
+# ─── Install flow ───
 
 install_openclaw() {
   if [[ "$SKIP_OC" == "1" ]]; then
-    info "跳过 OpenClaw 校验 (SKIP_OPENCLAW=1)"
+    info "$(tr "Skipping OpenClaw check (SKIP_OPENCLAW=1)" "跳过 OpenClaw 校验 (SKIP_OPENCLAW=1)")"
     return 0
   fi
-  info "正在校验 OpenClaw..."
+  info "$(tr "Checking OpenClaw..." "正在校验 OpenClaw...")"
   if command -v openclaw >/dev/null 2>&1; then
-    info "OpenClaw 已安装 ✓"
+    info "$(tr "OpenClaw detected ✓" "OpenClaw 已安装 ✓")"
     return 0
   fi
 
-  err "未检测到 OpenClaw，请先手动安装后再执行本脚本"
+  err "$(tr "OpenClaw not found. Install it manually, then rerun this script." "未检测到 OpenClaw，请先手动安装后再执行本脚本")"
   echo ""
-  echo "推荐命令（普通用户，国内镜像）："
+  echo "$(tr "Recommended command:" "推荐命令：")"
   echo "  npm install -g openclaw --registry ${NPM_REGISTRY}"
   echo ""
-  echo "如遇全局权限问题，建议先用 nvm 安装 Node 后再执行上述命令。"
-  echo "安装完成后，运行："
+  echo "$(tr "If npm global install fails, install Node via nvm and retry." "如 npm 全局安装失败，建议先用 nvm 安装 Node 后再执行上述命令。")"
+  echo "$(tr "After installation, run:" "安装完成后，运行：")"
   echo "  openclaw --version"
   echo "  openclaw onboard"
   echo ""
@@ -242,17 +255,17 @@ install_openclaw() {
 
 install_openviking() {
   if [[ "$SKIP_OV" == "1" ]]; then
-    info "跳过 OpenViking 安装 (SKIP_OPENVIKING=1)"
+    info "$(tr "Skipping OpenViking install (SKIP_OPENVIKING=1)" "跳过 OpenViking 安装 (SKIP_OPENVIKING=1)")"
     return 0
   fi
-  info "正在安装 OpenViking (PyPI)..."
-  info "使用 pip 镜像源: ${PIP_INDEX_URL}"
+  info "$(tr "Installing OpenViking from PyPI..." "正在安装 OpenViking (PyPI)...")"
+  info "$(tr "Using pip index: ${PIP_INDEX_URL}" "使用 pip 镜像源: ${PIP_INDEX_URL}")"
   python3 -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}"
   python3 -m pip install openviking -i "${PIP_INDEX_URL}" || {
-    err "OpenViking 安装失败，请检查 Python 版本 (需 >= 3.10) 及 pip"
+    err "$(tr "OpenViking install failed. Check Python version (>=3.10) and pip." "OpenViking 安装失败，请检查 Python 版本 (需 >= 3.10) 及 pip")"
     exit 1
   }
-  info "OpenViking 安装完成 ✓"
+  info "$(tr "OpenViking installed ✓" "OpenViking 安装完成 ✓")"
 }
 
 configure_openviking_conf() {
@@ -271,14 +284,14 @@ configure_openviking_conf() {
 
   if [[ "$INSTALL_YES" != "1" ]]; then
     echo ""
-    read -r -p "OpenViking 数据目录 [${workspace}]: " _workspace < /dev/tty || true
-    read -r -p "OpenViking HTTP 端口 [${server_port}]: " _server_port < /dev/tty || true
-    read -r -p "AGFS 端口 [${agfs_port}]: " _agfs_port < /dev/tty || true
-    read -r -p "VLM 模型 [${vlm_model}]: " _vlm_model < /dev/tty || true
-    read -r -p "Embedding 模型 [${embedding_model}]: " _embedding_model < /dev/tty || true
-    echo "说明：VLM 与 Embedding 的 API Key 可能不同，可分别填写；留空后续可在 ov.conf 修改。"
-    read -r -p "VLM API Key（可留空）: " _vlm_api_key < /dev/tty || true
-    read -r -p "Embedding API Key（可留空）: " _embedding_api_key < /dev/tty || true
+    read -r -p "$(tr "OpenViking workspace path [${workspace}]: " "OpenViking 数据目录 [${workspace}]: ")" _workspace < /dev/tty || true
+    read -r -p "$(tr "OpenViking HTTP port [${server_port}]: " "OpenViking HTTP 端口 [${server_port}]: ")" _server_port < /dev/tty || true
+    read -r -p "$(tr "AGFS port [${agfs_port}]: " "AGFS 端口 [${agfs_port}]: ")" _agfs_port < /dev/tty || true
+    read -r -p "$(tr "VLM model [${vlm_model}]: " "VLM 模型 [${vlm_model}]: ")" _vlm_model < /dev/tty || true
+    read -r -p "$(tr "Embedding model [${embedding_model}]: " "Embedding 模型 [${embedding_model}]: ")" _embedding_model < /dev/tty || true
+    echo "$(tr "VLM and Embedding API keys can differ. You can leave either empty and edit ov.conf later." "说明：VLM 与 Embedding 的 API Key 可能不同，可分别填写；留空后续可在 ov.conf 修改。")"
+    read -r -p "$(tr "VLM API key (optional): " "VLM API Key（可留空）: ")" _vlm_api_key < /dev/tty || true
+    read -r -p "$(tr "Embedding API key (optional): " "Embedding API Key（可留空）: ")" _embedding_api_key < /dev/tty || true
 
     workspace="${_workspace:-$workspace}"
     server_port="${_server_port:-$server_port}"
@@ -331,7 +344,7 @@ configure_openviking_conf() {
 }
 EOF
   SELECTED_SERVER_PORT="${server_port}"
-  info "已生成配置: ${conf_path}"
+  info "$(tr "Config generated: ${conf_path}" "已生成配置: ${conf_path}")"
 }
 
 download_plugin() {
@@ -346,27 +359,27 @@ download_plugin() {
   )
 
   mkdir -p "${PLUGIN_DEST}"
-  info "正在下载 memory-openviking 插件..."
-  info "插件来源: ${REPO}@${BRANCH}"
+  info "$(tr "Downloading memory-openviking plugin..." "正在下载 memory-openviking 插件...")"
+  info "$(tr "Plugin source: ${REPO}@${BRANCH}" "插件来源: ${REPO}@${BRANCH}")"
   for rel in "${files[@]}"; do
     local name="${rel##*/}"
     local url="${gh_raw}/${rel}"
     curl -fsSL -o "${PLUGIN_DEST}/${name}" "${url}" || {
-      err "下载失败: ${url}"
+      err "$(tr "Download failed: ${url}" "下载失败: ${url}")"
       exit 1
     }
   done
   (cd "${PLUGIN_DEST}" && npm install --no-audit --no-fund) || {
-    err "插件依赖安装失败: ${PLUGIN_DEST}"
+    err "$(tr "Plugin dependency install failed: ${PLUGIN_DEST}" "插件依赖安装失败: ${PLUGIN_DEST}")"
     exit 1
   }
-  info "插件部署完成: ${PLUGIN_DEST}"
+  info "$(tr "Plugin deployed: ${PLUGIN_DEST}" "插件部署完成: ${PLUGIN_DEST}")"
 }
 
 configure_openclaw_plugin() {
   local server_port="${SELECTED_SERVER_PORT}"
   local config_path="~/.openviking/ov.conf"
-  info "正在配置 OpenClaw 插件..."
+  info "$(tr "Configuring OpenClaw plugin..." "正在配置 OpenClaw 插件...")"
 
   openclaw config set plugins.enabled true
   openclaw config set plugins.allow '["memory-openviking"]' --json
@@ -379,7 +392,7 @@ configure_openclaw_plugin() {
   openclaw config set plugins.entries.memory-openviking.config.targetUri viking://
   openclaw config set plugins.entries.memory-openviking.config.autoRecall true --json
   openclaw config set plugins.entries.memory-openviking.config.autoCapture true --json
-  info "OpenClaw 插件配置完成"
+  info "$(tr "OpenClaw plugin configured" "OpenClaw 插件配置完成")"
 }
 
 write_openviking_env() {
@@ -389,14 +402,14 @@ write_openviking_env() {
   cat > "${OPENCLAW_DIR}/openviking.env" <<EOF
 export OPENVIKING_PYTHON='${py_path}'
 EOF
-  info "已生成环境文件: ${OPENCLAW_DIR}/openviking.env"
+  info "$(tr "Environment file generated: ${OPENCLAW_DIR}/openviking.env" "已生成环境文件: ${OPENCLAW_DIR}/openviking.env")"
 }
 
 # ─── 主流程 ───
 
 main() {
   echo ""
-  bold "🦣 OpenClaw + OpenViking 一键安装"
+  bold "$(tr "🦣 OpenClaw + OpenViking Installer" "🦣 OpenClaw + OpenViking 一键安装")"
   echo ""
 
   detect_os
@@ -411,16 +424,16 @@ main() {
 
   echo ""
   bold "═══════════════════════════════════════════════════════════"
-  bold "  安装完成！"
+  bold "  $(tr "Installation complete!" "安装完成！")"
   bold "═══════════════════════════════════════════════════════════"
   echo ""
-  info "请按以下命令启动 OpenClaw + OpenViking："
+  info "$(tr "Run these commands to start OpenClaw + OpenViking:" "请按以下命令启动 OpenClaw + OpenViking：")"
   echo "  1) openclaw --version"
   echo "  2) openclaw onboard"
   echo "  3) source ${OPENCLAW_DIR}/openviking.env && openclaw gateway"
   echo "  4) openclaw status"
   echo ""
-  info "你可以按需自由修改配置文件: ${OPENVIKING_DIR}/ov.conf"
+  info "$(tr "You can edit the config freely: ${OPENVIKING_DIR}/ov.conf" "你可以按需自由修改配置文件: ${OPENVIKING_DIR}/ov.conf")"
   echo ""
 }
 
