@@ -47,6 +47,12 @@ for arg in "$@"; do
   }
 done
 
+# 当通过 curl | bash 执行时，stdin 通常不是 TTY。避免 read 在 set -e 下直接退出。
+if [[ ! -t 0 && "$INSTALL_YES" != "1" ]]; then
+  INSTALL_YES="1"
+  echo "[WARN] 检测到非交互执行，自动切换为默认配置模式（等同于 -y）"
+fi
+
 # 颜色与输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -255,12 +261,12 @@ configure_openviking_conf() {
 
   if [[ "$INSTALL_YES" != "1" ]]; then
     echo ""
-    read -r -p "OpenViking 数据目录 [${workspace}]: " _workspace
-    read -r -p "OpenViking HTTP 端口 [${server_port}]: " _server_port
-    read -r -p "AGFS 端口 [${agfs_port}]: " _agfs_port
-    read -r -p "VLM 模型 [${vlm_model}]: " _vlm_model
-    read -r -p "Embedding 模型 [${embedding_model}]: " _embedding_model
-    read -r -p "火山引擎 Ark API Key（可留空）: " _api_key
+    read -r -p "OpenViking 数据目录 [${workspace}]: " _workspace < /dev/tty || true
+    read -r -p "OpenViking HTTP 端口 [${server_port}]: " _server_port < /dev/tty || true
+    read -r -p "AGFS 端口 [${agfs_port}]: " _agfs_port < /dev/tty || true
+    read -r -p "VLM 模型 [${vlm_model}]: " _vlm_model < /dev/tty || true
+    read -r -p "Embedding 模型 [${embedding_model}]: " _embedding_model < /dev/tty || true
+    read -r -p "火山引擎 Ark API Key（可留空）: " _api_key < /dev/tty || true
 
     workspace="${_workspace:-$workspace}"
     server_port="${_server_port:-$server_port}"
