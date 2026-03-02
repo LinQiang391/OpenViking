@@ -18,6 +18,14 @@ function Info($m) { Write-Host "[INFO] $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
 function Err($m)  { Write-Host "[ERROR] $m" -ForegroundColor Red }
 function Title($m) { Write-Host $m -ForegroundColor Cyan }
+function Write-Utf8NoBom {
+  param(
+    [string]$Path,
+    [string]$Content
+  )
+  $enc = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
 
 $Repo = if ($env:REPO) { $env:REPO } else { "volcengine/OpenViking" }
 $Branch = if ($env:BRANCH) { $env:BRANCH } else { "main" }
@@ -240,7 +248,8 @@ function Configure-OvConf {
   }
 
   $confPath = Join-Path $OpenVikingDir "ov.conf"
-  $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $confPath -Encoding UTF8
+  $cfgJson = $cfg | ConvertTo-Json -Depth 10
+  Write-Utf8NoBom -Path $confPath -Content $cfgJson
   Info ("{0} {1}" -f (T "Config generated:" "已生成配置:"), $confPath)
   return [int]$serverPort
 }
@@ -328,7 +337,8 @@ function Configure-OpenClawPlugin {
   }
   $cfg["gateway"]["mode"] = "local"
 
-  $cfg | ConvertTo-Json -Depth 20 | Set-Content -Path $cfgPath -Encoding UTF8
+  $cfgJson = $cfg | ConvertTo-Json -Depth 20
+  Write-Utf8NoBom -Path $cfgPath -Content $cfgJson
 
   Info (T "OpenClaw plugin configured" "OpenClaw 插件配置完成")
 }
@@ -343,9 +353,8 @@ function Write-OpenVikingEnv {
 
   New-Item -ItemType Directory -Force -Path $OpenClawDir | Out-Null
   $envPath = Join-Path $OpenClawDir "openviking.env.ps1"
-  @(
-    '$env:OPENVIKING_PYTHON = "' + $pyPath + '"'
-  ) | Set-Content -Path $envPath -Encoding UTF8
+  $envContent = '$env:OPENVIKING_PYTHON = "' + $pyPath + '"'
+  Write-Utf8NoBom -Path $envPath -Content $envContent
 
   Info ("{0} $envPath" -f (T "Environment file generated:" "已生成环境文件:"))
 }
