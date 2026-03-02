@@ -47,10 +47,15 @@ for arg in "$@"; do
   }
 done
 
-# 当通过 curl | bash 执行时，stdin 通常不是 TTY。避免 read 在 set -e 下直接退出。
+# 交互优先：即使 curl | bash，也尝试通过 /dev/tty 读取用户输入。
+# 仅在没有可用终端时，才自动回退到默认配置模式。
 if [[ ! -t 0 && "$INSTALL_YES" != "1" ]]; then
-  INSTALL_YES="1"
-  echo "[WARN] 检测到非交互执行，自动切换为默认配置模式（等同于 -y）"
+  if [[ ! -r /dev/tty ]]; then
+    INSTALL_YES="1"
+    echo "[WARN] 未检测到可交互终端，自动切换为默认配置模式（等同于 -y）"
+  else
+    echo "[INFO] 检测到管道执行，将通过 /dev/tty 进入交互配置"
+  fi
 fi
 
 # 颜色与输出
