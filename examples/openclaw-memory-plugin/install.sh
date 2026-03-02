@@ -11,6 +11,9 @@
 #   SKIP_OPENVIKING=1        - 跳过 OpenViking 安装 (已安装时使用)
 #   NPM_REGISTRY=url         - npm 镜像源 (默认: https://registry.npmmirror.com)
 #   PIP_INDEX_URL=url        - pip 镜像源 (默认: https://pypi.tuna.tsinghua.edu.cn/simple)
+#   OPENVIKING_VLM_API_KEY   - VLM 模型 API Key（可选）
+#   OPENVIKING_EMBEDDING_API_KEY - Embedding 模型 API Key（可选）
+#   OPENVIKING_ARK_API_KEY   - 兼容旧变量：未单独设置时作为两个 Key 的默认值
 #
 
 set -e
@@ -260,9 +263,11 @@ configure_openviking_conf() {
   local agfs_port="${DEFAULT_AGFS_PORT}"
   local vlm_model="${DEFAULT_VLM_MODEL}"
   local embedding_model="${DEFAULT_EMBED_MODEL}"
-  local api_key="${OPENVIKING_ARK_API_KEY:-}"
+  local vlm_api_key="${OPENVIKING_VLM_API_KEY:-${OPENVIKING_ARK_API_KEY:-}}"
+  local embedding_api_key="${OPENVIKING_EMBEDDING_API_KEY:-${OPENVIKING_ARK_API_KEY:-}}"
   local conf_path="${OPENVIKING_DIR}/ov.conf"
-  local api_json="null"
+  local vlm_api_json="null"
+  local embedding_api_json="null"
 
   if [[ "$INSTALL_YES" != "1" ]]; then
     echo ""
@@ -271,18 +276,24 @@ configure_openviking_conf() {
     read -r -p "AGFS 端口 [${agfs_port}]: " _agfs_port < /dev/tty || true
     read -r -p "VLM 模型 [${vlm_model}]: " _vlm_model < /dev/tty || true
     read -r -p "Embedding 模型 [${embedding_model}]: " _embedding_model < /dev/tty || true
-    read -r -p "模型 API Key（可留空，可后续在 ov.conf 自由修改）: " _api_key < /dev/tty || true
+    echo "说明：VLM 与 Embedding 的 API Key 可能不同，可分别填写；留空后续可在 ov.conf 修改。"
+    read -r -p "VLM API Key（可留空）: " _vlm_api_key < /dev/tty || true
+    read -r -p "Embedding API Key（可留空）: " _embedding_api_key < /dev/tty || true
 
     workspace="${_workspace:-$workspace}"
     server_port="${_server_port:-$server_port}"
     agfs_port="${_agfs_port:-$agfs_port}"
     vlm_model="${_vlm_model:-$vlm_model}"
     embedding_model="${_embedding_model:-$embedding_model}"
-    api_key="${_api_key:-$api_key}"
+    vlm_api_key="${_vlm_api_key:-$vlm_api_key}"
+    embedding_api_key="${_embedding_api_key:-$embedding_api_key}"
   fi
 
-  if [[ -n "${api_key}" ]]; then
-    api_json="\"${api_key}\""
+  if [[ -n "${vlm_api_key}" ]]; then
+    vlm_api_json="\"${vlm_api_key}\""
+  fi
+  if [[ -n "${embedding_api_key}" ]]; then
+    embedding_api_json="\"${embedding_api_key}\""
   fi
 
   mkdir -p "${workspace}"
@@ -302,7 +313,7 @@ configure_openviking_conf() {
   "embedding": {
     "dense": {
       "backend": "volcengine",
-      "api_key": ${api_json},
+      "api_key": ${embedding_api_json},
       "model": "${embedding_model}",
       "api_base": "https://ark.cn-beijing.volces.com/api/v3",
       "dimension": 1024,
@@ -311,7 +322,7 @@ configure_openviking_conf() {
   },
   "vlm": {
     "backend": "volcengine",
-    "api_key": ${api_json},
+    "api_key": ${vlm_api_json},
     "model": "${vlm_model}",
     "api_base": "https://ark.cn-beijing.volces.com/api/v3",
     "temperature": 0.1,
