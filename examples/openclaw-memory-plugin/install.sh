@@ -417,7 +417,7 @@ main() {
   info "请按以下命令启动 OpenClaw + OpenViking："
   echo "  1) openclaw --version"
   echo "  2) openclaw onboard"
-  echo "  3) source ~/.openclaw/openviking.env && openclaw gateway"
+  echo "  3) source ${OPENCLAW_DIR}/openviking.env && openclaw gateway"
   echo "  4) openclaw status"
   echo ""
   info "你可以按需自由修改配置文件: ${OPENVIKING_DIR}/ov.conf"
