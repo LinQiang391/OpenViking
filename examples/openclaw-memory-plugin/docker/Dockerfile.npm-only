@@ -1,0 +1,62 @@
+# 测试镜像：仅 nvm + npm install openclaw，不装 openviking
+ARG OPENEULER_IMAGE=openeuler/openeuler:22.03-lts
+ARG NODE_VERSION=22
+ARG NVM_VERSION=v0.40.1
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY_FALLBACK=https://registry.npmjs.org
+# 访问 GitHub 时走代理，构建时传入如 --build-arg HTTP_PROXY=http://... HTTPS_PROXY=http://...
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
+FROM ${OPENEULER_IMAGE}
+
+ARG NODE_VERSION
+ARG NVM_VERSION
+ARG NPM_REGISTRY
+ARG NPM_REGISTRY_FALLBACK
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
+ENV OPENCLAW_HOME=/root/.openclaw
+ENV NVM_DIR=/root/.nvm
+ENV npm_config_registry=${NPM_REGISTRY}
+
+# 基础依赖 + node-llama-cpp 从源码编译所需（make/cmake；openclaw 依赖的 optional 会尝试编译）
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy 2>/dev/null || true; \
+    dnf install -y ca-certificates curl git glib2 gcc gcc-c++ make cmake \
+    && dnf clean all && rm -rf /var/cache/dnf
+
+# 安装 nvm（优先走代理访问 GitHub；失败则直连；用 tarball 避免 install.sh 的 git clone）
+RUN mkdir -p "${NVM_DIR}" /tmp/nvm-dl \
+    && (export HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" http_proxy="${HTTP_PROXY}" https_proxy="${HTTPS_PROXY}"; \
+        curl -fsSL "https://github.com/nvm-sh/nvm/archive/refs/tags/${NVM_VERSION}.tar.gz" -o /tmp/nvm.tar.gz) \
+    || (unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy 2>/dev/null; \
+        curl -fsSL "https://github.com/nvm-sh/nvm/archive/refs/tags/${NVM_VERSION}.tar.gz" -o /tmp/nvm.tar.gz) \
+    && tar -xzf /tmp/nvm.tar.gz -C /tmp/nvm-dl \
+    && cp -a /tmp/nvm-dl/nvm-*/. "${NVM_DIR}" \
+    && rm -rf /tmp/nvm-dl /tmp/nvm.tar.gz \
+    && echo 'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /root/.bashrc
+
+# 在能 source nvm 的 shell 里安装 Node、npm 装 openclaw，并把 node/npm 链到 /usr/local/bin 以便 CMD 直接用
+RUN set -e; \
+    . "${NVM_DIR}/nvm.sh" \
+    && nvm install ${NODE_VERSION} \
+    && nvm alias default ${NODE_VERSION} \
+    && nvm use default \
+    && node --version && npm --version \
+    && unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy 2>/dev/null || true \
+    && npm install -g openclaw --registry="${NPM_REGISTRY}" \
+    || npm install -g openclaw --registry="${NPM_REGISTRY_FALLBACK}" \
+    && openclaw --version \
+    && rm -rf /root/.npm /root/.cache /tmp/* 2>/dev/null || true \
+    && NODE_BIN="$(. ${NVM_DIR}/nvm.sh && nvm which current)" \
+    && BIN_DIR="$(dirname "${NODE_BIN}")" \
+    && ln -sf "${NODE_BIN}" /usr/local/bin/node \
+    && ln -sf "${BIN_DIR}/npm" /usr/local/bin/npm \
+    && ln -sf "${BIN_DIR}/npx" /usr/local/bin/npx \
+    && ([ -x "${BIN_DIR}/openclaw" ] && ln -sf "${BIN_DIR}/openclaw" /usr/local/bin/openclaw || true)
+
+# 运行时通过 bash 加载 nvm，保证 openclaw 在 PATH 中
+WORKDIR /root
+ENTRYPOINT ["/bin/bash", "-lc"]
+CMD ["openclaw --version"]

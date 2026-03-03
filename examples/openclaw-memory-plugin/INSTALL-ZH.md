@@ -537,6 +537,88 @@ rm -rf $(npm root -g)/openclaw $(npm root -g)/.openclaw-*
 npm install -g openclaw
 ```
 
+#### Q: 安装助手报错 `Config validation failed: plugins.allow: plugin not found: memory-openviking`
+
+**原因简述**  
+执行安装助手（或 `openclaw config set plugins.allow ...`）时，OpenClaw 会校验 `plugins.allow` 里列出的插件是否**已经存在**。它只认可在 **`~/.openclaw/extensions/`** 下能发现的插件，且扩展目录名或插件 manifest 中的 id 需为 `memory-openviking`。若此时插件尚未部署到 `~/.openclaw/extensions/memory-openviking`，或部署的目录名不是 `memory-openviking`，就会报 “plugin not found: memory-openviking”。
+
+**可能出现的步骤**  
+- 安装助手执行到 **Step 5（Deploy plugin）** 之后，在写 OpenClaw 配置时（例如执行 `openclaw config set plugins.allow '["memory-openviking"]'`）报错。  
+- 使用**本地仓库**跑助手时更常见：插件路径是 `.../examples/openclaw-memory-plugin`，若未先通过“安装/链接”放到 `~/.openclaw/extensions/memory-openviking`，或 `openclaw plugins install -l` 按源目录名创建了 `openclaw-memory-plugin` 而不是 `memory-openviking`，就会触发该校验失败。
+
+**用户如何定位**  
+1. 看报错栈里是否包含 `writeConfigFile`、`plugins.allow`、`plugin not found: memory-openviking`，确认是“配置校验”阶段报错。  
+2. 检查 `~/.openclaw/extensions/` 下是否存在名为 **`memory-openviking`** 的目录（注意必须是这个名字，不是 `openclaw-memory-plugin`）。  
+3. 若存在，再检查该目录内是否有 `openclaw.plugin.json` 且其中 `"id": "memory-openviking"`。
+
+**修复方式**  
+- **方式 A（推荐）：按手册先部署插件再配 allow**  
+  先确保插件出现在 `~/.openclaw/extensions/memory-openviking`，再写配置：
+
+  ```bash
+  mkdir -p ~/.openclaw/extensions/memory-openviking
+  cp /path/to/OpenViking/examples/openclaw-memory-plugin/{index.ts,config.ts,openclaw.plugin.json,package.json,.gitignore} \
+     ~/.openclaw/extensions/memory-openviking/
+  cd ~/.openclaw/extensions/memory-openviking && npm install
+  ```
+
+  然后用助手只做“写配置”（若助手支持），或手动执行：
+
+  ```bash
+  openclaw config set plugins.allow '["memory-openviking"]' --json
+  openclaw config set plugins.slots.memory memory-openviking
+  # ... 其余 plugins.entries 等
+  ```
+
+- **方式 B：用本地目录做符号链接**  
+  若希望继续用本地仓库目录，可让扩展目录名等于 `memory-openviking`：
+
+  ```bash
+  rm -rf ~/.openclaw/extensions/memory-openviking
+  ln -s /path/to/OpenViking/examples/openclaw-memory-plugin ~/.openclaw/extensions/memory-openviking
+  ```
+
+  然后再运行安装助手，或只执行上述 `openclaw config set` 命令。
+
+- **方式 C：不用本地仓库，让助手从 GitHub 拉取**  
+  不设置 `OPENVIKING_REPO`，助手会从 GitHub 下载插件到 `~/.openclaw/extensions/memory-openviking`，再写配置，一般不会出现该校验错误。
+
+完成后可用 `openclaw status` 确认 Memory 插件为 `memory-openviking` 且为 enabled。
+
+#### Q: OpenClaw 是源码编译安装的，安装助手会有问题吗？
+
+会有，主要在于**命令是否在 PATH** 和**配置目录是否一致**。
+
+**可能的问题**
+
+1. **Step 2 报 “OpenClaw is not installed”**  
+   助手通过执行 `openclaw --version` 判断是否已安装，要求系统 PATH 里能直接找到 `openclaw`。若你是从源码构建（如 monorepo 里 `pnpm build`），且没有全局安装或链接，通常没有 `openclaw` 命令，检测会失败。
+
+2. **配置/扩展目录不一致**  
+   助手固定使用 `~/.openclaw`（由当前用户的 `HOME` 决定）写配置和扩展目录。若你运行的 OpenClaw 源码版通过环境变量或“当前工作目录”使用了别的配置目录（例如项目下的 `.openclaw` 或 XDG 目录），则助手改的配置可能不会被实际运行的 OpenClaw 读到。
+
+3. **后续启动方式不同**  
+   文档里写的是 `openclaw gateway`；源码运行可能是 `pnpm run gateway`、`node dist/cli.js gateway` 等，需要你自己用实际命令启动。
+
+**建议做法（源码编译安装时）**
+
+- **让 PATH 里能执行到 openclaw**（任选其一）：
+  - 在 OpenClaw 源码目录执行：`npm link` 或 `pnpm link --global`（若该仓库提供 CLI），使 `openclaw` 在全局可用；或  
+  - 把该仓库的 CLI 可执行路径加入 PATH（例如 monorepo 的 `packages/cli/dist` 或 bin 脚本所在目录）。  
+  这样助手的 Step 2 能通过，且后面 `openclaw config set`、`openclaw plugins install -l` 都会生效。
+
+- **确认配置目录一致**  
+  先在你用来运行 OpenClaw 的环境里执行一次：  
+  `openclaw config get gateway.mode`（或任意已知配置项），看它读的是哪个目录（可从报错或 OpenClaw 文档判断）。若读的是 `~/.openclaw`，则助手写的 `~/.openclaw/openclaw.json` 和 `~/.openclaw/extensions/` 会被使用；若读的是别的目录，需要把助手写好的配置/扩展**复制或链接**到该目录，或改 OpenClaw 的配置/环境变量让它使用 `~/.openclaw`。
+
+- **若无法让 openclaw 进 PATH**  
+  可以不用助手“自动写配置”，改为完全手动：  
+  1）按 [Manual Setup](README.md#manual-setup) 把插件部署到**你当前 OpenClaw 实际使用的 extensions 目录**下的 `memory-openviking`；  
+  2）在该配置目录下手工编辑 `openclaw.json`（或用你实际能运行的 `openclaw config set` 命令）写入 `plugins.allow`、`plugins.slots.memory`、`plugins.entries.memory-openviking` 等；  
+  3）启动时用你的方式（如 `pnpm run gateway`）并加载 `openviking.env` 中的环境变量（若有）。
+
+总结：源码编译安装时，只要保证「运行助手时的 `openclaw` 与日后启动的是同一个、且使用同一套配置目录」，助手即可正常用；否则需要按上面手动对齐 PATH 和配置目录，或完全手动配置。
+
 ### 运行阶段
 
 #### Q: 网关输出中看不到 `memory-openviking` 插件
