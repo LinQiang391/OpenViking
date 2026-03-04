@@ -14,6 +14,7 @@
 #   OPENVIKING_VLM_API_KEY        - VLM model API key (optional)
 #   OPENVIKING_EMBEDDING_API_KEY  - Embedding model API key (optional)
 #   OPENVIKING_ARK_API_KEY       - legacy fallback for both keys
+#   OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1 - if venv unavailable, allow pip --break-system-packages (opt-in)
 #
 # On Debian/Ubuntu (PEP 668), the script installs OpenViking into a venv at
 # ~/.openviking/venv to avoid "externally-managed-environment" errors.
@@ -278,16 +279,50 @@ install_openviking() {
     return 0
   fi
 
-  # On Debian/Ubuntu (PEP 668), system Python is externally managed — use a venv
+  # On Debian/Ubuntu (PEP 668), system Python is externally managed — use a venv or opt-in system install
   if echo "$err_out" | grep -q "externally-managed-environment\|externally managed"; then
+    # Opt-in: allow install with --break-system-packages when venv is not available
+    if [[ "${OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES}" == "1" ]]; then
+      info "$(tr "Installing OpenViking with --break-system-packages (OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1)" "正在以 --break-system-packages 安装 OpenViking（已设置 OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1）")"
+      if "$py" -m pip install --break-system-packages openviking -i "${PIP_INDEX_URL}"; then
+        OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
+        [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
+        info "$(tr "OpenViking installed ✓ (system)" "OpenViking 安装完成 ✓（系统）")"
+        return 0
+      fi
+    fi
+
     info "$(tr "System Python is externally managed (PEP 668). Using a venv at ~/.openviking/venv" "检测到系统 Python 受管 (PEP 668)，将使用 ~/.openviking/venv 虚拟环境")"
     mkdir -p "${OPENVIKING_DIR}"
     local venv_dir="${OPENVIKING_DIR}/venv"
-    if ! "$py" -m venv "${venv_dir}" 2>/dev/null; then
-      err "$(tr "Failed to create venv. On Debian/Ubuntu run: sudo apt install python3-venv (or python3-full)" "创建虚拟环境失败。Debian/Ubuntu 请先执行: sudo apt install python3-venv（或 python3-full）")"
+    local venv_py="${venv_dir}/bin/python"
+    local venv_ok=0
+
+    # Try 1: stdlib venv
+    if "$py" -m venv "${venv_dir}" 2>/dev/null; then
+      venv_ok=1
+    fi
+
+    # Try 2: virtualenv (if already installed or installable with --user)
+    if [[ "$venv_ok" -eq 0 ]]; then
+      if "$py" -m virtualenv "${venv_dir}" 2>/dev/null; then
+        venv_ok=1
+      elif "$py" -m pip install --user virtualenv -i "${PIP_INDEX_URL}" -q 2>/dev/null && "$py" -m virtualenv "${venv_dir}" 2>/dev/null; then
+        venv_ok=1
+      fi
+    fi
+
+    if [[ "$venv_ok" -eq 0 ]]; then
+      local py_ver
+      py_ver=$("$py" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3")
+      err "$(tr "Failed to create venv. Try one of:" "创建虚拟环境失败，请任选一种方式：")"
+      echo "  $(tr "1) Install venv (use version that matches your Python):" "1) 安装 venv（请选用与当前 Python 版本一致的包）：")"
+      echo "     sudo apt install python${py_ver}-venv   # or: python3-full"
+      echo "  $(tr "2) Or allow system-wide install (not recommended):" "2) 或允许安装到系统（不推荐）：")"
+      echo "     OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1 curl -fsSL ... | bash"
       exit 1
     fi
-    local venv_py="${venv_dir}/bin/python"
+
     "$venv_py" -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}"
     if ! "$venv_py" -m pip install openviking -i "${PIP_INDEX_URL}"; then
       err "$(tr "OpenViking install failed in venv." "在虚拟环境中安装 OpenViking 失败。")"
