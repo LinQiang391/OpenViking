@@ -457,18 +457,25 @@ download_plugin() {
     "examples/openclaw-memory-plugin/package-lock.json"
     "examples/openclaw-memory-plugin/.gitignore"
   )
+  local total=${#files[@]}
+  local i=0
 
   mkdir -p "${PLUGIN_DEST}"
-  info "$(tr "Downloading memory-openviking plugin..." "正在下载 memory-openviking 插件...")"
-  info "$(tr "Plugin source: ${REPO}@${BRANCH}" "插件来源: ${REPO}@${BRANCH}")"
+  info "$(tr "Downloading memory-openviking plugin from ${REPO}@${BRANCH} (${total} files)..." "正在从 ${REPO}@${BRANCH} 下载 memory-openviking 插件（共 ${total} 个文件）...")"
   for rel in "${files[@]}"; do
+    i=$((i + 1))
     local name="${rel##*/}"
     local url="${gh_raw}/${rel}"
-    curl -fsSL -o "${PLUGIN_DEST}/${name}" "${url}" || {
+    echo -n "  [${i}/${total}] ${name} "
+    if curl -fsSL --connect-timeout 15 --max-time 120 -# -o "${PLUGIN_DEST}/${name}" "${url}"; then
+      echo "✓"
+    else
+      echo ""
       err "$(tr "Download failed: ${url}" "下载失败: ${url}")"
       exit 1
-    }
+    fi
   done
+  info "$(tr "Installing plugin npm dependencies (may take 1-2 min, npm will show progress)..." "正在安装插件 npm 依赖（约 1–2 分钟，npm 会显示进度）...")"
   (cd "${PLUGIN_DEST}" && npm install --no-audit --no-fund) || {
     err "$(tr "Plugin dependency install failed: ${PLUGIN_DEST}" "插件依赖安装失败: ${PLUGIN_DEST}")"
     exit 1
