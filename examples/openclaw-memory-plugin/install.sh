@@ -298,13 +298,28 @@ install_openviking() {
     local venv_py="${venv_dir}/bin/python"
     local venv_ok=0
 
-    # Try 1: stdlib venv
+    # Try 1: stdlib venv (needs ensurepip)
     if "$py" -m venv "${venv_dir}" 2>/dev/null; then
       venv_ok=1
     fi
 
-    # Try 2: virtualenv (if already installed or installable with --user)
+    # Try 2: venv --without-pip then bootstrap pip via get-pip.py (no ensurepip needed)
     if [[ "$venv_ok" -eq 0 ]]; then
+      rm -rf "${venv_dir}" 2>/dev/null || true
+      if "$py" -m venv --without-pip "${venv_dir}" 2>/dev/null; then
+        info "$(tr "Venv created without pip; bootstrapping pip..." "已创建无 pip 的虚拟环境，正在安装 pip...")"
+        local get_pip
+        get_pip=$(mktemp -t get-pip.XXXXXX.py 2>/dev/null || echo "/tmp/get-pip.py")
+        if curl -fsSL "https://bootstrap.pypa.io/get-pip.py" -o "${get_pip}" 2>/dev/null && "$venv_py" "${get_pip}" -q 2>/dev/null; then
+          venv_ok=1
+        fi
+        rm -f "${get_pip}" 2>/dev/null || true
+      fi
+    fi
+
+    # Try 3: virtualenv (if already installed or installable with --user)
+    if [[ "$venv_ok" -eq 0 ]]; then
+      rm -rf "${venv_dir}" 2>/dev/null || true
       if "$py" -m virtualenv "${venv_dir}" 2>/dev/null; then
         venv_ok=1
       elif "$py" -m pip install --user virtualenv -i "${PIP_INDEX_URL}" -q 2>/dev/null && "$py" -m virtualenv "${venv_dir}" 2>/dev/null; then
@@ -313,17 +328,14 @@ install_openviking() {
     fi
 
     if [[ "$venv_ok" -eq 0 ]]; then
-      # Venv not available (e.g. no python3.12-venv on this distro) — fallback to system install
-      warn "$(tr "Could not create venv (ensurepip/virtualenv not available). Installing to system Python (--break-system-packages)." "无法创建虚拟环境（无 ensurepip/virtualenv），将安装到系统 Python（--break-system-packages）。")"
-      if "$py" -m pip install --break-system-packages openviking -i "${PIP_INDEX_URL}"; then
-        OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
-        [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
-        info "$(tr "OpenViking installed ✓ (system)" "OpenViking 安装完成 ✓（系统）")"
-        return 0
-      fi
+      rm -rf "${venv_dir}" 2>/dev/null || true
       local py_ver
       py_ver=$("$py" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3")
-      err "$(tr "Failed to create venv and system install failed. Try: sudo apt install python${py_ver}-venv then re-run this script." "创建虚拟环境与系统安装均失败。请尝试: sudo apt install python${py_ver}-venv 后重新执行本脚本。")"
+      err "$(tr "Could not create venv. Install venv then re-run:" "无法创建虚拟环境。请先安装 venv 后重新执行：")"
+      echo "  sudo apt install python${py_ver}-venv   # or python3-full"
+      echo ""
+      echo "$(tr "Or (may conflict with system packages like urllib3):" "或使用系统安装（可能与系统包如 urllib3 冲突）：")"
+      echo "  OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1 curl -fsSL ... | bash"
       exit 1
     fi
 
