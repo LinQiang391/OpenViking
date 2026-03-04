@@ -465,16 +465,30 @@ download_plugin() {
 
   mkdir -p "${PLUGIN_DEST}"
   info "$(tr "Downloading memory-openviking plugin from ${REPO}@${BRANCH} (${total} files)..." "正在从 ${REPO}@${BRANCH} 下载 memory-openviking 插件（共 ${total} 个文件）...")"
+  local max_retries=3
   for rel in "${files[@]}"; do
     i=$((i + 1))
     local name="${rel##*/}"
     local url="${gh_raw}/${rel}"
+    local ok=0
     echo -n "  [${i}/${total}] ${name} "
-    if curl -fsSL --connect-timeout 15 --max-time 120 -# -o "${PLUGIN_DEST}/${name}" "${url}"; then
+    local attempt=1
+    while [[ "$attempt" -le "${max_retries}" ]]; do
+      if curl -fsSL --connect-timeout 15 --max-time 120 -# -o "${PLUGIN_DEST}/${name}" "${url}" 2>/dev/null; then
+        ok=1
+        break
+      fi
+      [[ "$attempt" -lt "${max_retries}" ]] && sleep 2
+      attempt=$((attempt + 1))
+    done
+    if [[ "$ok" -eq 1 ]]; then
       echo "✓"
+    elif [[ "$name" == ".gitignore" ]]; then
+      echo "$(tr "(retries failed, using minimal .gitignore)" "（重试失败，使用最小 .gitignore）")"
+      echo "node_modules/" > "${PLUGIN_DEST}/${name}"
     else
       echo ""
-      err "$(tr "Download failed: ${url}" "下载失败: ${url}")"
+      err "$(tr "Download failed after ${max_retries} retries: ${url}" "下载失败（已重试 ${max_retries} 次）: ${url}")"
       exit 1
     fi
   done
