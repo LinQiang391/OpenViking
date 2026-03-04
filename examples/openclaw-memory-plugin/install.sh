@@ -280,20 +280,23 @@ install_openviking() {
     return 0
   fi
 
-  # On Debian/Ubuntu (PEP 668), system Python is externally managed — use a venv or opt-in system install
-  if echo "$err_out" | grep -q "externally-managed-environment\|externally managed"; then
-    # Opt-in: allow install with --break-system-packages when venv is not available
-    if [[ "${OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES}" == "1" ]]; then
-      info "$(tr "Installing OpenViking with --break-system-packages (OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1)" "正在以 --break-system-packages 安装 OpenViking（已设置 OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1）")"
-      if "$py" -m pip install --break-system-packages openviking -i "${PIP_INDEX_URL}"; then
-        OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
-        [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
-        info "$(tr "OpenViking installed ✓ (system)" "OpenViking 安装完成 ✓（系统）")"
-        return 0
+  # When system has no pip, or PEP 668 (Debian/Ubuntu): use a venv
+  if echo "$err_out" | grep -q "externally-managed-environment\|externally managed\|No module named pip"; then
+    if echo "$err_out" | grep -q "No module named pip"; then
+      info "$(tr "System Python has no pip. Using a venv at ~/.openviking/venv" "系统 Python 未安装 pip，将使用 ~/.openviking/venv 虚拟环境")"
+    else
+      # Opt-in: allow install with --break-system-packages when venv is not available (PEP 668 only)
+      if [[ "${OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES}" == "1" ]]; then
+        info "$(tr "Installing OpenViking with --break-system-packages (OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1)" "正在以 --break-system-packages 安装 OpenViking（已设置 OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1）")"
+        if "$py" -m pip install --break-system-packages openviking -i "${PIP_INDEX_URL}"; then
+          OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
+          [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
+          info "$(tr "OpenViking installed ✓ (system)" "OpenViking 安装完成 ✓（系统）")"
+          return 0
+        fi
       fi
+      info "$(tr "System Python is externally managed (PEP 668). Using a venv at ~/.openviking/venv" "检测到系统 Python 受管 (PEP 668)，将使用 ~/.openviking/venv 虚拟环境")"
     fi
-
-    info "$(tr "System Python is externally managed (PEP 668). Using a venv at ~/.openviking/venv" "检测到系统 Python 受管 (PEP 668)，将使用 ~/.openviking/venv 虚拟环境")"
     mkdir -p "${OPENVIKING_DIR}"
     local venv_dir="${OPENVIKING_DIR}/venv"
     local venv_py="${venv_dir}/bin/python"
