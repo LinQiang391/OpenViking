@@ -300,8 +300,17 @@ install_openviking() {
     mkdir -p "${OPENVIKING_DIR}"
     local venv_dir="${OPENVIKING_DIR}/venv"
     local venv_py="${venv_dir}/bin/python"
-    local venv_ok=0
 
+    # Reuse existing venv if it has openviking (avoid repeated create on re-run)
+    if [[ -x "${venv_py}" ]] && "${venv_py}" -c "import openviking" 2>/dev/null; then
+      info "$(tr "Using existing venv with openviking: ${venv_dir}" "复用已有虚拟环境（已装 openviking）: ${venv_dir}")"
+      "${venv_py}" -m pip install -q -U openviking -i "${PIP_INDEX_URL}" 2>/dev/null || true
+      OPENVIKING_PYTHON_PATH="${venv_dir}/bin/python"
+      info "$(tr "OpenViking installed ✓ (venv)" "OpenViking 安装完成 ✓（虚拟环境）")"
+      return 0
+    fi
+
+    local venv_ok=0
     # Try 1: stdlib venv (needs ensurepip)
     if "$py" -m venv "${venv_dir}" 2>/dev/null; then
       venv_ok=1
