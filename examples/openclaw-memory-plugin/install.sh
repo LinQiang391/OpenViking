@@ -15,6 +15,7 @@
 #   OPENVIKING_EMBEDDING_API_KEY  - Embedding model API key (optional)
 #   OPENVIKING_ARK_API_KEY       - legacy fallback for both keys
 #   OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1 - if venv unavailable, allow pip --break-system-packages (opt-in)
+#   GET_PIP_URL=url                 - URL for get-pip.py when using venv --without-pip (default: auto)
 #
 # On Debian/Ubuntu (PEP 668), the script installs OpenViking into a venv at
 # ~/.openviking/venv to avoid "externally-managed-environment" errors.
@@ -307,10 +308,23 @@ install_openviking() {
     if [[ "$venv_ok" -eq 0 ]]; then
       rm -rf "${venv_dir}" 2>/dev/null || true
       if "$py" -m venv --without-pip "${venv_dir}" 2>/dev/null; then
-        info "$(tr "Venv created without pip; bootstrapping pip..." "已创建无 pip 的虚拟环境，正在安装 pip...")"
-        local get_pip
+        info "$(tr "Venv created without pip; bootstrapping pip (using index: ${PIP_INDEX_URL})..." "已创建无 pip 的虚拟环境，正在安装 pip（使用镜像: ${PIP_INDEX_URL}）...")"
+        local get_pip get_pip_url
         get_pip=$(mktemp -t get-pip.XXXXXX.py 2>/dev/null || echo "/tmp/get-pip.py")
-        if curl -fsSL "https://bootstrap.pypa.io/get-pip.py" -o "${get_pip}" 2>/dev/null && "$venv_py" "${get_pip}" -q 2>/dev/null; then
+        # Prefer mirror for get-pip.py when PIP_INDEX_URL is in China to avoid slow/timeout
+        if [[ -n "${GET_PIP_URL}" ]]; then
+          get_pip_url="${GET_PIP_URL}"
+        elif echo "${PIP_INDEX_URL}" | grep -q "tuna.tsinghua\|pypi.tuna"; then
+          get_pip_url="https://mirrors.tuna.tsinghua.edu.cn/pypi/web/static/get-pip.py"
+        else
+          get_pip_url="https://bootstrap.pypa.io/get-pip.py"
+        fi
+        if ! curl -fsSL --connect-timeout 15 --max-time 120 "${get_pip_url}" -o "${get_pip}" 2>/dev/null; then
+          if [[ "${get_pip_url}" != "https://bootstrap.pypa.io/get-pip.py" ]]; then
+            curl -fsSL --connect-timeout 15 --max-time 120 "https://bootstrap.pypa.io/get-pip.py" -o "${get_pip}" 2>/dev/null || true
+          fi
+        fi
+        if [[ -s "${get_pip}" ]] && PIP_INDEX_URL="${PIP_INDEX_URL}" "$venv_py" "${get_pip}" -q 2>/dev/null; then
           venv_ok=1
         fi
         rm -f "${get_pip}" 2>/dev/null || true
