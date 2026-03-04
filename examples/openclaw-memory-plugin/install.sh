@@ -313,13 +313,17 @@ install_openviking() {
     fi
 
     if [[ "$venv_ok" -eq 0 ]]; then
+      # Venv not available (e.g. no python3.12-venv on this distro) — fallback to system install
+      warn "$(tr "Could not create venv (ensurepip/virtualenv not available). Installing to system Python (--break-system-packages)." "无法创建虚拟环境（无 ensurepip/virtualenv），将安装到系统 Python（--break-system-packages）。")"
+      if "$py" -m pip install --break-system-packages openviking -i "${PIP_INDEX_URL}"; then
+        OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
+        [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
+        info "$(tr "OpenViking installed ✓ (system)" "OpenViking 安装完成 ✓（系统）")"
+        return 0
+      fi
       local py_ver
       py_ver=$("$py" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3")
-      err "$(tr "Failed to create venv. Try one of:" "创建虚拟环境失败，请任选一种方式：")"
-      echo "  $(tr "1) Install venv (use version that matches your Python):" "1) 安装 venv（请选用与当前 Python 版本一致的包）：")"
-      echo "     sudo apt install python${py_ver}-venv   # or: python3-full"
-      echo "  $(tr "2) Or allow system-wide install (not recommended):" "2) 或允许安装到系统（不推荐）：")"
-      echo "     OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1 curl -fsSL ... | bash"
+      err "$(tr "Failed to create venv and system install failed. Try: sudo apt install python${py_ver}-venv then re-run this script." "创建虚拟环境与系统安装均失败。请尝试: sudo apt install python${py_ver}-venv 后重新执行本脚本。")"
       exit 1
     fi
 
