@@ -13,10 +13,16 @@
 #   PIP_INDEX_URL=url             - pip index URL (default: https://pypi.tuna.tsinghua.edu.cn/simple)
 #   OPENVIKING_VLM_API_KEY        - VLM model API key (optional)
 #   OPENVIKING_EMBEDDING_API_KEY  - Embedding model API key (optional)
-#   OPENVIKING_ARK_API_KEY        - legacy fallback for both keys
+#   OPENVIKING_ARK_API_KEY       - legacy fallback for both keys
+#
+# On Debian/Ubuntu (PEP 668), the script installs OpenViking into a venv at
+# ~/.openviking/venv to avoid "externally-managed-environment" errors.
 #
 
 set -e
+
+# Set by install_openviking when using venv (e.g. on Debian/Ubuntu); used by write_openviking_env
+OPENVIKING_PYTHON_PATH=""
 
 REPO="${REPO:-volcengine/OpenViking}"
 BRANCH="${BRANCH:-main}"
@@ -258,14 +264,43 @@ install_openviking() {
     info "$(tr "Skipping OpenViking install (SKIP_OPENVIKING=1)" "跳过 OpenViking 安装 (SKIP_OPENVIKING=1)")"
     return 0
   fi
+  local py="${OPENVIKING_PYTHON:-python3}"
   info "$(tr "Installing OpenViking from PyPI..." "正在安装 OpenViking (PyPI)...")"
   info "$(tr "Using pip index: ${PIP_INDEX_URL}" "使用 pip 镜像源: ${PIP_INDEX_URL}")"
-  python3 -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}"
-  python3 -m pip install openviking -i "${PIP_INDEX_URL}" || {
-    err "$(tr "OpenViking install failed. Check Python version (>=3.10) and pip." "OpenViking 安装失败，请检查 Python 版本 (需 >= 3.10) 及 pip")"
-    exit 1
-  }
-  info "$(tr "OpenViking installed ✓" "OpenViking 安装完成 ✓")"
+
+  # Try system-wide pip first (works on many systems)
+  local err_out
+  err_out=$("$py" -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}" 2>&1) || true
+  if err_out=$("$py" -m pip install openviking -i "${PIP_INDEX_URL}" 2>&1); then
+    OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
+    [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
+    info "$(tr "OpenViking installed ✓" "OpenViking 安装完成 ✓")"
+    return 0
+  fi
+
+  # On Debian/Ubuntu (PEP 668), system Python is externally managed — use a venv
+  if echo "$err_out" | grep -q "externally-managed-environment\|externally managed"; then
+    info "$(tr "System Python is externally managed (PEP 668). Using a venv at ~/.openviking/venv" "检测到系统 Python 受管 (PEP 668)，将使用 ~/.openviking/venv 虚拟环境")"
+    mkdir -p "${OPENVIKING_DIR}"
+    local venv_dir="${OPENVIKING_DIR}/venv"
+    if ! "$py" -m venv "${venv_dir}" 2>/dev/null; then
+      err "$(tr "Failed to create venv. On Debian/Ubuntu run: sudo apt install python3-venv (or python3-full)" "创建虚拟环境失败。Debian/Ubuntu 请先执行: sudo apt install python3-venv（或 python3-full）")"
+      exit 1
+    fi
+    local venv_py="${venv_dir}/bin/python"
+    "$venv_py" -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}"
+    if ! "$venv_py" -m pip install openviking -i "${PIP_INDEX_URL}"; then
+      err "$(tr "OpenViking install failed in venv." "在虚拟环境中安装 OpenViking 失败。")"
+      exit 1
+    fi
+    OPENVIKING_PYTHON_PATH="${venv_dir}/bin/python"
+    info "$(tr "OpenViking installed ✓ (venv)" "OpenViking 安装完成 ✓（虚拟环境）")"
+    return 0
+  fi
+
+  err "$(tr "OpenViking install failed. Check Python version (>=3.10) and pip." "OpenViking 安装失败，请检查 Python 版本 (需 >= 3.10) 及 pip")"
+  echo "$err_out" >&2
+  exit 1
 }
 
 configure_openviking_conf() {
@@ -397,7 +432,11 @@ configure_openclaw_plugin() {
 
 write_openviking_env() {
   local py_path
-  py_path="$(command -v python3 || command -v python || true)"
+  if [[ -n "${OPENVIKING_PYTHON_PATH}" ]]; then
+    py_path="${OPENVIKING_PYTHON_PATH}"
+  else
+    py_path="$(command -v python3 || command -v python || true)"
+  fi
   mkdir -p "${OPENCLAW_DIR}"
   cat > "${OPENCLAW_DIR}/openviking.env" <<EOF
 export OPENVIKING_PYTHON='${py_path}'
