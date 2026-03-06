@@ -31,6 +31,8 @@ $Repo = if ($env:REPO) { $env:REPO } else { "volcengine/OpenViking" }
 $Branch = if ($env:BRANCH) { $env:BRANCH } else { "main" }
 $NpmRegistry = if ($env:NPM_REGISTRY) { $env:NPM_REGISTRY } else { "https://registry.npmmirror.com" }
 $PipIndexUrl = if ($env:PIP_INDEX_URL) { $env:PIP_INDEX_URL } else { "https://pypi.tuna.tsinghua.edu.cn/simple" }
+$OpenVikingVersion = if ($env:OPENVIKING_VERSION) { $env:OPENVIKING_VERSION } else { "" }
+$OpenVikingPipSpec = if ([string]::IsNullOrWhiteSpace($OpenVikingVersion)) { "openviking" } else { "openviking==$OpenVikingVersion" }
 
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $OpenClawDir = Join-Path $HomeDir ".openclaw"
@@ -162,10 +164,14 @@ function Install-OpenViking {
   }
 
   $py = (Check-Python).Cmd
-  Info (T "Installing OpenViking from PyPI..." "正在安装 OpenViking (PyPI)...")
+  if ([string]::IsNullOrWhiteSpace($OpenVikingVersion)) {
+    Info (T "Installing OpenViking (latest) from PyPI..." "正在安装 OpenViking（最新版）(PyPI)...")
+  } else {
+    Info ("{0} {1}" -f (T "Installing OpenViking" "正在安装 OpenViking"), "$OpenVikingVersion (PyPI)...")
+  }
   Info ("{0} {1}" -f (T "Using pip index:" "使用 pip 镜像源:"), $PipIndexUrl)
   & $py -m pip install --upgrade pip -i $PipIndexUrl | Out-Host
-  & $py -m pip install openviking -i $PipIndexUrl | Out-Host
+  & $py -m pip install $OpenVikingPipSpec -i $PipIndexUrl | Out-Host
   Info (T "OpenViking installed ✓" "OpenViking 安装完成 ✓")
 }
 

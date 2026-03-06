@@ -14,6 +14,7 @@
 #   OPENVIKING_VLM_API_KEY        - VLM model API key (optional)
 #   OPENVIKING_EMBEDDING_API_KEY  - Embedding model API key (optional)
 #   OPENVIKING_ARK_API_KEY       - legacy fallback for both keys
+#   OPENVIKING_VERSION=ver          - OpenViking version to install (default: latest from PyPI)
 #   OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1 - if venv unavailable (PEP 668 only), allow pip --break-system-packages (opt-in, default off)
 #   GET_PIP_URL=url                 - URL for get-pip.py when using venv --without-pip (default: auto)
 #
@@ -43,23 +44,29 @@ DEFAULT_VLM_MODEL="doubao-seed-2-0-pro-260215"
 DEFAULT_EMBED_MODEL="doubao-embedding-vision-251215"
 SELECTED_SERVER_PORT="${DEFAULT_SERVER_PORT}"
 LANG_UI="en"
+OPENVIKING_VERSION="${OPENVIKING_VERSION:-}"
 
 # Parse args (supports curl | bash -s -- ...)
 for arg in "$@"; do
   [[ "$arg" == "-y" || "$arg" == "--yes" ]] && INSTALL_YES="1"
   [[ "$arg" == "--zh" ]] && LANG_UI="zh"
   [[ "$arg" == "-h" || "$arg" == "--help" ]] && {
-    echo "Usage: curl -fsSL <INSTALL_URL> | bash [-s -- -y --zh]"
+    echo "Usage: curl -fsSL <INSTALL_URL> | bash [-s -- -y --zh --openviking-version=VERSION]"
     echo ""
     echo "Options:"
     echo "  -y, --yes   Non-interactive mode"
     echo "  --zh        Chinese prompts"
+    echo "  --openviking-version=VERSION   Install specific OpenViking version (default: latest)"
     echo "  -h, --help  Show this help"
     echo ""
-    echo "Env vars: REPO, BRANCH, OPENVIKING_INSTALL_YES, SKIP_OPENCLAW, SKIP_OPENVIKING, NPM_REGISTRY, PIP_INDEX_URL"
+    echo "Env vars: REPO, BRANCH, OPENVIKING_INSTALL_YES, SKIP_OPENCLAW, SKIP_OPENVIKING, OPENVIKING_VERSION, NPM_REGISTRY, PIP_INDEX_URL"
     exit 0
   }
+  [[ "$arg" == --openviking-version=* ]] && OPENVIKING_VERSION="${arg#--openviking-version=}"
 done
+
+# Pip package spec: openviking (latest) or openviking==1.2.3
+OPENVIKING_PIP_SPEC="openviking${OPENVIKING_VERSION:+==${OPENVIKING_VERSION}}"
 
 tr() {
   local en="$1"
@@ -267,13 +274,17 @@ install_openviking() {
     return 0
   fi
   local py="${OPENVIKING_PYTHON:-python3}"
-  info "$(tr "Installing OpenViking from PyPI..." "正在安装 OpenViking (PyPI)...")"
+  if [[ -n "${OPENVIKING_VERSION}" ]]; then
+    info "$(tr "Installing OpenViking ${OPENVIKING_VERSION} from PyPI..." "正在安装 OpenViking ${OPENVIKING_VERSION} (PyPI)...")"
+  else
+    info "$(tr "Installing OpenViking (latest) from PyPI..." "正在安装 OpenViking（最新版）(PyPI)...")"
+  fi
   info "$(tr "Using pip index: ${PIP_INDEX_URL}" "使用 pip 镜像源: ${PIP_INDEX_URL}")"
 
   # Try system-wide pip first (works on many systems)
   local err_out
   err_out=$("$py" -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}" 2>&1) || true
-  if err_out=$("$py" -m pip install openviking -i "${PIP_INDEX_URL}" 2>&1); then
+  if err_out=$("$py" -m pip install "${OPENVIKING_PIP_SPEC}" -i "${PIP_INDEX_URL}" 2>&1); then
     OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
     [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
     info "$(tr "OpenViking installed ✓" "OpenViking 安装完成 ✓")"
@@ -288,7 +299,7 @@ install_openviking() {
       # Opt-in: allow install with --break-system-packages when venv is not available (PEP 668 only, default off)
       if [[ "${OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES}" == "1" ]]; then
         info "$(tr "Installing OpenViking with --break-system-packages (OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1)" "正在以 --break-system-packages 安装 OpenViking（已设置 OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES=1）")"
-        if "$py" -m pip install --break-system-packages openviking -i "${PIP_INDEX_URL}"; then
+        if "$py" -m pip install --break-system-packages "${OPENVIKING_PIP_SPEC}" -i "${PIP_INDEX_URL}"; then
           OPENVIKING_PYTHON_PATH="$(command -v "$py" || true)"
           [[ -z "$OPENVIKING_PYTHON_PATH" ]] && OPENVIKING_PYTHON_PATH="$py"
           info "$(tr "OpenViking installed ✓ (system)" "OpenViking 安装完成 ✓（系统）")"
@@ -304,7 +315,7 @@ install_openviking() {
     # Reuse existing venv if it has openviking (avoid repeated create on re-run)
     if [[ -x "${venv_py}" ]] && "${venv_py}" -c "import openviking" 2>/dev/null; then
       info "$(tr "Using existing venv with openviking: ${venv_dir}" "复用已有虚拟环境（已装 openviking）: ${venv_dir}")"
-      "${venv_py}" -m pip install -q -U openviking -i "${PIP_INDEX_URL}" 2>/dev/null || true
+      "${venv_py}" -m pip install -q -U "${OPENVIKING_PIP_SPEC}" -i "${PIP_INDEX_URL}" 2>/dev/null || true
       OPENVIKING_PYTHON_PATH="${venv_dir}/bin/python"
       info "$(tr "OpenViking installed ✓ (venv)" "OpenViking 安装完成 ✓（虚拟环境）")"
       return 0
@@ -367,7 +378,7 @@ install_openviking() {
     fi
 
     "$venv_py" -m pip install --upgrade pip -q -i "${PIP_INDEX_URL}"
-    if ! "$venv_py" -m pip install openviking -i "${PIP_INDEX_URL}"; then
+    if ! "$venv_py" -m pip install "${OPENVIKING_PIP_SPEC}" -i "${PIP_INDEX_URL}"; then
       err "$(tr "OpenViking install failed in venv." "在虚拟环境中安装 OpenViking 失败。")"
       exit 1
     fi

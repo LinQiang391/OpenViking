@@ -358,14 +358,15 @@ async function collectOvvConfInteractive(nonInteractive) {
 
 // ─── Installation helpers ───
 
-async function installOpenviking(repoRoot) {
+async function installOpenviking(repoRoot, version) {
   const py = process.env.OPENVIKING_PYTHON || DEFAULT_PYTHON;
-  log(`Installing openviking (using ${py})...`);
+  const spec = version ? `openviking==${version}` : "openviking";
+  log(`Installing openviking ${version || "(latest)"} (using ${py})...`);
   if (repoRoot && existsSync(join(repoRoot, "pyproject.toml"))) {
     await run(py, ["-m", "pip", "install", "-e", repoRoot]);
     return;
   }
-  await run(py, ["-m", "pip", "install", "openviking"]);
+  await run(py, ["-m", "pip", "install", spec]);
 }
 
 async function fetchPluginFromGitHub(dest) {
@@ -534,6 +535,10 @@ async function main() {
   const args = process.argv.slice(2);
   const help = args.includes("--help") || args.includes("-h");
   const nonInteractive = args.includes("--yes") || args.includes("-y");
+  const openvikingVersion =
+    process.env.OPENVIKING_VERSION ||
+    args.find((a) => a.startsWith("--openviking-version="))?.split("=")[1] ||
+    undefined;
 
   if (help) {
     console.log(`
@@ -543,6 +548,7 @@ Usage: npx openclaw-openviking-setup-helper [options]
 
 Options:
   -y, --yes     Non-interactive, use defaults
+  --openviking-version=VERSION   Install specific OpenViking version (default: latest)
   -h, --help    Show help
 
 Steps:
@@ -555,6 +561,7 @@ Steps:
 
 Env vars:
   OPENVIKING_PYTHON       Python path
+  OPENVIKING_VERSION      OpenViking version to install (default: latest)
   OPENVIKING_CONFIG_FILE  ov.conf path
   OPENVIKING_REPO         Local OpenViking repo path (use local plugin if set)
   OPENVIKING_ARK_API_KEY  Volcengine Ark API Key (used in -y mode, skip prompt)
@@ -709,7 +716,7 @@ Env vars:
     const repo = process.env.OPENVIKING_REPO || (hasLocalRepo ? inferredRepoRoot : "");
 
     if (nonInteractive) {
-      await installOpenviking(repo);
+      await installOpenviking(repo, openvikingVersion);
     } else {
       const choice = await question(
         repo
@@ -718,7 +725,7 @@ Env vars:
         "y"
       );
       if (choice.toLowerCase() === "y") {
-        await installOpenviking(repo);
+        await installOpenviking(repo, openvikingVersion);
       } else {
         log("Please install openviking manually and re-run this script.", "err");
         if (repo) console.log(`    cd ${repo} && python3 -m pip install -e .`);

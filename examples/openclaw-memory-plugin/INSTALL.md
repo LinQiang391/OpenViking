@@ -18,7 +18,17 @@ Non-interactive mode:
 curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash -s -y
 ```
 
-The script will: 1) validate the OpenViking runtime environment (and check that OpenClaw is installed), 2) install OpenViking only, 3) configure and deploy the memory plugin.
+**Specifying OpenViking version:** The script installs the latest version from PyPI by default. To install a specific version, use the environment variable or the CLI option (pass the option after `bash -s --`):
+
+```bash
+# Environment variable (set before bash)
+OPENVIKING_VERSION=1.2.0 curl -fsSL .../install.sh | bash -s -- -y
+
+# CLI option
+curl -fsSL .../install.sh | bash -s -- -y --openviking-version=1.2.0
+```
+
+The script will: 1) validate the OpenViking runtime environment (and check that OpenClaw is installed), 2) install the specified or latest OpenViking, 3) configure and deploy the memory plugin.
 
 ---
 

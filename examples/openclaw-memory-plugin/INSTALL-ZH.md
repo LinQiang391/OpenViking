@@ -18,7 +18,17 @@ curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples
 curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/openclaw-memory-plugin/install.sh | bash -s -y
 ```
 
-脚本会：1) 校验 OpenViking 运行环境（并检查是否已安装 OpenClaw）；2) 仅安装 OpenViking；3) 配置并部署记忆插件。
+**指定 OpenViking 版本：** 默认安装 PyPI 最新版。若需安装指定版本，可使用环境变量或命令行参数（参数需写在 `bash` 前或通过 `bash -s --` 传入）：
+
+```bash
+# 环境变量（变量写在 bash 前）
+OPENVIKING_VERSION=1.2.0 curl -fsSL .../install.sh | bash -s -- -y
+
+# 命令行参数
+curl -fsSL .../install.sh | bash -s -- -y --openviking-version=1.2.0
+```
+
+脚本会：1) 校验 OpenViking 运行环境（并检查是否已安装 OpenClaw）；2) 安装指定版本或最新版 OpenViking；3) 配置并部署记忆插件。
 
 ---
 
@@ -189,6 +199,13 @@ source ~/.bashrc
 nvm install 22
 nvm use 22
 ```
+
+> **国内或连接 GitHub 失败时**（如 `SSL_ERROR_SYSCALL`、超时）：可改用**方式一（NodeSource）**或**方式三（手动下载）**，不依赖 GitHub。若必须用 nvm，可尝试镜像安装脚本后手动指定 NVM_SOURCE：
+> ```bash
+> # 使用 GitHub 镜像站获取安装脚本（镜像可用时）
+> curl -o- https://ghproxy.com/https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+> # 若仍失败，直接装 Node：见方式一或方式三
+> ```
 
 #### 方式三：手动下载二进制包
 
