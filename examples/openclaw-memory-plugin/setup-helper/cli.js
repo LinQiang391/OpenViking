@@ -186,7 +186,7 @@ async function checkOvvConf() {
 const DEFAULT_SERVER_PORT = 1933;
 const DEFAULT_AGFS_PORT = 1833;
 const DEFAULT_VLM_MODEL = "doubao-seed-2-0-pro-260215";
-const DEFAULT_EMBEDDING_MODEL = "doubao-embedding-vision-250615";
+const DEFAULT_EMBEDDING_MODEL = "doubao-embedding-vision-251215";
 
 const DEFAULT_WORKSPACE = join(HOME, ".openviking", "data");
 
@@ -213,7 +213,7 @@ function buildOvvConfJson(opts = {}) {
     },
     embedding: {
       dense: {
-        backend: "volcengine",
+        provider: "volcengine",
         api_key: apiKey || null,
         model: embeddingModel,
         api_base: "https://ark.cn-beijing.volces.com/api/v3",
@@ -222,7 +222,7 @@ function buildOvvConfJson(opts = {}) {
       },
     },
     vlm: {
-      backend: "volcengine",
+      provider: "volcengine",
       api_key: apiKey || null,
       model: vlmModel,
       api_base: "https://ark.cn-beijing.volces.com/api/v3",
@@ -300,7 +300,7 @@ async function updateOvvConf(cfgPath, opts = {}) {
     if (!cfg.vlm) cfg.vlm = {};
     cfg.vlm.model = opts.vlmModel;
     if (!cfg.vlm.api_base) cfg.vlm.api_base = "https://ark.cn-beijing.volces.com/api/v3";
-    if (!cfg.vlm.backend) cfg.vlm.backend = "volcengine";
+    if (!cfg.vlm.provider) cfg.vlm.provider = "volcengine";
   }
   if (opts.embeddingModel !== undefined) {
     if (!cfg.embedding) cfg.embedding = {};
@@ -820,9 +820,9 @@ Env vars:
   console.log("╚══════════════════════════════════════════════════════════╝");
   console.log("\nTo start OpenClaw with memory:");
   if (IS_WIN) {
-    console.log('  call "%USERPROFILE%\\.openclaw\\openviking.env.bat" && openclaw gateway');
+    console.log('  call "%USERPROFILE%\\.openclaw\\openviking.env.bat" && openclaw gateway restart');
   } else {
-    console.log("  source ~/.openclaw/openviking.env && openclaw gateway");
+    console.log("  source ~/.openclaw/openviking.env && openclaw gateway restart");
   }
   console.log("\nTo verify:");
   console.log("  openclaw status");

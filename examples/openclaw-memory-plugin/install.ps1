@@ -40,7 +40,7 @@ $PluginDest = Join-Path $OpenClawDir "extensions\memory-openviking"
 $DefaultServerPort = 1933
 $DefaultAgfsPort = 1833
 $DefaultVlmModel = "doubao-seed-2-0-pro-260215"
-$DefaultEmbeddingModel = "doubao-embedding-vision-250615"
+$DefaultEmbeddingModel = "doubao-embedding-vision-251215"
 
 function Get-PythonCommand {
   if ($env:OPENVIKING_PYTHON) { return $env:OPENVIKING_PYTHON }
@@ -229,7 +229,7 @@ function Configure-OvConf {
     }
     embedding = @{
       dense = @{
-        backend = "volcengine"
+        provider = "volcengine"
         api_key = $(if ($embeddingApiKey) { $embeddingApiKey } else { $null })
         model = $embeddingModel
         api_base = "https://ark.cn-beijing.volces.com/api/v3"
@@ -238,7 +238,7 @@ function Configure-OvConf {
       }
     }
     vlm = @{
-      backend = "volcengine"
+      provider = "volcengine"
       api_key = $(if ($vlmApiKey) { $vlmApiKey } else { $null })
       model = $vlmModel
       api_base = "https://ark.cn-beijing.volces.com/api/v3"
@@ -379,7 +379,7 @@ Write-Host ""
 Info (T "Run these commands to start OpenClaw + OpenViking:" "请按以下命令启动 OpenClaw + OpenViking：")
 Write-Host "  1) openclaw --version"
 Write-Host "  2) openclaw onboard"
-Write-Host "  3) . `"$OpenClawDir\openviking.env.ps1`"; openclaw gateway"
+Write-Host "  3) . `"$OpenClawDir\openviking.env.ps1`"; openclaw gateway restart"
 Write-Host "  4) openclaw status"
 Write-Host ""
 Info ("{0} $OpenVikingDir\ov.conf" -f (T "You can edit the config freely:" "你可以按需自由修改配置文件:"))

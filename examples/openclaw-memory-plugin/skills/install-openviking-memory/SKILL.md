@@ -171,13 +171,13 @@ Wait for `Setup complete!` before proceeding.
 **Linux / macOS:**
 
 ```bash
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 **Windows (cmd):**
 
 ```cmd
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
 Wait a few seconds. Verify this line appears in the output:
@@ -190,7 +190,7 @@ Wait a few seconds. Verify this line appears in the output:
 - **Fail — `health check timeout`:** A stale process is blocking the port. Fix with:
   ```bash
   lsof -ti tcp:1933 tcp:1833 | xargs kill -9
-  source ~/.openclaw/openviking.env && openclaw gateway
+  source ~/.openclaw/openviking.env && openclaw gateway restart
   ```
 
 ---
@@ -227,18 +227,18 @@ Each time the user wants to start OpenClaw with memory:
 **Linux / macOS:**
 
 ```bash
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 **Windows (cmd):**
 
 ```cmd
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
 > Suggest adding an alias for convenience:
 > ```bash
-> echo 'alias openclaw-start="source ~/.openclaw/openviking.env && openclaw gateway"' >> ~/.bashrc
+> echo 'alias openclaw-start="source ~/.openclaw/openviking.env && openclaw gateway restart"' >> ~/.bashrc
 > ```
 
 ### Enable/Disable the Memory Plugin Slot

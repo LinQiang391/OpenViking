@@ -40,7 +40,7 @@ PLUGIN_DEST="${OPENCLAW_DIR}/extensions/memory-openviking"
 DEFAULT_SERVER_PORT=1933
 DEFAULT_AGFS_PORT=1833
 DEFAULT_VLM_MODEL="doubao-seed-2-0-pro-260215"
-DEFAULT_EMBED_MODEL="doubao-embedding-vision-250615"
+DEFAULT_EMBED_MODEL="doubao-embedding-vision-251215"
 SELECTED_SERVER_PORT="${DEFAULT_SERVER_PORT}"
 LANG_UI="en"
 
@@ -438,7 +438,7 @@ configure_openviking_conf() {
   },
   "embedding": {
     "dense": {
-      "backend": "volcengine",
+      "provider": "volcengine",
       "api_key": ${embedding_api_json},
       "model": "${embedding_model}",
       "api_base": "https://ark.cn-beijing.volces.com/api/v3",
@@ -447,7 +447,7 @@ configure_openviking_conf() {
     }
   },
   "vlm": {
-    "backend": "volcengine",
+    "provider": "volcengine",
     "api_key": ${vlm_api_json},
     "model": "${vlm_model}",
     "api_base": "https://ark.cn-beijing.volces.com/api/v3",
@@ -569,7 +569,7 @@ main() {
   info "$(tr "Run these commands to start OpenClaw + OpenViking:" "请按以下命令启动 OpenClaw + OpenViking：")"
   echo "  1) openclaw --version"
   echo "  2) openclaw onboard"
-  echo "  3) source ${OPENCLAW_DIR}/openviking.env && openclaw gateway"
+  echo "  3) source ${OPENCLAW_DIR}/openviking.env && openclaw gateway restart"
   echo "  4) openclaw status"
   echo ""
   info "$(tr "You can edit the config freely: ${OPENVIKING_DIR}/ov.conf" "你可以按需自由修改配置文件: ${OPENVIKING_DIR}/ov.conf")"

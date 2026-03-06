@@ -343,28 +343,25 @@ The helper will walk you through:
 **Linux / macOS:**
 
 ```bash
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 **Windows (cmd):**
 
 ```cmd
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
-You should see:
+To verify that installation and startup succeeded:
 
-```
-[gateway] listening on ws://127.0.0.1:18789
-[gateway] memory-openviking: local server started (http://127.0.0.1:1933, config: ...)
-```
+- Use **`openclaw status`** to check plugin status. A successful plugin load shows output like the following (the **Memory** line as `enabled (plugin memory-openviking)` means the memory plugin is active):
 
-Check plugin status:
+    ```
+    │ Agents          │ 1 · 1 bootstrap file present · sessions 1 · default main active 2d ago
+    │ Memory          │ enabled (plugin memory-openviking)
+    ```
 
-```bash
-openclaw status
-# Memory line should show: enabled (plugin memory-openviking)
-```
+- Or use **`ps -ef | grep openviking`** to confirm the openviking process is running.
 
 Test memory:
 
@@ -387,18 +384,18 @@ Each time you want to use OpenClaw with memory:
 **Linux / macOS:**
 
 ```bash
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 **Windows (cmd):**
 
 ```cmd
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
 > **Convenience (Linux/macOS):** Add to `~/.bashrc`:
 > ```bash
-> alias openclaw-start='source ~/.openclaw/openviking.env && openclaw gateway'
+> alias openclaw-start='source ~/.openclaw/openviking.env && openclaw gateway restart'
 > ```
 
 ### 5.1 Enable or Disable the Memory Plugin
@@ -588,13 +585,13 @@ A stale process is occupying the port. Kill it and restart:
 ```bash
 # Linux / macOS
 lsof -ti tcp:1933 tcp:1833 | xargs kill -9
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 ```cmd
 REM Windows
 for /f "tokens=5" %a in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":1933 :1833"') do taskkill /PID %a /F
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
 #### `extracted 0 memories`

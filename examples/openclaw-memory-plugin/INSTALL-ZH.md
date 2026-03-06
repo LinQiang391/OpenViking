@@ -343,28 +343,25 @@ npx ./examples/openclaw-memory-plugin/setup-helper
 **Linux / macOS：**
 
 ```bash
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 **Windows (cmd)：**
 
 ```cmd
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
-看到以下输出表示安装成功：
+可通过以下方式确认安装与启动是否成功：
 
-```
-[gateway] listening on ws://127.0.0.1:18789
-[gateway] memory-openviking: local server started (http://127.0.0.1:1933, config: ...)
-```
+- 使用 **`openclaw status`** 查看插件状态；若插件加载成功，会看到类似输出（其中 **Memory** 行为 `enabled (plugin memory-openviking)` 即表示记忆插件已启用）：
 
-检查插件状态：
+    ```
+    │ Agents          │ 1 · 1 bootstrap file present · sessions 1 · default main active 2d ago
+    │ Memory          │ enabled (plugin memory-openviking)
+    ```
 
-```bash
-openclaw status
-# Memory 行应显示：enabled (plugin memory-openviking)
-```
+- 或使用 **`ps -ef | grep openviking`** 查看 openviking 进程是否存在。
 
 测试记忆功能：
 
@@ -387,18 +384,18 @@ OpenClaw 应能从记忆中回忆并回答。
 **Linux / macOS：**
 
 ```bash
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 **Windows (cmd)：**
 
 ```cmd
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
 > **便捷方式（Linux/macOS）：** 加入 `~/.bashrc`：
 > ```bash
-> alias openclaw-start='source ~/.openclaw/openviking.env && openclaw gateway'
+> alias openclaw-start='source ~/.openclaw/openviking.env && openclaw gateway restart'
 > ```
 
 ### 5.1 启用或关闭记忆插件
@@ -588,13 +585,13 @@ npm install -g openclaw
 ```bash
 # Linux / macOS
 lsof -ti tcp:1933 tcp:1833 | xargs kill -9
-source ~/.openclaw/openviking.env && openclaw gateway
+source ~/.openclaw/openviking.env && openclaw gateway restart
 ```
 
 ```cmd
 REM Windows
 for /f "tokens=5" %a in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":1933 :1833"') do taskkill /PID %a /F
-call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway
+call "%USERPROFILE%\.openclaw\openviking.env.bat" && openclaw gateway restart
 ```
 
 #### Q: `extracted 0 memories`
