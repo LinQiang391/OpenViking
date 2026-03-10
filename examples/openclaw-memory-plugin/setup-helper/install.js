@@ -195,6 +195,34 @@ function runCapture(cmd, args, opts = {}) {
   });
 }
 
+function runLiveCapture(cmd, args, opts = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: opts.shell ?? false,
+      ...opts,
+    });
+    let out = "";
+    let errOut = "";
+    child.stdout?.on("data", (chunk) => {
+      const text = String(chunk);
+      out += text;
+      process.stdout.write(text);
+    });
+    child.stderr?.on("data", (chunk) => {
+      const text = String(chunk);
+      errOut += text;
+      process.stderr.write(text);
+    });
+    child.on("error", (error) => {
+      resolve({ code: -1, out: "", err: String(error) });
+    });
+    child.on("close", (code) => {
+      resolve({ code, out: out.trim(), err: errOut.trim() });
+    });
+  });
+}
+
 function question(prompt, defaultValue = "") {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const suffix = defaultValue ? ` [${defaultValue}]` : "";
@@ -387,8 +415,13 @@ async function installOpenViking() {
   info(tr("Installing OpenViking from PyPI...", "正在安装 OpenViking (PyPI)..."));
   info(tr(`Using pip index: ${PIP_INDEX_URL}`, `使用 pip 镜像源: ${PIP_INDEX_URL}`));
 
+  info(`Package: ${OPENVIKING_PIP_SPEC}`);
   await runCapture(py, ["-m", "pip", "install", "--upgrade", "pip", "-q", "-i", PIP_INDEX_URL], { shell: false });
-  const installResult = await runCapture(py, ["-m", "pip", "install", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL], { shell: false });
+  const installResult = await runLiveCapture(
+    py,
+    ["-m", "pip", "install", "--progress-bar", "on", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL],
+    { shell: false },
+  );
   if (installResult.code === 0) {
     openvikingPythonPath = py;
     info(tr("OpenViking installed ✓", "OpenViking 安装完成 ✓"));
@@ -404,7 +437,11 @@ async function installOpenViking() {
     if (existsSync(venvPy)) {
       const reuseCheck = await runCapture(venvPy, ["-c", "import openviking"], { shell: false });
       if (reuseCheck.code === 0) {
-        await runCapture(venvPy, ["-m", "pip", "install", "-q", "-U", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL], { shell: false });
+        await runLiveCapture(
+          venvPy,
+          ["-m", "pip", "install", "--progress-bar", "on", "-U", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL],
+          { shell: false },
+        );
         openvikingPythonPath = venvPy;
         info(tr("OpenViking installed ✓ (venv)", "OpenViking 安装完成 ✓（虚拟环境）"));
         return;
@@ -420,7 +457,11 @@ async function installOpenViking() {
     }
 
     await runCapture(venvPy, ["-m", "pip", "install", "--upgrade", "pip", "-q", "-i", PIP_INDEX_URL], { shell: false });
-    const venvInstall = await runCapture(venvPy, ["-m", "pip", "install", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL], { shell: false });
+    const venvInstall = await runLiveCapture(
+      venvPy,
+      ["-m", "pip", "install", "--progress-bar", "on", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL],
+      { shell: false },
+    );
     if (venvInstall.code === 0) {
       openvikingPythonPath = venvPy;
       info(tr("OpenViking installed ✓ (venv)", "OpenViking 安装完成 ✓（虚拟环境）"));
@@ -433,7 +474,11 @@ async function installOpenViking() {
   }
 
   if (process.env.OPENVIKING_ALLOW_BREAK_SYSTEM_PACKAGES === "1") {
-    const systemInstall = await runCapture(py, ["-m", "pip", "install", "--break-system-packages", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL], { shell: false });
+    const systemInstall = await runLiveCapture(
+      py,
+      ["-m", "pip", "install", "--progress-bar", "on", "--break-system-packages", OPENVIKING_PIP_SPEC, "-i", PIP_INDEX_URL],
+      { shell: false },
+    );
     if (systemInstall.code === 0) {
       openvikingPythonPath = py;
       info(tr("OpenViking installed ✓ (system)", "OpenViking 安装完成 ✓（系统）"));
