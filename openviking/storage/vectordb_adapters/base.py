@@ -456,6 +456,61 @@ class CollectionAdapter(ABC):
             records.append(record)
         return records
 
+    def _record_matches_filter(self, record: Dict[str, Any], expr: FilterExpr) -> bool:
+        """Check if a record matches a FilterExpr (application-layer validation).
+        
+        This is a workaround for distributed OpenGauss AND condition bug where
+        the second condition in AND clause may be ignored.
+        """
+        if expr is None:
+            return True
+        if isinstance(expr, And):
+            return all(self._record_matches_filter(record, c) for c in expr.conds)
+        if isinstance(expr, Or):
+            return any(self._record_matches_filter(record, c) for c in expr.conds)
+        if isinstance(expr, Eq):
+            field_val = record.get(expr.field)
+            expected = expr.value
+            if expr.field in self._URI_FIELD_NAMES:
+                expected = self._encode_uri_field_value(expected)
+                field_val = self._encode_uri_field_value(field_val) if field_val else None
+            return field_val == expected
+        if isinstance(expr, In):
+            field_val = record.get(expr.field)
+            expected_vals = expr.values
+            if expr.field in self._URI_FIELD_NAMES:
+                expected_vals = [self._encode_uri_field_value(v) for v in expected_vals]
+                field_val = self._encode_uri_field_value(field_val) if field_val else None
+            return field_val in expected_vals
+        if isinstance(expr, PathScope):
+            field_val = record.get(expr.field)
+            path = expr.path
+            if expr.field in self._URI_FIELD_NAMES:
+                path = self._encode_uri_field_value(path)
+                field_val = self._encode_uri_field_value(field_val) if field_val else None
+            if not field_val:
+                return False
+            if expr.depth == 0:
+                return field_val == path
+            return field_val.startswith(path)
+        if isinstance(expr, Contains):
+            field_val = record.get(expr.field)
+            return expr.substring in (field_val or "")
+        if isinstance(expr, Range):
+            field_val = record.get(expr.field)
+            if field_val is None:
+                return False
+            if expr.gte is not None and field_val < expr.gte:
+                return False
+            if expr.gt is not None and field_val <= expr.gt:
+                return False
+            if expr.lte is not None and field_val > expr.lte:
+                return False
+            if expr.lt is not None and field_val >= expr.lt:
+                return False
+            return True
+        return True
+
     def delete(
         self,
         *,
@@ -467,6 +522,18 @@ class CollectionAdapter(ABC):
         delete_ids = list(ids or [])
         if not delete_ids and filter is not None:
             matched = self.query(filter=filter, limit=limit)
+            
+            # Workaround for distributed OpenGauss AND condition bug:
+            # Re-validate each record against the original filter in application layer
+            if isinstance(filter, FilterExpr):
+                original_count = len(matched)
+                matched = [r for r in matched if self._record_matches_filter(r, filter)]
+                if len(matched) != original_count:
+                    logger.warning(
+                        "[DELETE_TRACE] base.delete: filtered out %d false-positive records (distributed OpenGauss workaround)",
+                        original_count - len(matched)
+                    )
+            
             delete_ids = [record["id"] for record in matched if record.get("id")]
 
         if not delete_ids:
