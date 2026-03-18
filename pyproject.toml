@@ -99,6 +99,7 @@ eval = [
     "datasets>=2.0.0",
     "pandas>=2.0.0",
 ]
+opengauss = []
 build = [
     "setuptools>=61.0",
     "setuptools-scm>=8.0",
