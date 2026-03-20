@@ -598,9 +598,12 @@ class OpenGaussCollection(ICollection):
         items = []
         for row in rows:
             record = self._row_to_dict(row, col_names)
-            score = record.pop("_distance", 0.0)
+            distance = record.pop("_distance", 0.0)
             record_id = record.pop("id", None)
-            items.append(SearchItemResult(id=record_id, fields=record, score=float(score or 0)))
+            # Convert cosine distance to similarity: similarity = 1 - distance
+            # Cosine distance range is [0, 2], similarity range is [-1, 1]
+            similarity = 1.0 - float(distance or 0)
+            items.append(SearchItemResult(id=record_id, fields=record, score=similarity))
         return SearchResult(data=items)
 
     def search_by_scalar(
