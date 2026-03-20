@@ -1,0 +1,35 @@
+{
+  "server": {
+    "host": "${OPENVIKING_SERVER_HOST}",
+    "port": ${OPENVIKING_SERVER_PORT},
+    "root_api_key": "${OPENVIKING_ROOT_API_KEY}",
+    "cors_origins": ["*"]
+  },
+  "storage": {
+    "workspace": "${OPENVIKING_WORKSPACE}",
+    "vectordb": {
+      "backend": "${OPENVIKING_VECTORDB_BACKEND}",
+      "dimension": ${OPENVIKING_EMBEDDING_DIMENSION}
+    }
+  },
+  "embedding": {
+    "dense": {
+      "provider": "${OPENVIKING_EMBEDDING_PROVIDER}",
+      "api_key": "${OPENVIKING_EMBEDDING_API_KEY}",
+      "model": "${OPENVIKING_EMBEDDING_MODEL}",
+      "api_base": "${OPENVIKING_EMBEDDING_API_BASE}",
+      "dimension": ${OPENVIKING_EMBEDDING_DIMENSION},
+      "input": "${OPENVIKING_EMBEDDING_INPUT}"
+    }
+  },
+  "vlm": {
+    "provider": "${OPENVIKING_VLM_PROVIDER}",
+    "api_key": "${OPENVIKING_VLM_API_KEY}",
+    "model": "${OPENVIKING_VLM_MODEL}",
+    "api_base": "${OPENVIKING_VLM_API_BASE}",
+    "temperature": ${OPENVIKING_VLM_TEMPERATURE},
+    "max_retries": ${OPENVIKING_VLM_MAX_RETRIES}
+  },
+  "auto_generate_l0": ${OPENVIKING_AUTO_GENERATE_L0},
+  "auto_generate_l1": ${OPENVIKING_AUTO_GENERATE_L1}
+}
