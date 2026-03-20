@@ -454,6 +454,18 @@ class CollectionAdapter(ABC):
             record["_score"] = item.score if item.score is not None else 0.0
             record = self._normalize_record_for_read(record)
             records.append(record)
+        
+        # Workaround for distributed OpenGauss AND condition bug:
+        # Re-validate each record against the original filter in application layer
+        if isinstance(filter, FilterExpr):
+            original_count = len(records)
+            records = [r for r in records if self._record_matches_filter(r, filter)]
+            if len(records) != original_count:
+                logger.warning(
+                    "[QUERY_TRACE] base.query: filtered out %d false-positive records (distributed OpenGauss workaround)",
+                    original_count - len(records)
+                )
+        
         return records
 
     def _record_matches_filter(self, record: Dict[str, Any], expr: FilterExpr) -> bool:
