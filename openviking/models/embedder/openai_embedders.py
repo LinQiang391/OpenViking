@@ -238,6 +238,9 @@ class OpenAIDenseEmbedder(DenseEmbedderBase):
         try:
             kwargs: Dict[str, Any] = {"input": text, "model": self.model_name}
 
+            if self._dimension:
+                kwargs["dimensions"] = self._dimension
+
             extra_body = self._build_extra_body(is_query=is_query)
             if extra_body:
                 kwargs["extra_body"] = extra_body

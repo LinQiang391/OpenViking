@@ -9,12 +9,15 @@
     "workspace": "./data",
     "vectordb": {
       "name": "context",
-      "backend": "local",
+      "backend": "opengauss",
       "project": "default",
-      "volcengine": {
-        "region": "cn-beijing",
-        "ak": null,
-        "sk": null
+      "opengauss": {
+        "host": "127.0.0.1",
+        "port": 5432,
+        "user": "gaussdb",
+        "password": "{your-password}",
+        "db_name": "openviking",
+        "mode": "standalone"
       }
     },
     "agfs": {

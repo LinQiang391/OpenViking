@@ -1,0 +1,149 @@
+# OpenViking Server Docker Image
+# 基于 openEuler 22.03，多阶段构建优化镜像大小
+
+ARG OPENEULER_IMAGE=openeuler/openeuler:22.03-lts
+ARG PYTHON_VERSION=3.11.12
+ARG GO_VERSION=1.22.6
+ARG PYTHON_SOURCE_BASE=https://mirrors.huaweicloud.com/python
+ARG PYTHON_SOURCE_MIRROR_BASE=https://www.python.org/ftp/python
+ARG GO_DIST_BASE=https://mirrors.aliyun.com/golang
+ARG GO_DIST_MIRROR_BASE=https://go.dev/dl
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
+ARG GOPROXY_URL=https://goproxy.cn,direct
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
+# ============ Stage 1: Build Python ============
+FROM ${OPENEULER_IMAGE} AS python-builder
+ARG PYTHON_VERSION
+ARG PYTHON_SOURCE_BASE
+ARG PYTHON_SOURCE_MIRROR_BASE
+
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    dnf install -y \
+    gcc make findutils tar gzip xz wget \
+    openssl-devel bzip2-devel libffi-devel zlib-devel \
+    readline-devel sqlite-devel xz-devel ncurses-devel gdbm-devel libuuid-devel \
+ && dnf clean all && rm -rf /var/cache/dnf
+
+WORKDIR /tmp
+RUN wget -q "${PYTHON_SOURCE_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+ || wget -q "${PYTHON_SOURCE_MIRROR_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+ && tar -xzf "Python-${PYTHON_VERSION}.tgz" \
+ && cd "Python-${PYTHON_VERSION}" \
+ && ./configure --prefix=/usr/local --enable-optimizations --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib" \
+ && make -j"$(nproc)" \
+ && make altinstall \
+ && rm -rf /tmp/Python-*
+
+# ============ Stage 2: Build OpenViking wheel ============
+FROM ${OPENEULER_IMAGE} AS openviking-builder
+ARG PYTHON_VERSION
+ARG GO_VERSION
+ARG GO_DIST_BASE
+ARG GO_DIST_MIRROR_BASE
+ARG PIP_INDEX_URL
+ARG PIP_TRUSTED_HOST
+ARG GOPROXY_URL
+
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+ENV GOPROXY=${GOPROXY_URL}
+ENV GOROOT=/usr/local/go
+ENV GOPATH=/root/go
+ENV PATH=/usr/local/go/bin:/root/go/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+
+# 安装编译依赖
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    dnf install -y \
+    ca-certificates curl git tar gzip xz unzip \
+    gcc gcc-c++ make cmake \
+    openssl-libs bzip2-libs libffi zlib readline sqlite xz-libs ncurses-libs gdbm libuuid \
+ && dnf clean all && rm -rf /var/cache/dnf
+
+# 复制 Python
+COPY --from=python-builder /usr/local /usr/local
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/python-local.conf && ldconfig \
+ && ln -sf "/usr/local/bin/python${PYTHON_VERSION%.*}" /usr/local/bin/python3 \
+ && ln -sf "/usr/local/bin/python${PYTHON_VERSION%.*}" /usr/local/bin/python \
+ && ln -sf "/usr/local/bin/pip${PYTHON_VERSION%.*}" /usr/local/bin/pip3 \
+ && ln -sf "/usr/local/bin/pip${PYTHON_VERSION%.*}" /usr/local/bin/pip
+
+# 安装 Go
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "${arch}" in x86_64) go_arch="amd64" ;; aarch64|arm64) go_arch="arm64" ;; *) exit 1 ;; esac; \
+    go_pkg="go${GO_VERSION}.linux-${go_arch}.tar.gz"; \
+    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    curl -fsSLO "${GO_DIST_BASE}/${go_pkg}" || curl -fsSLO "${GO_DIST_MIRROR_BASE}/${go_pkg}"; \
+    tar -C /usr/local -xzf "${go_pkg}"; rm -f "${go_pkg}"
+
+# 安装 Rust
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+
+# 编译 OpenViking wheel
+COPY . /tmp/openviking-src
+WORKDIR /tmp/openviking-src
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel build \
+ && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels . \
+ && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels psycopg2-binary
+
+# ============ Stage 3: Final Runtime Image (精简) ============
+FROM ${OPENEULER_IMAGE}
+ARG PYTHON_VERSION
+ARG PIP_INDEX_URL
+ARG PIP_TRUSTED_HOST
+
+ENV OPENVIKING_HOME=/root/.openviking
+ENV OPENVIKING_CONFIG_FILE=/root/.openviking/ov.conf
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 只安装运行时依赖（不需要编译工具）
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    dnf install -y \
+    ca-certificates gettext \
+    openssl-libs bzip2-libs libffi zlib readline sqlite xz-libs ncurses-libs gdbm libuuid \
+ && dnf clean all && rm -rf /var/cache/dnf
+
+# 复制 Python（只复制必要的运行时文件）
+COPY --from=python-builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
+COPY --from=python-builder /usr/local/lib/libpython3.11.so* /usr/local/lib/
+COPY --from=python-builder /usr/local/bin/python3.11 /usr/local/bin/
+COPY --from=python-builder /usr/local/bin/pip3.11 /usr/local/bin/
+
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/python-local.conf && ldconfig \
+ && ln -sf /usr/local/bin/python3.11 /usr/local/bin/python3 \
+ && ln -sf /usr/local/bin/python3.11 /usr/local/bin/python \
+ && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip3 \
+ && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip
+
+# 从构建阶段复制 wheels 并安装
+COPY --from=openviking-builder /wheels /tmp/wheels
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    python3 -m pip install --no-cache-dir --upgrade pip \
+ && python3 -m pip install --no-cache-dir /tmp/wheels/*.whl \
+ && rm -rf /tmp/wheels
+
+# 验证安装
+RUN python3 -c "import openviking; print('OpenViking version:', openviking.__version__)"
+
+# 创建数据目录
+RUN mkdir -p /root/.openviking/data
+
+WORKDIR /app
+
+# 复制配置模板和启动脚本
+COPY examples/openclaw-plugin/docker/ov.conf.template.json /app/ov.conf.template.json
+COPY examples/openclaw-plugin/docker/entrypoint-openviking.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 1933
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
