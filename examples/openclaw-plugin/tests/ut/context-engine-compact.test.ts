@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenVikingClient } from "../../client.js";
 import { memoryOpenVikingConfigSchema } from "../../config.js";
 import { createMemoryOpenVikingContextEngine } from "../../context-engine.js";
+import { compileSessionPatterns, shouldIgnoreSession } from "../../text-utils.js";
 
 function makeLogger() {
   return {
@@ -12,13 +13,17 @@ function makeLogger() {
   };
 }
 
-function makeEngine(commitResult: unknown, opts?: { throwError?: Error }) {
+function makeEngine(
+  commitResult: unknown,
+  opts?: { throwError?: Error; cfgOverrides?: Record<string, unknown> },
+) {
   const cfg = memoryOpenVikingConfigSchema.parse({
     mode: "remote",
     baseUrl: "http://127.0.0.1:1933",
     autoCapture: false,
     autoRecall: false,
     ingestReplyAssist: false,
+    ...(opts?.cfgOverrides ?? {}),
   });
   const logger = makeLogger();
 
@@ -40,6 +45,7 @@ function makeEngine(commitResult: unknown, opts?: { throwError?: Error }) {
 
   const getClient = vi.fn().mockResolvedValue(client);
   const resolveAgentId = vi.fn((_sid: string) => "test-agent");
+  const ignorePatterns = compileSessionPatterns(cfg.ignoreSessionPatterns);
 
   const engine = createMemoryOpenVikingContextEngine({
     id: "openviking",
@@ -49,6 +55,7 @@ function makeEngine(commitResult: unknown, opts?: { throwError?: Error }) {
     logger,
     getClient,
     resolveAgentId,
+    shouldIgnoreSession: (ctx) => shouldIgnoreSession(ctx, ignorePatterns),
   });
 
   return {
@@ -57,6 +64,7 @@ function makeEngine(commitResult: unknown, opts?: { throwError?: Error }) {
       commitSession: ReturnType<typeof vi.fn>;
     },
     logger,
+    getClient,
   };
 }
 
@@ -99,6 +107,26 @@ describe("context-engine commitOVSession()", () => {
 
     const ok = await engine.commitOVSession("test-session");
     expect(ok).toBe(false);
+  });
+
+  it("skips commitOVSession when session matches ignoreSessionPatterns", async () => {
+    const { engine, client, getClient } = makeEngine(
+      {
+        status: "completed",
+        archived: false,
+        memories_extracted: { core: 1 },
+      },
+      {
+        cfgOverrides: {
+          ignoreSessionPatterns: ["agent:*:cron:**"],
+        },
+      },
+    );
+
+    const ok = await engine.commitOVSession("test-session", "agent:main:cron:nightly:run:1");
+    expect(ok).toBe(false);
+    expect(getClient).not.toHaveBeenCalled();
+    expect(client.commitSession).not.toHaveBeenCalled();
   });
 
   it("uses wait=true for synchronous extraction", async () => {
@@ -145,6 +173,42 @@ describe("context-engine compact()", () => {
     expect(result.ok).toBe(true);
     expect(result.compacted).toBe(true);
     expect(result.reason).toBe("commit_completed");
+  });
+
+  it("skips compact when session matches ignoreSessionPatterns", async () => {
+    const { engine, client, getClient } = makeEngine(
+      {
+        status: "completed",
+        archived: true,
+        memories_extracted: { core: 1 },
+      },
+      {
+        cfgOverrides: {
+          ignoreSessionPatterns: ["agent:*:cron:**"],
+        },
+      },
+    );
+
+    const result = await engine.compact({
+      sessionId: "s-ignore",
+      sessionFile: "",
+      currentTokenCount: 321,
+      runtimeContext: {
+        sessionKey: "agent:main:cron:nightly:run:1",
+      },
+    });
+
+    expect(getClient).not.toHaveBeenCalled();
+    expect(client.commitSession).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      compacted: false,
+      reason: "ignore_session_pattern",
+      result: {
+        tokensBefore: 321,
+        tokensAfter: 321,
+      },
+    });
   });
 
   it("returns compacted=false when commit succeeds with archived=false", async () => {

@@ -90,7 +90,7 @@ type ContextEngine = {
 
 export type ContextEngineWithCommit = ContextEngine & {
   /** Commit (archive + extract) the OV session. Returns true on success. */
-  commitOVSession: (sessionId: string) => Promise<boolean>;
+  commitOVSession: (sessionId: string, sessionKey?: string) => Promise<boolean>;
 };
 
 type Logger = {
@@ -469,6 +469,10 @@ export function createMemoryOpenVikingContextEngine(params: {
     sessionKey?: string;
     ovSessionId?: string;
   }) => void;
+  shouldIgnoreSession?: (ctx: {
+    sessionId?: string;
+    sessionKey?: string;
+  }) => boolean;
 }): ContextEngineWithCommit {
   const {
     id,
@@ -480,22 +484,61 @@ export function createMemoryOpenVikingContextEngine(params: {
     quickPrecheck,
     resolveAgentId,
     rememberSessionAgentId,
+    shouldIgnoreSession,
   } = params;
 
   const diagEnabled = cfg.emitStandardDiagnostics;
   const diag = (stage: string, sessionId: string, data: Record<string, unknown>) =>
     emitDiag(logger, stage, sessionId, data, diagEnabled);
 
-  async function doCommitOVSession(sessionId: string): Promise<boolean> {
+  function describeSessionRef(sessionId?: string, sessionKey?: string): string {
+    const key = typeof sessionKey === "string" ? sessionKey.trim() : "";
+    if (key) {
+      return key;
+    }
+    const id = typeof sessionId === "string" ? sessionId.trim() : "";
+    return id || "(unknown)";
+  }
+
+  function maybeSkipIgnoredSession(
+    stage: "assemble" | "afterTurn" | "compact" | "before_reset",
+    sessionId?: string,
+    sessionKey?: string,
+    extra: Record<string, unknown> = {},
+  ): boolean {
+    if (!shouldIgnoreSession?.({ sessionId, sessionKey })) {
+      return false;
+    }
+    const sessionRef = describeSessionRef(sessionId, sessionKey);
+    logger.info(
+      `openviking: ${stage} skipped due to ignoreSessionPatterns ` +
+        `(sessionKey=${sessionKey ?? "none"}, sessionId=${sessionId ?? "none"})`,
+    );
+    diag(`${stage}_skip`, sessionRef, {
+      reason: "ignore_session_pattern",
+      sessionId: sessionId ?? null,
+      sessionKey: sessionKey ?? null,
+      ...extra,
+    });
+    return true;
+  }
+
+  async function doCommitOVSession(sessionId: string, sessionKey?: string): Promise<boolean> {
+    const normalizedSessionKey =
+      typeof sessionKey === "string" && sessionKey.trim() ? sessionKey.trim() : undefined;
+    if (maybeSkipIgnoredSession("before_reset", sessionId, normalizedSessionKey)) {
+      return false;
+    }
     try {
       const client = await getClient();
-      const ovId = openClawSessionRefToOvStorageId(sessionId);
+      const ovId = openClawSessionToOvStorageId(sessionId, normalizedSessionKey);
       rememberSessionAgentId?.({
         sessionId,
-        sessionKey: sessionId,
+        sessionKey: normalizedSessionKey,
         ovSessionId: ovId,
       });
-      const agentId = resolveAgentId(sessionId, sessionId, ovId);
+      const routingRef = sessionId ?? normalizedSessionKey ?? ovId;
+      const agentId = resolveAgentId(routingRef, normalizedSessionKey, ovId);
       const commitResult = await client.commitSession(ovId, { wait: true, agentId });
       const memCount = totalExtractedMemories(commitResult.memories_extracted);
       if (commitResult.status === "failed") {
@@ -581,11 +624,17 @@ export function createMemoryOpenVikingContextEngine(params: {
 
     // --- standard ContextEngine methods ---
 
-    async ingest(): Promise<IngestResult> {
+    async ingest(ingestParams): Promise<IngestResult> {
+      if (shouldIgnoreSession?.({ sessionId: ingestParams.sessionId })) {
+        return { ingested: false };
+      }
       return { ingested: false };
     },
 
-    async ingestBatch(): Promise<IngestBatchResult> {
+    async ingestBatch(ingestBatchParams): Promise<IngestBatchResult> {
+      if (shouldIgnoreSession?.({ sessionId: ingestBatchParams.sessionId })) {
+        return { ingestedCount: 0 };
+      }
       return { ingestedCount: 0 };
     },
 
@@ -595,6 +644,13 @@ export function createMemoryOpenVikingContextEngine(params: {
       const sessionKey = extractAssembleSessionKey(assembleParams);
 
       const originalTokens = roughEstimate(messages);
+      if (maybeSkipIgnoredSession("assemble", assembleParams.sessionId, sessionKey, {
+        messagesCount: messages.length,
+        inputTokenEstimate: originalTokens,
+        tokenBudget,
+      })) {
+        return { messages, estimatedTokens: roughEstimate(messages) };
+      }
 
       const OVSessionId = openClawSessionToOvStorageId(assembleParams.sessionId, sessionKey);
       rememberSessionAgentId?.({
@@ -737,9 +793,15 @@ export function createMemoryOpenVikingContextEngine(params: {
       }
 
       try {
+        const messages = afterTurnParams.messages ?? [];
         const sessionKey =
           (typeof afterTurnParams.sessionKey === "string" && afterTurnParams.sessionKey.trim()) ||
           extractSessionKey(afterTurnParams.runtimeContext);
+        if (maybeSkipIgnoredSession("afterTurn", afterTurnParams.sessionId, sessionKey, {
+          totalMessages: messages.length,
+        })) {
+          return;
+        }
         const OVSessionId = openClawSessionToOvStorageId(
           afterTurnParams.sessionId,
           sessionKey,
@@ -757,7 +819,6 @@ export function createMemoryOpenVikingContextEngine(params: {
           afterTurnParams.sessionId ?? sessionKey ?? OVSessionId;
         const agentId = resolveAgentId(routingRef, sessionKey, OVSessionId);
 
-        const messages = afterTurnParams.messages ?? [];
         if (messages.length === 0) {
           diag("afterTurn_skip", OVSessionId, {
             reason: "no_messages",
@@ -872,8 +933,39 @@ export function createMemoryOpenVikingContextEngine(params: {
     },
 
     async compact(compactParams): Promise<CompactResult> {
-      const OVSessionId = compactParams.sessionId;
+      const sessionKey = extractSessionKey(compactParams.runtimeContext);
       const tokenBudget = validTokenBudget(compactParams.tokenBudget) ?? 128_000;
+      const tokensBeforeOriginal = validTokenBudget(compactParams.currentTokenCount);
+      if (maybeSkipIgnoredSession("compact", compactParams.sessionId, sessionKey, {
+        tokenBudget,
+        force: compactParams.force ?? false,
+        currentTokenCount: compactParams.currentTokenCount ?? null,
+        compactionTarget: compactParams.compactionTarget ?? null,
+      })) {
+        const tokensBefore = tokensBeforeOriginal ?? -1;
+        return {
+          ok: true,
+          compacted: false,
+          reason: "ignore_session_pattern",
+          result: {
+            summary: "",
+            firstKeptEntryId: "",
+            tokensBefore,
+            tokensAfter: tokensBefore >= 0 ? tokensBefore : undefined,
+          },
+        };
+      }
+
+      const OVSessionId = openClawSessionToOvStorageId(compactParams.sessionId, sessionKey);
+      const runtimeAgentId = extractRuntimeAgentId(compactParams.runtimeContext);
+      if (runtimeAgentId || sessionKey) {
+        rememberSessionAgentId?.({
+          agentId: runtimeAgentId,
+          sessionId: compactParams.sessionId,
+          sessionKey,
+          ovSessionId: OVSessionId,
+        });
+      }
       diag("compact_entry", OVSessionId, {
         tokenBudget,
         force: compactParams.force ?? false,
@@ -881,11 +973,12 @@ export function createMemoryOpenVikingContextEngine(params: {
         compactionTarget: compactParams.compactionTarget ?? null,
         hasCustomInstructions: typeof compactParams.customInstructions === "string" &&
           compactParams.customInstructions.trim().length > 0,
+        sessionKey: sessionKey ?? null,
       });
 
       const client = await getClient();
-      const agentId = resolveAgentId(OVSessionId);
-      const tokensBeforeOriginal = validTokenBudget(compactParams.currentTokenCount);
+      const routingRef = compactParams.sessionId ?? sessionKey ?? OVSessionId;
+      const agentId = resolveAgentId(routingRef, sessionKey, OVSessionId);
       let preCommitEstimatedTokens: number | undefined;
       if (typeof tokensBeforeOriginal !== "number") {
         try {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenVikingClient } from "../../client.js";
 import { memoryOpenVikingConfigSchema } from "../../config.js";
 import { createMemoryOpenVikingContextEngine } from "../../context-engine.js";
+import { compileSessionPatterns, shouldIgnoreSession } from "../../text-utils.js";
 
 function makeLogger() {
   return {
@@ -58,6 +59,7 @@ function makeEngine(opts?: {
 
   const getClient = vi.fn().mockResolvedValue(client);
   const resolveAgentId = vi.fn((_sid: string) => "test-agent");
+  const ignorePatterns = compileSessionPatterns(cfg.ignoreSessionPatterns);
 
   const engine = createMemoryOpenVikingContextEngine({
     id: "openviking",
@@ -68,6 +70,7 @@ function makeEngine(opts?: {
     getClient,
     quickPrecheck: opts?.quickPrecheck,
     resolveAgentId,
+    shouldIgnoreSession: (ctx) => shouldIgnoreSession(ctx, ignorePatterns),
   });
 
   return {
@@ -94,6 +97,26 @@ describe("context-engine afterTurn()", () => {
     });
 
     expect(client.addSessionMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips when session matches ignoreSessionPatterns", async () => {
+    const { engine, client, getClient } = makeEngine({
+      cfgOverrides: {
+        ignoreSessionPatterns: ["agent:*:cron:**"],
+      },
+    });
+
+    await engine.afterTurn!({
+      sessionId: "s-ignore",
+      sessionKey: "agent:main:cron:nightly:run:1",
+      sessionFile: "",
+      messages: [{ role: "user", content: "hello from ignored session" }],
+      prePromptMessageCount: 0,
+    });
+
+    expect(getClient).not.toHaveBeenCalled();
+    expect(client.addSessionMessage).not.toHaveBeenCalled();
+    expect(client.commitSession).not.toHaveBeenCalled();
   });
 
   it("skips when messages array is empty", async () => {

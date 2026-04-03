@@ -11,6 +11,7 @@ import {
   compileSessionPatterns,
   isTranscriptLikeIngest,
   extractLatestUserText,
+  shouldIgnoreSession,
   shouldSkipIngestReplyAssistSession,
 } from "./text-utils.js";
 import {
@@ -275,6 +276,9 @@ const contextEnginePlugin = {
         ? (api.pluginConfig as Record<string, unknown>)
         : {};
     const cfg = memoryOpenVikingConfigSchema.parse(api.pluginConfig);
+    const ignoreSessionPatterns = compileSessionPatterns(
+      cfg.ignoreSessionPatterns,
+    );
     const ingestReplyAssistIgnoreSessionPatterns = compileSessionPatterns(
       cfg.ingestReplyAssistIgnoreSessionPatterns,
     );
@@ -288,6 +292,19 @@ const contextEnginePlugin = {
       if (cfg.logFindRequests) {
         api.logger.info(message);
       }
+    };
+    const isIgnoredSession = (ctx?: {
+      sessionId?: string;
+      sessionKey?: string;
+    }): boolean => shouldIgnoreSession(ctx ?? {}, ignoreSessionPatterns);
+    const logIgnoredSession = (
+      stage: string,
+      ctx?: { sessionId?: string; sessionKey?: string },
+    ): void => {
+      api.logger.info(
+        `openviking: skipping ${stage} due to ignoreSessionPatterns ` +
+          `(sessionKey=${ctx?.sessionKey ?? "none"}, sessionId=${ctx?.sessionId ?? "none"})`,
+      );
     };
     verboseRoutingInfo(
       `openviking: loaded plugin config agentId="${cfg.agentId}" ` +
@@ -387,6 +404,12 @@ const contextEnginePlugin = {
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           rememberSessionAgentId(ctx);
+          if (isIgnoredSession(ctx)) {
+            return {
+              content: [{ type: "text", text: "OpenViking memory recall is disabled for this session." }],
+              details: { skipped: true, reason: "ignore_session_pattern" },
+            };
+          }
           const agentId = resolveAgentId(ctx.sessionId, ctx.sessionKey);
           const { query } = params as { query: string };
           const limit =
@@ -502,6 +525,12 @@ const contextEnginePlugin = {
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           rememberSessionAgentId(ctx);
+          if (isIgnoredSession(ctx)) {
+            return {
+              content: [{ type: "text", text: "OpenViking memory store is disabled for this session." }],
+              details: { skipped: true, reason: "ignore_session_pattern" },
+            };
+          }
           const storeAgentId = resolveAgentId(ctx.sessionId, ctx.sessionKey);
           const { text } = params as { text: string };
           const role =
@@ -610,6 +639,12 @@ const contextEnginePlugin = {
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           rememberSessionAgentId(ctx);
+          if (isIgnoredSession(ctx)) {
+            return {
+              content: [{ type: "text", text: "OpenViking memory forget is disabled for this session." }],
+              details: { skipped: true, reason: "ignore_session_pattern" },
+            };
+          }
           const agentId = resolveAgentId(ctx.sessionId, ctx.sessionKey);
           const client = await getClient();
           const uri = (params as { uri?: string }).uri;
@@ -716,6 +751,12 @@ const contextEnginePlugin = {
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         rememberSessionAgentId(ctx);
+        if (isIgnoredSession(ctx)) {
+          return {
+            content: [{ type: "text", text: "OpenViking archive expand is disabled for this session." }],
+            details: { skipped: true, reason: "ignore_session_pattern" },
+          };
+        }
         const archiveId = String((params as { archiveId?: string }).archiveId ?? "").trim();
         const sessionId = ctx.sessionId ?? "";
         api.logger.info?.(`openviking: ov_archive_expand invoked (archiveId=${archiveId || "(empty)"}, sessionId=${sessionId || "(empty)"})`);
@@ -833,16 +874,8 @@ const contextEnginePlugin = {
           })}`,
         );
       }
-      const agentId = resolveAgentId(ctx?.sessionId, ctx?.sessionKey);
-      let client: OpenVikingClient;
-      try {
-        client = await withTimeout(
-          getClient(),
-          5000,
-          "openviking: client initialization timeout (OpenViking service not ready yet)"
-        );
-      } catch (err) {
-        api.logger.warn?.(`openviking: failed to get client: ${String(err)}`);
+      if (isIgnoredSession(ctx)) {
+        logIgnoredSession("before_prompt_build", ctx);
         return;
       }
 
@@ -863,72 +896,101 @@ const contextEnginePlugin = {
             `openviking: skipping auto-recall because precheck failed (${precheck.reason})`,
           );
         } else {
+          let client: OpenVikingClient | null = null;
           try {
-            await withTimeout(
-              (async () => {
-                const candidateLimit = Math.max(cfg.recallLimit * 4, 20);
-                const [userSettled, agentSettled] = await Promise.allSettled([
-                  client.find(queryText, {
-                    targetUri: "viking://user/memories",
-                    limit: candidateLimit,
-                    scoreThreshold: 0,
-                  }, agentId),
-                  client.find(queryText, {
-                    targetUri: "viking://agent/memories",
-                    limit: candidateLimit,
-                    scoreThreshold: 0,
-                  }, agentId),
-                ]);
-
-                const userResult = userSettled.status === "fulfilled" ? userSettled.value : { memories: [] };
-                const agentResult = agentSettled.status === "fulfilled" ? agentSettled.value : { memories: [] };
-                if (userSettled.status === "rejected") {
-                  api.logger.warn(`openviking: user memories search failed: ${String(userSettled.reason)}`);
-                }
-                if (agentSettled.status === "rejected") {
-                  api.logger.warn(`openviking: agent memories search failed: ${String(agentSettled.reason)}`);
-                }
-
-                const allMemories = [...(userResult.memories ?? []), ...(agentResult.memories ?? [])];
-                const uniqueMemories = allMemories.filter((memory, index, self) =>
-                  index === self.findIndex((m) => m.uri === memory.uri)
-                );
-                const leafOnly = uniqueMemories.filter((m) => m.level === 2);
-                const processed = postProcessMemories(leafOnly, {
-                  limit: candidateLimit,
-                  scoreThreshold: cfg.recallScoreThreshold,
-                });
-                const memories = pickMemoriesForInjection(processed, cfg.recallLimit, queryText);
-
-                if (memories.length > 0) {
-                  const { lines: memoryLines, estimatedTokens } = await buildMemoryLinesWithBudget(
-                    memories,
-                    (uri) => client.read(uri, agentId),
-                    {
-                      recallPreferAbstract: cfg.recallPreferAbstract,
-                      recallMaxContentChars: cfg.recallMaxContentChars,
-                      recallTokenBudget: cfg.recallTokenBudget,
-                    },
-                  );
-                  const memoryContext = memoryLines.join("\n");
-                  verboseRoutingInfo(
-                    `openviking: injecting ${memoryLines.length} memories (~${estimatedTokens} tokens, budget=${cfg.recallTokenBudget})`,
-                  );
-                  verboseRoutingInfo(
-                    `openviking: inject-detail ${toJsonLog({ count: memories.length, memories: summarizeInjectionMemories(memories) })}`,
-                  );
-                  prependContextParts.push(
-                    "<relevant-memories>\nThe following OpenViking memories may be relevant:\n" +
-                      `${memoryContext}\n` +
-                    "</relevant-memories>",
-                  );
-                }
-              })(),
-              AUTO_RECALL_TIMEOUT_MS,
-              "openviking: auto-recall search timeout",
+            client = await withTimeout(
+              getClient(),
+              5000,
+              "openviking: client initialization timeout (OpenViking service not ready yet)",
             );
           } catch (err) {
-            api.logger.warn(`openviking: auto-recall failed: ${String(err)}`);
+            api.logger.warn?.(`openviking: failed to get client: ${String(err)}`);
+          }
+          if (!client) {
+            verboseRoutingInfo("openviking: skipping auto-recall because client is unavailable");
+          } else {
+            const agentId = resolveAgentId(ctx?.sessionId, ctx?.sessionKey);
+            try {
+              await withTimeout(
+                (async () => {
+                  const candidateLimit = Math.max(cfg.recallLimit * 4, 20);
+                  const [userSettled, agentSettled] = await Promise.allSettled([
+                    client.find(
+                      queryText,
+                      {
+                        targetUri: "viking://user/memories",
+                        limit: candidateLimit,
+                        scoreThreshold: 0,
+                      },
+                      agentId,
+                    ),
+                    client.find(
+                      queryText,
+                      {
+                        targetUri: "viking://agent/memories",
+                        limit: candidateLimit,
+                        scoreThreshold: 0,
+                      },
+                      agentId,
+                    ),
+                  ]);
+
+                  const userResult =
+                    userSettled.status === "fulfilled" ? userSettled.value : { memories: [] };
+                  const agentResult =
+                    agentSettled.status === "fulfilled" ? agentSettled.value : { memories: [] };
+                  if (userSettled.status === "rejected") {
+                    api.logger.warn(
+                      `openviking: user memories search failed: ${String(userSettled.reason)}`,
+                    );
+                  }
+                  if (agentSettled.status === "rejected") {
+                    api.logger.warn(
+                      `openviking: agent memories search failed: ${String(agentSettled.reason)}`,
+                    );
+                  }
+
+                  const allMemories = [...(userResult.memories ?? []), ...(agentResult.memories ?? [])];
+                  const uniqueMemories = allMemories.filter((memory, index, self) =>
+                    index === self.findIndex((m) => m.uri === memory.uri)
+                  );
+                  const leafOnly = uniqueMemories.filter((m) => m.level === 2);
+                  const processed = postProcessMemories(leafOnly, {
+                    limit: candidateLimit,
+                    scoreThreshold: cfg.recallScoreThreshold,
+                  });
+                  const memories = pickMemoriesForInjection(processed, cfg.recallLimit, queryText);
+
+                  if (memories.length > 0) {
+                    const { lines: memoryLines, estimatedTokens } = await buildMemoryLinesWithBudget(
+                      memories,
+                      (uri) => client.read(uri, agentId),
+                      {
+                        recallPreferAbstract: cfg.recallPreferAbstract,
+                        recallMaxContentChars: cfg.recallMaxContentChars,
+                        recallTokenBudget: cfg.recallTokenBudget,
+                      },
+                    );
+                    const memoryContext = memoryLines.join("\n");
+                    verboseRoutingInfo(
+                      `openviking: injecting ${memoryLines.length} memories (~${estimatedTokens} tokens, budget=${cfg.recallTokenBudget})`,
+                    );
+                    verboseRoutingInfo(
+                      `openviking: inject-detail ${toJsonLog({ count: memories.length, memories: summarizeInjectionMemories(memories) })}`,
+                    );
+                    prependContextParts.push(
+                      "<relevant-memories>\nThe following OpenViking memories may be relevant:\n" +
+                        `${memoryContext}\n` +
+                      "</relevant-memories>",
+                    );
+                  }
+                })(),
+                AUTO_RECALL_TIMEOUT_MS,
+                "openviking: auto-recall search timeout",
+              );
+            } catch (err) {
+              api.logger.warn(`openviking: auto-recall failed: ${String(err)}`);
+            }
           }
         }
       }
@@ -969,10 +1031,15 @@ const contextEnginePlugin = {
       rememberSessionAgentId(ctx ?? {});
     });
     api.on("before_reset", async (_event: unknown, ctx?: HookAgentContext) => {
+      rememberSessionAgentId(ctx ?? {});
+      if (isIgnoredSession(ctx)) {
+        logIgnoredSession("before_reset", ctx);
+        return;
+      }
       const sessionId = ctx?.sessionId;
       if (sessionId && contextEngineRef) {
         try {
-          const ok = await contextEngineRef.commitOVSession(sessionId);
+          const ok = await contextEngineRef.commitOVSession(sessionId, ctx?.sessionKey);
           if (ok) {
             api.logger.info(`openviking: committed OV session on reset for session=${sessionId}`);
           }
@@ -1000,6 +1067,7 @@ const contextEnginePlugin = {
               : undefined,
           resolveAgentId,
           rememberSessionAgentId,
+          shouldIgnoreSession: isIgnoredSession,
         });
         return contextEngineRef;
       });

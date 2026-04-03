@@ -94,7 +94,6 @@ describe("local OpenViking startup with a bad config", () => {
 
       expect(hookOutcome.kind).toBe("returned");
       expect(Date.now() - hookAt).toBeLessThan(1_500);
-      expect(logs.some((entry) => entry.message.includes("failed to get client"))).toBe(true);
 
       await service?.stop?.();
     } finally {

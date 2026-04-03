@@ -24,6 +24,8 @@ export type MemoryOpenVikingConfig = {
   recallPreferAbstract?: boolean;
   recallTokenBudget?: number;
   commitTokenThreshold?: number;
+  /** Completely disable automatic OpenViking participation for matching sessions. */
+  ignoreSessionPatterns?: string[];
   ingestReplyAssist?: boolean;
   ingestReplyAssistMinSpeakerTurns?: number;
   ingestReplyAssistMinChars?: number;
@@ -49,6 +51,7 @@ const DEFAULT_RECALL_MAX_CONTENT_CHARS = 500;
 const DEFAULT_RECALL_PREFER_ABSTRACT = true;
 const DEFAULT_RECALL_TOKEN_BUDGET = 2000;
 const DEFAULT_COMMIT_TOKEN_THRESHOLD = 20000;
+const DEFAULT_IGNORE_SESSION_PATTERNS: string[] = [];
 const DEFAULT_INGEST_REPLY_ASSIST = true;
 const DEFAULT_INGEST_REPLY_ASSIST_MIN_SPEAKER_TURNS = 2;
 const DEFAULT_INGEST_REPLY_ASSIST_MIN_CHARS = 120;
@@ -157,6 +160,7 @@ export const memoryOpenVikingConfigSchema = {
         "recallPreferAbstract",
         "recallTokenBudget",
         "commitTokenThreshold",
+        "ignoreSessionPatterns",
         "ingestReplyAssist",
         "ingestReplyAssistMinSpeakerTurns",
         "ingestReplyAssistMinChars",
@@ -226,6 +230,10 @@ export const memoryOpenVikingConfigSchema = {
       commitTokenThreshold: Math.max(
         0,
         Math.min(100_000, Math.floor(toNumber(cfg.commitTokenThreshold, DEFAULT_COMMIT_TOKEN_THRESHOLD))),
+      ),
+      ignoreSessionPatterns: toStringArray(
+        cfg.ignoreSessionPatterns,
+        DEFAULT_IGNORE_SESSION_PATTERNS,
       ),
       ingestReplyAssist: cfg.ingestReplyAssist !== false,
       ingestReplyAssistMinSpeakerTurns: Math.max(
@@ -355,6 +363,15 @@ export const memoryOpenVikingConfigSchema = {
       placeholder: String(DEFAULT_COMMIT_TOKEN_THRESHOLD),
       advanced: true,
       help: "Minimum estimated pending tokens before auto-commit triggers. Set to 0 to commit every turn.",
+    },
+    ignoreSessionPatterns: {
+      label: "Ignore Session Patterns",
+      placeholder: "agent:*:cron:**",
+      help:
+        "Completely disable automatic OpenViking participation for matching sessions. " +
+        "Skips auto-recall, ingest-reply-assist, assemble, afterTurn, compact, and reset commit. " +
+        "Use * within one segment and ** across segments.",
+      advanced: true,
     },
     ingestReplyAssist: {
       label: "Ingest Reply Assist",

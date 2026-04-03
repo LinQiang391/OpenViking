@@ -80,6 +80,11 @@ export type TranscriptLikeIngestDecision = {
   chars: number;
 };
 
+export type SessionPatternMatchParams = {
+  sessionId?: string;
+  sessionKey?: string;
+};
+
 export function compileSessionPattern(pattern: string): RegExp {
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
@@ -97,10 +102,9 @@ export function matchesSessionPattern(sessionRef: string, patterns: RegExp[]): b
   return patterns.some((pattern) => pattern.test(sessionRef));
 }
 
-export function resolveSessionPatternCandidate(params: {
-  sessionId?: string;
-  sessionKey?: string;
-}): string | undefined {
+export function resolveSessionPatternCandidate(
+  params: SessionPatternMatchParams,
+): string | undefined {
   const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey.trim() : "";
   if (sessionKey) {
     return sessionKey;
@@ -109,11 +113,8 @@ export function resolveSessionPatternCandidate(params: {
   return sessionId || undefined;
 }
 
-export function shouldSkipIngestReplyAssistSession(
-  params: {
-    sessionId?: string;
-    sessionKey?: string;
-  },
+export function shouldIgnoreSession(
+  params: SessionPatternMatchParams,
   patterns: RegExp[],
 ): boolean {
   if (patterns.length === 0) {
@@ -124,6 +125,13 @@ export function shouldSkipIngestReplyAssistSession(
     return false;
   }
   return matchesSessionPattern(candidate, patterns);
+}
+
+export function shouldSkipIngestReplyAssistSession(
+  params: SessionPatternMatchParams,
+  patterns: RegExp[],
+): boolean {
+  return shouldIgnoreSession(params, patterns);
 }
 
 function countSpeakerTurns(text: string): number {

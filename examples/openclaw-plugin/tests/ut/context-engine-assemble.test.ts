@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenVikingClient } from "../../client.js";
 import { memoryOpenVikingConfigSchema } from "../../config.js";
 import { createMemoryOpenVikingContextEngine } from "../../context-engine.js";
+import { compileSessionPatterns, shouldIgnoreSession } from "../../text-utils.js";
 
 const cfg = memoryOpenVikingConfigSchema.parse({
   mode: "remote",
@@ -54,6 +55,7 @@ function makeEngine(
         ...opts.cfgOverrides,
       })
     : cfg;
+  const ignorePatterns = compileSessionPatterns(localCfg.ignoreSessionPatterns);
 
   const engine = createMemoryOpenVikingContextEngine({
     id: "openviking",
@@ -64,6 +66,7 @@ function makeEngine(
     getClient,
     quickPrecheck: opts?.quickPrecheck,
     resolveAgentId,
+    shouldIgnoreSession: (ctx) => shouldIgnoreSession(ctx, ignorePatterns),
   });
 
   return {
@@ -194,6 +197,38 @@ describe("context-engine assemble()", () => {
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("assemble precheck failed"),
     );
+  });
+
+  it("falls back to live messages when session matches ignoreSessionPatterns", async () => {
+    const { engine, client, getClient } = makeEngine(
+      {
+        latest_archive_overview: "unused",
+        pre_archive_abstracts: [],
+        messages: [],
+        estimatedTokens: 123,
+        stats: makeStats(),
+      },
+      {
+        cfgOverrides: {
+          ignoreSessionPatterns: ["agent:*:cron:**"],
+        },
+      },
+    );
+
+    const liveMessages = [{ role: "user", content: "ignored session live message" }];
+    const result = await engine.assemble({
+      sessionId: "session-ignored",
+      sessionKey: "agent:main:cron:nightly:run:1",
+      messages: liveMessages,
+      tokenBudget: 4096,
+    });
+
+    expect(getClient).not.toHaveBeenCalled();
+    expect(client.getSessionContext).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      messages: liveMessages,
+      estimatedTokens: roughEstimate(liveMessages),
+    });
   });
 
   it("emits a non-error toolResult for a running tool (not a synthetic error)", async () => {

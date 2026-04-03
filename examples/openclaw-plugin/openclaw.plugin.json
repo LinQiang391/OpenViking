@@ -96,6 +96,12 @@
       "advanced": true,
       "help": "Minimum estimated pending tokens before auto-commit triggers. Set to 0 to commit every turn."
     },
+    "ignoreSessionPatterns": {
+      "label": "Ignore Session Patterns",
+      "placeholder": "agent:*:cron:**",
+      "help": "Completely disable automatic OpenViking participation for matching sessions. Skips auto-recall, ingest-reply-assist, assemble, afterTurn, compact, and reset commit. Use * within one segment and ** across segments.",
+      "advanced": true
+    },
     "ingestReplyAssist": {
       "label": "Ingest Reply Assist",
       "help": "When transcript-like memory ingestion is detected, add a lightweight reply instruction to reduce NO_REPLY.",
@@ -187,6 +193,12 @@
       },
       "commitTokenThreshold": {
         "type": "number"
+      },
+      "ignoreSessionPatterns": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
       },
       "ingestReplyAssist": {
         "type": "boolean"

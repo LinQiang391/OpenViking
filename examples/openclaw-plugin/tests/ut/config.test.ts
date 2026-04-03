@@ -22,6 +22,7 @@ describe("memoryOpenVikingConfigSchema.parse()", () => {
     expect(cfg.recallPreferAbstract).toBe(true);
     expect(cfg.recallTokenBudget).toBe(2000);
     expect(cfg.commitTokenThreshold).toBe(20000);
+    expect(cfg.ignoreSessionPatterns).toEqual([]);
     expect(cfg.ingestReplyAssist).toBe(true);
     expect(cfg.captureMode).toBe("semantic");
     expect(cfg.captureMaxLength).toBe(24000);
@@ -163,5 +164,15 @@ describe("memoryOpenVikingConfigSchema.parse()", () => {
   it("falls back to 'default' for empty agentId", () => {
     const cfg = memoryOpenVikingConfigSchema.parse({ agentId: "  " });
     expect(cfg.agentId).toBe("default");
+  });
+
+  it("parses ignoreSessionPatterns from config", () => {
+    const cfg = memoryOpenVikingConfigSchema.parse({
+      ignoreSessionPatterns: ["agent:*:cron:**", "agent:main:subagent:**"],
+    });
+    expect(cfg.ignoreSessionPatterns).toEqual([
+      "agent:*:cron:**",
+      "agent:main:subagent:**",
+    ]);
   });
 });
