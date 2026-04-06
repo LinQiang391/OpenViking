@@ -1,0 +1,131 @@
+# OpenClaw + OpenViking Plugin (Remote Mode) Docker Image
+# 基于 openEuler 22.03，通过 openclaw-openviking-setup-helper 安装助手安装插件
+#
+# 构建（需 --network=host 使用宿主机代理）：
+#   docker build --network=host \
+#     --build-arg HTTP_PROXY=http://127.0.0.1:7897 \
+#     --build-arg HTTPS_PROXY=http://127.0.0.1:7897 \
+#     -f examples/openclaw-plugin/docker/Dockerfile.remote \
+#     -t swr.cn-north-4.myhuaweicloud.com/kunpeng-ai/openclaw-openviking:remote-0406 .
+
+ARG NODE_VERSION=22
+ARG NVM_VERSION=v0.40.1
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY_FALLBACK=https://registry.npmjs.org
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
+FROM openeuler/openeuler:22.03-lts
+
+ARG NODE_VERSION
+ARG NVM_VERSION
+ARG NPM_REGISTRY
+ARG NPM_REGISTRY_FALLBACK
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
+ENV OPENCLAW_STATE_DIR=/root/.openclaw
+ENV NVM_DIR=/root/.nvm
+ENV npm_config_registry=${NPM_REGISTRY}
+ENV npm_config_optional=true
+
+# 安装基础系统依赖（不走代理，直接访问 openEuler 仓库）
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    dnf install -y \
+    ca-certificates \
+    curl \
+    gettext \
+    git \
+    unzip \
+    gcc \
+    gcc-c++ \
+    make \
+    cmake \
+    glib2 \
+    tar \
+    gzip \
+    xz \
+ && dnf clean all \
+ && rm -rf /var/cache/dnf
+
+# 以下步骤需要代理访问 GitHub / npm
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV http_proxy=${HTTP_PROXY}
+ENV https_proxy=${HTTPS_PROXY}
+
+# git 配置
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
+ && git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+# 安装 NVM
+RUN mkdir -p "${NVM_DIR}" /tmp/nvm-dl \
+ && (curl -fsSL "https://github.com/nvm-sh/nvm/archive/refs/tags/${NVM_VERSION}.tar.gz" -o /tmp/nvm.tar.gz) \
+ || (unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy 2>/dev/null; \
+     curl -fsSL "https://github.com/nvm-sh/nvm/archive/refs/tags/${NVM_VERSION}.tar.gz" -o /tmp/nvm.tar.gz) \
+ && tar -xzf /tmp/nvm.tar.gz -C /tmp/nvm-dl \
+ && cp -a /tmp/nvm-dl/nvm-*/. "${NVM_DIR}" \
+ && rm -rf /tmp/nvm-dl /tmp/nvm.tar.gz \
+ && echo 'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /root/.bashrc
+
+# 安装 Node.js + 最新 openclaw + 安装助手
+RUN set -e; \
+    . "${NVM_DIR}/nvm.sh" \
+ && nvm install ${NODE_VERSION} \
+ && nvm alias default ${NODE_VERSION} \
+ && nvm use default \
+ && node --version && npm --version \
+ && npm install -g node-gyp --registry="${NPM_REGISTRY}" \
+ || npm install -g node-gyp --registry="${NPM_REGISTRY_FALLBACK}" \
+ && npm install -g openclaw --registry="${NPM_REGISTRY}" \
+ || npm install -g openclaw --registry="${NPM_REGISTRY_FALLBACK}" \
+ && npm install -g openclaw-openviking-setup-helper --registry="${NPM_REGISTRY}" \
+ || npm install -g openclaw-openviking-setup-helper --registry="${NPM_REGISTRY_FALLBACK}" \
+ && openclaw --version \
+ && ov-install --help | head -5 \
+ && rm -rf /root/.npm /root/.cache /tmp/* 2>/dev/null || true \
+ && NODE_BIN="$(. ${NVM_DIR}/nvm.sh && nvm which current)" \
+ && BIN_DIR="$(dirname "${NODE_BIN}")" \
+ && ln -sf "${NODE_BIN}" /usr/local/bin/node \
+ && ln -sf "${BIN_DIR}/npm" /usr/local/bin/npm \
+ && ln -sf "${BIN_DIR}/npx" /usr/local/bin/npx \
+ && ([ -x "${BIN_DIR}/openclaw" ] && ln -sf "${BIN_DIR}/openclaw" /usr/local/bin/openclaw || true) \
+ && ([ -x "${BIN_DIR}/ov-install" ] && ln -sf "${BIN_DIR}/ov-install" /usr/local/bin/ov-install || true)
+
+# 先初始化 openclaw 基础配置（设置 gateway.mode 等），再安装插件
+RUN openclaw config set gateway.mode local \
+ && openclaw config set gateway.bind lan \
+ && openclaw config set gateway.port 18789
+
+# 使用安装助手下载并安装 openviking 插件（remote 模式，不需要 Python）
+# yes "" 保持 stdin 开放避免 readline EOF 退出；前 4 行提供交互答案
+RUN (echo "remote"; echo "http://127.0.0.1:1933"; echo ""; echo ""; yes "") \
+  | SKIP_OPENVIKING=1 ov-install \
+ && ls -la /root/.openclaw/extensions/
+
+# 清理编译工具（运行时不需要），dnf 不走代理
+RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    dnf remove -y --skip-broken gcc gcc-c++ make cmake git 2>/dev/null || true; \
+    dnf clean all && rm -rf /var/cache/dnf \
+ && rm -rf /root/.cache
+
+# 备份插件到默认位置，清理构建时配置（由 entrypoint 根据运行时环境变量重新生成）
+RUN mkdir -p /app/openclaw-plugin-default \
+ && PLUGIN_SRC="$(ls -d /root/.openclaw/extensions/openviking 2>/dev/null || ls -d /root/.openclaw/extensions/memory-openviking 2>/dev/null)" \
+ && cp -a "${PLUGIN_SRC}" /app/openclaw-plugin-default/ \
+ && rm -f /root/.openclaw/openclaw.json /root/.openclaw/.openviking_bootstrapped
+
+# 清除构建期代理环境变量
+ENV HTTP_PROXY=
+ENV HTTPS_PROXY=
+ENV http_proxy=
+ENV https_proxy=
+
+WORKDIR /app
+
+COPY examples/openclaw-plugin/docker/entrypoint-remote.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 18789
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
