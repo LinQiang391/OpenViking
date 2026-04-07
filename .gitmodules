@@ -1,0 +1,6 @@
+[submodule "examples/openclaw-plugin/tests/vendor/openclaw-eval"]
+	path = examples/openclaw-plugin/tests/vendor/openclaw-eval
+	url = https://github.com/ZaynJarvis/openclaw-eval.git
+[submodule "examples/openclaw-plugin/tests/vendor/ai_toolbox"]
+	path = examples/openclaw-plugin/tests/vendor/ai_toolbox
+	url = https://github.com/wlff123/ai_toolbox.git

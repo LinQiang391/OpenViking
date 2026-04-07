@@ -1,0 +1,34 @@
+{
+  "profile": "eval-ov",
+  "gateway_port": 16000,
+  "capture_port": 9010,
+  "volcengine_key": "22e76631-444e-4bcf-9d7f-8565c4dd7d40",
+
+  "deploy": {
+    "openviking": true,
+    "mem_core": false
+  },
+
+  "openviking": {
+    "url": "http://127.0.0.1:1933",
+    "root_api_key": "testapikey",
+    "ov_conf": null,
+    "agent_id": "eval-ov",
+    "account_id": "locomo-eval",
+    "user_id": "eval-1"
+  },
+
+  "test": {
+    "data_file": "locomo10.json",
+    "sample": 0,
+    "output_dir": "output/group-a",
+    "ingest_output": "ingest_0.txt",
+    "qa_output": "qa_answers.txt",
+    "qa_count": 50,
+    "ingest_tail": "[remember what's said, keep existing memory]"
+  },
+
+  "cache_trace": true,
+  "verbose": true,
+  "cleanup_before_run": true
+}

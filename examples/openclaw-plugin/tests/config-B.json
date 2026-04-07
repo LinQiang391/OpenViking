@@ -1,0 +1,29 @@
+{
+  "profile": "eval-mc",
+  "gateway_port": 17000,
+  "capture_port": 9020,
+  "volcengine_key": "22e76631-444e-4bcf-9d7f-8565c4dd7d40",
+
+  "openviking": null,
+
+  "deploy": {
+    "openviking": false,
+    "mem_core": true
+  },
+
+  "test": {
+    "data_file": "locomo10.json",
+    "sample": 0,
+    "user_id": "eval-1",
+    "agent_id": "locomo-eval-mc",
+    "output_dir": "output/group-b",
+    "ingest_output": "ingest_0.txt",
+    "qa_output": "qa_answers.txt",
+    "qa_count": 50,
+    "ingest_tail": "[remember what's said, keep existing memory]"
+  },
+
+  "cache_trace": true,
+  "verbose": true,
+  "cleanup_before_run": true
+}
