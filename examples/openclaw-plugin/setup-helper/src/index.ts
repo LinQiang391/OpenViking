@@ -15,7 +15,7 @@ const platform = detectPlatform();
 const main = defineCommand({
   meta: {
     name: "ov-install",
-    version: "0.3.0-beta.1",
+    version: "0.3.0-beta.2",
     description: "OpenClaw + OpenViking cross-platform installer",
   },
   args: {
