@@ -10,7 +10,7 @@ import {
 } from "../types.js";
 import { readPortFromOvConf } from "../lib/config.js";
 import { tr } from "../ui/messages.js";
-import { textInput, passwordInput, logInfo } from "../ui/prompts.js";
+import { textInput, passwordInput, logInfo, logSuccess, confirmPrompt } from "../ui/prompts.js";
 
 export async function collectRemoteConfig(ctx: InstallContext): Promise<InstallContext> {
   if (!ctx.interactive) return ctx;
@@ -41,14 +41,36 @@ export async function configureOvConf(ctx: InstallContext): Promise<InstallConte
   await mkdir(openvikingDir, { recursive: true });
 
   const configPath = join(openvikingDir, "ov.conf");
-  if (!ctx.interactive && existsSync(configPath)) {
+
+  // If ov.conf already exists, preserve it by default
+  if (existsSync(configPath)) {
     const port = (await readPortFromOvConf(configPath)) || DEFAULT_SERVER_PORT;
-    logInfo(
-      tr(ctx.langZh, `Preserved existing config: ${configPath}`, `已保留现有配置: ${configPath}`),
+
+    if (!ctx.interactive) {
+      logSuccess(
+        tr(ctx.langZh, `Existing config preserved: ${configPath}`, `已保留现有配置: ${configPath}`),
+      );
+      return { ...ctx, selectedServerPort: port };
+    }
+
+    const reconfigure = await confirmPrompt(
+      tr(
+        ctx.langZh,
+        `ov.conf already exists at ${configPath}. Reconfigure?`,
+        `ov.conf 已存在于 ${configPath}。是否重新配置？`,
+      ),
+      false,
     );
-    return { ...ctx, selectedServerPort: port };
+
+    if (!reconfigure) {
+      logSuccess(
+        tr(ctx.langZh, `Existing config preserved: ${configPath}`, `已保留现有配置: ${configPath}`),
+      );
+      return { ...ctx, selectedServerPort: port };
+    }
   }
 
+  // First-time install or user chose to reconfigure
   let workspace = join(openvikingDir, "data");
   let serverPort = String(DEFAULT_SERVER_PORT);
   let agfsPort = String(DEFAULT_AGFS_PORT);
@@ -68,14 +90,12 @@ export async function configureOvConf(ctx: InstallContext): Promise<InstallConte
         tr(ctx.langZh, "Embedding API Key (press Enter to use same as VLM)", "Embedding API Key（回车使用与 VLM 相同的 Key）"),
       )) || vlmApiKey;
 
-    const showAdvanced = await import("@clack/prompts").then((p) =>
-      p.confirm({
-        message: tr(ctx.langZh, "Show advanced options? (port, model, workspace path)", "显示高级选项？（端口、模型、数据目录）"),
-        initialValue: false,
-      }),
+    const showAdvanced = await confirmPrompt(
+      tr(ctx.langZh, "Show advanced options? (port, model, workspace path)", "显示高级选项？（端口、模型、数据目录）"),
+      false,
     );
 
-    if (showAdvanced && typeof showAdvanced === "boolean") {
+    if (showAdvanced) {
       workspace = await textInput(
         tr(ctx.langZh, "OpenViking workspace path", "OpenViking 数据目录"),
         { defaultValue: workspace },
