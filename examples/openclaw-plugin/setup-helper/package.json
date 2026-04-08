@@ -1,12 +1,17 @@
 {
   "name": "openclaw-openviking-setup-helper",
-  "version": "0.2.15",
+  "version": "0.3.0-beta.1",
   "description": "Setup helper for installing OpenViking memory plugin into OpenClaw",
   "type": "module",
   "bin": {
-    "openclaw-openviking-setup-helper": "install.js",
-    "openclaw-openviking-install": "install.js",
-    "ov-install": "install.js"
+    "openclaw-openviking-setup-helper": "dist/install.js",
+    "openclaw-openviking-install": "dist/install.js",
+    "ov-install": "dist/install.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run"
   },
   "keywords": [
     "openviking",
@@ -24,9 +29,19 @@
     "directory": "examples/openclaw-plugin/setup-helper"
   },
   "files": [
-    "install.js"
+    "dist/install.js"
   ],
   "engines": {
     "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.10.0",
+    "citty": "^0.1.6",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0"
   }
 }
