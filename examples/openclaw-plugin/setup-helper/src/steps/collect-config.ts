@@ -80,6 +80,8 @@ export async function configureOvConf(ctx: InstallContext): Promise<InstallConte
   let embeddingApiKey =
     process.env.OPENVIKING_EMBEDDING_API_KEY || process.env.OPENVIKING_ARK_API_KEY || "";
 
+  const needsManualEdit = !ctx.interactive && !vlmApiKey;
+
   if (ctx.interactive) {
     vlmApiKey =
       (await passwordInput(tr(ctx.langZh, "VLM API Key (required for memory extraction)", "VLM API Key（记忆提取必需）"))) ||
@@ -171,5 +173,5 @@ export async function configureOvConf(ctx: InstallContext): Promise<InstallConte
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
   logInfo(tr(ctx.langZh, `Config generated: ${configPath}`, `已生成配置: ${configPath}`));
 
-  return { ...ctx, selectedServerPort: selectedPort };
+  return { ...ctx, selectedServerPort: selectedPort, ovConfNeedsManualEdit: needsManualEdit };
 }

@@ -129,6 +129,7 @@ export interface InstallContext {
   pluginConfig: ResolvedPluginConfig | null;
   pluginDest: string;
   mode: "local" | "remote";
+  modeExplicit: boolean;
   runtimeConfig: RuntimeConfig | null;
 
   pythonPath: string;
@@ -146,6 +147,7 @@ export interface InstallContext {
   remoteApiKey: string;
   remoteAgentId: string;
   selectedServerPort: number;
+  ovConfNeedsManualEdit: boolean;
 
   npmRegistry: string;
   pipIndexUrl: string;

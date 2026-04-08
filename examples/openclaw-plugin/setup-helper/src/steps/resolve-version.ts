@@ -6,6 +6,7 @@ import {
   isSemverLike,
   versionGte,
   deriveOpenvikingVersionFromPluginVersion,
+  sortSemverTagsDesc,
 } from "../lib/version.js";
 import { tr } from "../ui/messages.js";
 import { logInfo, logError, logWarning } from "../ui/prompts.js";
@@ -175,6 +176,44 @@ export async function checkOpenClawCompatibility(ctx: InstallContext): Promise<v
     console.log("");
     process.exit(1);
   }
+}
+
+export async function fetchAvailableVersions(
+  ctx: InstallContext,
+  maxCount = 10,
+): Promise<string[]> {
+  const apiUrl = `https://api.github.com/repos/${ctx.repo}/tags?per_page=100`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(apiUrl, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "openviking-setup-helper",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (response.ok) {
+      const payload = await response.json().catch(() => null);
+      if (Array.isArray(payload)) {
+        const tags = payload.map((item: { name?: string }) => item?.name || "").filter(Boolean);
+        return sortSemverTagsDesc(tags).slice(0, maxCount);
+      }
+    }
+  } catch {}
+
+  const gitRef = `https://github.com/${ctx.repo}.git`;
+  const gitResult = await runCapture("git", ["ls-remote", "--tags", "--refs", gitRef], {
+    shell: ctx.platform.isWin,
+  });
+  if (gitResult.code === 0 && gitResult.out) {
+    const tags = parseGitLsRemoteTags(gitResult.out);
+    return sortSemverTagsDesc(tags).slice(0, maxCount);
+  }
+
+  return [];
 }
 
 export function checkRequestedOpenVikingCompatibility(ctx: InstallContext): void {

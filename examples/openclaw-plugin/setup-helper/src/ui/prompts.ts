@@ -128,6 +128,23 @@ export async function selectWorkdir(instances: string[], ctx: InstallContext): P
   return result;
 }
 
+export async function selectOption<T extends string>(
+  message: string,
+  options: Array<{ value: T; label: string; hint?: string }>,
+  initialValue?: T,
+): Promise<T> {
+  const result = await p.select({
+    message,
+    options,
+    initialValue: initialValue ?? options[0]?.value,
+  });
+  if (p.isCancel(result)) {
+    p.cancel("Installation cancelled.");
+    process.exit(0);
+  }
+  return result;
+}
+
 export function createSpinner(): ReturnType<typeof p.spinner> {
   return p.spinner();
 }

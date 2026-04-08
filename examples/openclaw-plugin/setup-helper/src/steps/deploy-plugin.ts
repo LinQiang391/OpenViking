@@ -8,28 +8,33 @@ import { run } from "../lib/process.js";
 import { tr } from "../ui/messages.js";
 import { logInfo, logError, logStep, createSpinner } from "../ui/prompts.js";
 
+interface DownloadResult {
+  status: "ok" | "skip" | "fail";
+  networkError: boolean;
+}
+
 async function downloadPluginFile(
   destDir: string,
   fileName: string,
   url: string,
   required: boolean,
-): Promise<"ok" | "skip" | "fail"> {
+): Promise<DownloadResult> {
   const destPath = join(destDir, fileName);
-  const { ok, status, saw404 } = await downloadFile(url, destPath);
+  const { ok, status, saw404, networkError } = await downloadFile(url, destPath);
 
-  if (ok) return "ok";
+  if (ok) return { status: "ok", networkError: false };
 
   if (saw404 || status === 404) {
     if (fileName === ".gitignore") {
       await mkdir(dirname(destPath), { recursive: true });
       await writeFile(destPath, "node_modules/\n", "utf8");
-      return "ok";
+      return { status: "ok", networkError: false };
     }
-    return "skip";
+    return { status: "skip", networkError: false };
   }
 
-  if (!required) return "skip";
-  return "fail";
+  if (!required) return { status: "skip", networkError };
+  return { status: "fail", networkError };
 }
 
 async function downloadPlugin(
@@ -48,19 +53,21 @@ async function downloadPlugin(
 
   const results: string[] = [];
   let failed = false;
+  let hasNetworkError = false;
 
   for (let i = 0; i < allFiles.length; i++) {
     const { name, required } = allFiles[i];
     const url = `${ghRaw}/examples/${config.dir}/${name}`;
     const result = await downloadPluginFile(destDir, name, url, required);
 
-    if (result === "ok") {
+    if (result.status === "ok") {
       results.push(`  ${pc.green("✓")} ${name}`);
-    } else if (result === "skip") {
+    } else if (result.status === "skip") {
       results.push(`  ${pc.dim("–")} ${name} ${pc.dim("(skipped)")}`);
     } else {
       results.push(`  ${pc.red("✗")} ${name} ${pc.red("FAILED")}`);
       failed = true;
+      if (result.networkError) hasNetworkError = true;
     }
   }
 
@@ -76,9 +83,23 @@ async function downloadPlugin(
   );
 
   if (failed) {
-    logError(
-      tr(ctx.langZh, "Some required files failed to download.", "部分必需文件下载失败。"),
-    );
+    if (hasNetworkError) {
+      logError(
+        tr(
+          ctx.langZh,
+          "Download failed due to network issues (GitHub may be unreachable). Please check your network and re-run the installer.",
+          "下载失败，网络连接异常（无法访问 GitHub）。请检查网络后重新执行安装。",
+        ),
+      );
+    } else {
+      logError(
+        tr(
+          ctx.langZh,
+          "Some required files failed to download. Please re-run the installer to retry.",
+          "部分必需文件下载失败。请重新执行安装以重试。",
+        ),
+      );
+    }
     process.exit(1);
   }
 

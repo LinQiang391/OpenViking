@@ -15,7 +15,7 @@ const platform = detectPlatform();
 const main = defineCommand({
   meta: {
     name: "ov-install",
-    version: "0.3.0-beta.2",
+    version: "0.3.0-beta.3",
     description: "OpenClaw + OpenViking cross-platform installer",
   },
   args: {
@@ -85,6 +85,26 @@ const main = defineCommand({
       description: "Non-interactive (use defaults)",
       default: process.env.OPENVIKING_INSTALL_YES === "1",
     },
+    mode: {
+      type: "string",
+      description: "Install mode: local (default) or remote",
+      default: "",
+    },
+    "remote-url": {
+      type: "string",
+      description: "Remote OpenViking server URL (for --mode remote)",
+      default: "",
+    },
+    "remote-api-key": {
+      type: "string",
+      description: "Remote API key (for --mode remote)",
+      default: "",
+    },
+    "remote-agent-id": {
+      type: "string",
+      description: "Remote agent ID (for --mode remote)",
+      default: "",
+    },
     zh: {
       type: "boolean",
       description: "Chinese prompts",
@@ -134,6 +154,19 @@ const main = defineCommand({
     const openclawDir = args.workdir || defaultOpenclawDir;
     const openvikingDir = join(platform.home, ".openviking");
 
+    const explicitMode = args.mode === "remote" ? "remote" : args.mode === "local" ? "local" : "";
+    if (args.mode && args.mode !== "local" && args.mode !== "remote") {
+      console.error(`--mode must be "local" or "remote", got "${args.mode}"`);
+      process.exit(1);
+    }
+
+    if (explicitMode === "remote" && !args["remote-url"] && !args.yes) {
+      // In interactive mode, remote-url can be collected via prompt
+    } else if (explicitMode === "remote" && !args["remote-url"] && args.yes) {
+      console.error("--mode remote requires --remote-url in non-interactive mode (-y)");
+      process.exit(1);
+    }
+
     const ctx: InstallContext = {
       repo: args["github-repo"],
       pluginVersion,
@@ -150,7 +183,8 @@ const main = defineCommand({
       platform,
       pluginConfig: null,
       pluginDest: "",
-      mode: "local",
+      mode: (explicitMode || "local") as "local" | "remote",
+      modeExplicit: Boolean(explicitMode),
       runtimeConfig: null,
 
       pythonPath: "",
@@ -164,10 +198,11 @@ const main = defineCommand({
       installedUpgradeState: null,
       upgradeAudit: null,
 
-      remoteBaseUrl: "http://127.0.0.1:1933",
-      remoteApiKey: "",
-      remoteAgentId: "",
+      remoteBaseUrl: args["remote-url"] || "http://127.0.0.1:1933",
+      remoteApiKey: args["remote-api-key"] || "",
+      remoteAgentId: args["remote-agent-id"] || "",
       selectedServerPort: DEFAULT_SERVER_PORT,
+      ovConfNeedsManualEdit: false,
 
       npmRegistry: process.env.NPM_REGISTRY || DEFAULT_NPM_REGISTRY,
       pipIndexUrl: process.env.PIP_INDEX_URL || DEFAULT_PIP_INDEX_URL,
