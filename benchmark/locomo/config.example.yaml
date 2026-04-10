@@ -1,0 +1,154 @@
+# ============================================================
+# LoCoMo 通用评测配置文件
+# ============================================================
+# 复制此文件为 config.yaml 并根据实际环境修改。
+# 支持 ${ENV_VAR} 语法引用环境变量。
+#
+# 快速开始:
+#   cp config.example.yaml config.yaml
+#   export OPENCLAW_GATEWAY_TOKEN="your_token"
+#   export ARK_API_KEY="your_judge_api_key"
+#   python run_eval.py --check-env
+#   python run_eval.py
+
+project_name: "LoCoMo_Eval"
+
+# ---------- 数据集配置 ----------
+data:
+  locomo_json: "../data/locomo10.json"       # LoCoMo 数据文件（相对于本文件所在目录）
+  sample: null                                # null = 全部 sample；数字 = 指定 sample（0-based）
+  sessions: null                              # null = 全部 session；"1-4" = 指定范围
+  skip_category_5: true                       # 跳过 category=5 的对抗性问题
+
+# ---------- OpenClaw 配置 ----------
+openclaw:
+  token: "${OPENCLAW_GATEWAY_TOKEN}"          # OpenClaw gateway token
+  default_agent_id: "locomo-eval"             # 默认 agent ID
+
+  # 默认模型配置（所有 profile 共用，可在各 profile 中覆盖）
+  # 格式: provider/model-id，例如 "anthropic/claude-sonnet-4-6"
+  default_model: "anthropic/claude-sonnet-4-6"
+
+  # 模型提供商配置（可选，如果使用自定义 API）
+  # model_provider:
+  #   name: "custom-provider"
+  #   base_url: "https://api.yourprovider.com/v1"
+  #   api_key: "${CUSTOM_API_KEY}"
+
+  # 每个场景使用独立的 OpenClaw profile（通过 openclaw --profile <name>）
+  # 不同 profile 的数据完全隔离在 ~/.openclaw-<profile_name> 目录下
+  profiles:
+    openclaw_only:
+      profile_name: "eval-s1"
+      gateway_port: 18801
+      # model: "anthropic/claude-sonnet-4-6"  # 可覆盖默认模型
+      plugins:
+        context_engine: null                  # 不启用任何记忆插件
+
+    openclaw_memcore:
+      profile_name: "eval-s2"
+      gateway_port: 18802
+      plugins:
+        context_engine: null                  # 不装额外插件，使用 OpenClaw 内建记忆
+
+    openclaw_openviking:
+      profile_name: "eval-s3"
+      gateway_port: 18803
+      plugins:
+        context_engine: "openviking"          # 安装 OpenViking 插件
+      openviking_plugin:
+        mode: "remote"
+        baseUrl: "http://localhost:1933"
+        autoRecall: true
+        autoCapture: true
+
+    openclaw_openviking_memcore:
+      profile_name: "eval-s4"
+      gateway_port: 18804
+      plugins:
+        context_engine: "openviking"          # OpenViking 插件 + OpenClaw 内建记忆
+      openviking_plugin:
+        mode: "remote"
+        baseUrl: "http://localhost:1933"
+        autoRecall: true
+        autoCapture: true
+
+# ---------- OpenViking 配置 ----------
+openviking:
+  url: "http://localhost:1933"
+  no_user_agent_id: true                      # 不传 user_id/agent_id
+
+# ---------- Judge 配置 ----------
+judge:
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "${ARK_API_KEY}"
+  model: "doubao-seed-2-0-pro-260215"
+  temperature: 0
+
+# ---------- 场景配置 ----------
+# 每个场景定义注入哪些记忆后端 + QA 的 user 隔离前缀
+scenarios:
+  - name: "openclaw_only"
+    description: "OpenClaw 纯对话，不注入任何记忆（基线）"
+    enabled: true
+    profile: "openclaw_only"
+    ingest:
+      openclaw: false                         # 不向 OpenClaw 注入对话
+      openviking: false                       # 不向 OpenViking 注入
+    qa:
+      user_prefix: "eval-s1"
+      parallel: 10
+
+  - name: "openclaw_memcore"
+    description: "OpenClaw + 内建记忆（通过 API 注入对话历史）"
+    enabled: true
+    profile: "openclaw_memcore"
+    ingest:
+      openclaw: true                          # 通过 OpenClaw API 注入对话历史（memcore）
+      openviking: false
+    qa:
+      user_prefix: "eval-s2"
+      parallel: 10
+
+  - name: "openclaw_openviking"
+    description: "OpenClaw + OpenViking 插件记忆"
+    enabled: true
+    profile: "openclaw_openviking"
+    ingest:
+      openclaw: false                         # 不通过 OpenClaw API 注入
+      openviking: true                        # 通过 OpenViking SDK 注入
+    qa:
+      user_prefix: "eval-s3"
+      parallel: 10
+
+  - name: "openclaw_openviking_memcore"
+    description: "OpenClaw + OpenViking + 内建记忆"
+    enabled: true
+    profile: "openclaw_openviking_memcore"
+    ingest:
+      openclaw: true                          # OpenClaw 内建记忆
+      openviking: true                        # OpenViking 插件记忆
+    qa:
+      user_prefix: "eval-s4"
+      parallel: 10
+
+# ---------- 执行配置 ----------
+execution:
+  judge_parallel: 40                          # Judge 全局并发数
+  ingest_wait_seconds: 60                     # 注入后等待秒数（等待后端建索引）
+  retry_count: 2                              # API 失败重试次数
+  output_dir: "./eval_results"                # 结果输出目录
+  env_file: "~/.openviking_benchmark_env"     # 额外环境变量文件
+
+# ---------- 报告配置 ----------
+report:
+  format: ["txt", "csv", "json"]              # 输出格式
+  compare_scenarios: true                     # 生成跨场景对比报告
+  include_token_breakdown: true               # 包含 token 分类统计
+  include_category_breakdown: true            # 包含按 category 分类准确率
+
+# ---------- 清理配置 ----------
+# 清理操作完全独立于评测流程，仅在用户手动 --cleanup 时触发
+# 所有测试数据默认永久保留
+cleanup:
+  require_confirmation: true                  # 清理前需要用户输入 'yes' 确认
