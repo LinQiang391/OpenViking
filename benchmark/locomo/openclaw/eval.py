@@ -713,8 +713,11 @@ def process_single_question(
     category = qa.get("category", "")
     evidence = qa.get("evidence", [])
 
-    user_key = args.user or f"qa-{sample_id}-q{original_qi}"
-    session_key = f"agent:{args.agent_id}:openresponses-user:{user_key}"
+    # Each question needs a unique user to get its own session file, avoiding concurrent conflicts.
+    # session_key must use OpenClaw's internal format so sessions are created under the correct agent.
+    qa_user = f"qa-{sample_id}-q{original_qi}"
+    session_key = f"agent:{args.agent_id}:openresponses-user:{qa_user}"
+    user_key = args.user or f"eval-{sample_idx}"
 
     print(f"  [{sample_idx}] Q{original_qi}: {question[:60]}{'...' if len(question) > 60 else ''}", file=sys.stderr)
     memory_hint = "Search your memory first, then answer based on what you find. "
@@ -726,11 +729,11 @@ def process_single_question(
     jsonl_filename = ""
     try:
         response, api_usage = send_message_with_retry(
-            args.base_url, args.token, user_key, input_msg, 2, args.agent_id, session_key
+            args.base_url, args.token, qa_user, input_msg, 2, args.agent_id, session_key
         )
         print(f"  [{sample_idx}]   A: {response[:60]}{'...' if len(response) > 60 else ''}", file=sys.stderr)
 
-        session_file_path = get_session_id_from_key(session_key, user_key, args.agent_id)
+        session_file_path = get_session_id_from_key(session_key, qa_user, args.agent_id)
         jsonl_filename = ""
 
         # Archive the session file if we found it

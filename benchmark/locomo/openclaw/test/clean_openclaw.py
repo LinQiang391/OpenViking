@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -230,10 +231,31 @@ def clean_memory_index(openclaw_dir: Path, agent_id: str, dry_run: bool) -> int:
         if f.is_file():
             print(f"  {'[DRY-RUN] ' if dry_run else ''}Remove index: {f.name} ({f.stat().st_size} bytes)")
             if not dry_run:
-                f.unlink()
+                try:
+                    f.unlink()
+                except PermissionError:
+                    print(f"  [WARN] Cannot delete {f.name} (file locked by another process)", file=sys.stderr)
             removed += 1
 
     return removed
+
+
+def _find_listening_pid(port: int) -> int | None:
+    """Find PID of the process listening on the given port."""
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, shell=True)
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    return int(parts[-1])
+        else:
+            result = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip().splitlines()[0])
+    except Exception:
+        pass
+    return None
 
 
 def main():
@@ -281,6 +303,12 @@ def main():
         action="store_true",
         help="Skip confirmation prompt",
     )
+    parser.add_argument(
+        "--gateway-port",
+        type=int,
+        default=18789,
+        help="OpenClaw gateway port to check (default: 18789)",
+    )
     args = parser.parse_args()
 
     openclaw_dir = Path(args.openclaw_dir).expanduser() if args.openclaw_dir else get_default_openclaw_dir()
@@ -312,6 +340,25 @@ def main():
         if confirm.lower() not in ("y", "yes"):
             print("Cancelled.")
             sys.exit(0)
+
+    # Check if gateway is running (sqlite will be locked)
+    gateway_port = getattr(args, "gateway_port", 18789)
+    gateway_pid = _find_listening_pid(gateway_port)
+    if gateway_pid:
+        print(f"[WARN] OpenClaw gateway detected on port {gateway_port} (PID {gateway_pid})")
+        if not args.dry_run:
+            print(f"  Stopping gateway to release file locks...")
+            try:
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/F", "/PID", str(gateway_pid)], shell=True, capture_output=True)
+                else:
+                    import signal
+                    os.kill(gateway_pid, signal.SIGTERM)
+                time.sleep(2)
+                print(f"  Gateway stopped.")
+            except Exception as e:
+                print(f"  [WARN] Could not stop gateway: {e}. sqlite files may fail to delete.", file=sys.stderr)
+        print()
 
     # Archive existing data before cleaning
     if not args.no_archive:

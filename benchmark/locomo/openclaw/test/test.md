@@ -25,6 +25,7 @@ cd benchmark/locomo/openclaw
 python test/clean_openclaw.py --dry-run
 
 # 清除全部（先归档再清理），默认目录 ~/.openclaw
+# 注意：会自动检测并停止 gateway（避免 sqlite 文件被锁）
 python test/clean_openclaw.py -y
 
 # 指定 OpenClaw 目录和 agent ID
@@ -39,8 +40,8 @@ python test/clean_openclaw.py --openclaw-dir ~/.openclaw --memory-only -y
 # 跳过归档直接清理（危险！数据将永久丢失）
 python test/clean_openclaw.py --no-archive -y
 
-# 指定归档目录（默认 ./archive）
-python test/clean_openclaw.py --archive-dir /path/to/archive -y
+# 指定归档目录和 gateway 端口
+python test/clean_openclaw.py --archive-dir /path/to/archive --gateway-port 18789 -y
 ```
 
 清理内容说明：
@@ -381,9 +382,10 @@ name = "memcore-embedding-v1"            # 归档目录名
 
 [ingest]
 sample = 0                               # -1 = 全部，0 = 只测 sample 0
+sessions = "1-3"                         # 可选：限制 session 范围（如 "1-3" 或 "5"）
 
 [qa]
-parallel = 5
+parallel = 5                             # 并发线程数（每问题独立 session）
 sample = 0                               # -1 = 全部
 ```
 
@@ -392,13 +394,13 @@ sample = 0                               # -1 = 全部
 ### 2. 运行
 
 ```bash
-# 一键全流程（clean → ingest → snapshot → QA → judge → stat → archive）
+# 一键全流程（stop_gateway → clean → start_gateway → ingest → snapshot → QA → judge → stat → archive）
 python run_benchmark.py --config config.local.toml
 
 # 预览步骤（不实际执行）
 python run_benchmark.py --config config.local.toml --dry-run
 
-# 从上次中断处恢复（跳过 clean，利用已有数据继续）
+# 从上次中断处恢复（跳过 clean/stop_gateway/start_gateway/snapshot，利用已有数据继续）
 python run_benchmark.py --config config.local.toml --resume
 
 # 只运行指定步骤
@@ -415,11 +417,12 @@ python run_benchmark.py --config config.local.toml --generate-config-only
 
 | 步骤 | 对应脚本 | 说明 |
 |------|---------|------|
-| `clean` | `test/clean_openclaw.py` | **先归档**现有数据 → 清理会话 + 记忆 + 索引 |
-| (自动) | `run_benchmark.py` | 根据 config 生成 `openclaw.json` |
+| `stop_gateway` | `run_benchmark.py` | 停止已运行的 gateway（释放 sqlite 文件锁） |
+| `clean` | `test/clean_openclaw.py` | **先归档**现有数据 → 清理会话 + 记忆 + 索引 + result 目录 |
+| `start_gateway` | `run_benchmark.py` | 生成 `openclaw.json` → 启动 gateway → 等待就绪 |
 | `ingest` | `eval.py ingest` | 注入 LoCoMo 对话到 OpenClaw |
 | `snapshot_ingest` | `run_benchmark.py` | 快照 ingest session 文件，与 QA 分离 |
-| `qa` | `eval.py qa` | QA 评估，结果保存到 `result/qa_results.csv` |
+| `qa` | `eval.py qa` | 并发 QA 评估（每问题独立 session），结果保存到 `result/qa_results.csv` |
 | `judge` | `judge.py` | LLM 裁判打分 |
 | `stat` | `stat_judge_result.py` | 统计准确率和 token 消耗 |
 | `archive` | `test/archive_run.py` | 归档所有数据（ingest/qa session 分开）到 `archive/` |
@@ -432,9 +435,18 @@ python run_benchmark.py --config config.local.toml --generate-config-only
 python run_benchmark.py --config config.local.toml --resume
 ```
 
-`--resume` 会跳过 `clean` 和 `snapshot_ingest` 步骤，保留已有数据：
+`--resume` 会跳过 `stop_gateway`、`clean`、`start_gateway`、`snapshot_ingest` 步骤，保留已有数据：
 - **Ingest** 会跳过已注入的 session（靠 `.ingest_record.json` 记录）
 - **QA** 会跳过已回答的问题（靠 CSV 记录）
+
+### 并发 QA Session 隔离
+
+QA 阶段的并发由 `[qa] parallel` 配置。每个 QA 问题使用独立的 user 和 session_key：
+
+- **user**: `qa-{sample_id}-q{question_index}`（如 `qa-conv-26-q1`）
+- **session_key**: `agent:{agent_id}:openresponses-user:{user}`
+
+这确保并发线程各自操作独立的 session 文件，不会互相踩踏。session_key 使用 OpenClaw 内部格式以确保 session 路由到正确的 agent（和 ingest 阶段共享同一个记忆空间）。
 
 ### Session 文件命名
 

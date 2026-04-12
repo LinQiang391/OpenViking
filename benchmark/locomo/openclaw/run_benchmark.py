@@ -31,8 +31,9 @@ except ModuleNotFoundError:
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ALL_STEPS = ["clean", "ingest", "snapshot_ingest", "qa", "judge", "stat", "archive"]
+ALL_STEPS = ["stop_gateway", "clean", "start_gateway", "ingest", "snapshot_ingest", "qa", "judge", "stat", "archive"]
 INGEST_STAGING_DIR = os.path.join(SCRIPT_DIR, ".ingest_sessions_staging")
+_gateway_proc = None
 
 
 def load_config(config_path: str) -> dict:
@@ -138,18 +139,123 @@ def generate_openclaw_json(cfg: dict) -> str:
     return out_path
 
 
+def _find_gateway_pid(port: int) -> int | None:
+    """Find PID of the process listening on the gateway port."""
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True, shell=True
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    return int(parts[-1])
+        else:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip().splitlines()[0])
+    except Exception as e:
+        print(f"  [gateway] Could not find PID on port {port}: {e}")
+    return None
+
+
+def step_stop_gateway(cfg: dict):
+    """Stop any running openclaw gateway process."""
+    global _gateway_proc
+    port = cfg["gateway"]["port"]
+    pid = _find_gateway_pid(port)
+
+    if pid:
+        print(f"  Stopping gateway (PID {pid}) on port {port}...")
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], shell=True, capture_output=True)
+            else:
+                import signal
+                os.kill(pid, signal.SIGTERM)
+            time.sleep(2)
+            print(f"  Gateway stopped.")
+        except Exception as e:
+            print(f"  [WARN] Could not stop gateway: {e}")
+    else:
+        print(f"  No gateway found on port {port}.")
+
+    if _gateway_proc and _gateway_proc.poll() is None:
+        _gateway_proc.terminate()
+        _gateway_proc.wait(timeout=5)
+        _gateway_proc = None
+
+
+def step_start_gateway(cfg: dict):
+    """Start openclaw gateway in the background and wait for it to be ready."""
+    global _gateway_proc
+    port = cfg["gateway"]["port"]
+
+    generate_openclaw_json(cfg)
+
+    print(f"  Starting openclaw gateway on port {port}...")
+    _gateway_proc = subprocess.Popen(
+        ["openclaw", "gateway"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        shell=True,
+    )
+
+    import urllib.request
+    url = f"http://127.0.0.1:{port}/v1/responses"
+    max_wait = 30
+    for i in range(max_wait):
+        time.sleep(1)
+        try:
+            req = urllib.request.Request(url, method="OPTIONS")
+            urllib.request.urlopen(req, timeout=2)
+            print(f"  Gateway ready after {i+1}s.")
+            return
+        except Exception:
+            pass
+        pid = _find_gateway_pid(port)
+        if pid:
+            print(f"  Gateway ready (PID {pid}) after {i+1}s.")
+            return
+
+    print(f"  [WARN] Gateway may not be ready after {max_wait}s, proceeding anyway.")
+
+
 def step_clean(cfg: dict):
     agent_id = cfg["general"]["agent_id"]
     openclaw_dir = expand_path(cfg["general"]["openclaw_dir"])
     archive_dir = os.path.join(SCRIPT_DIR, "archive")
+    port = cfg["gateway"]["port"]
     run_cmd(
         ["python", "test/clean_openclaw.py",
          "--openclaw-dir", openclaw_dir,
          "--agent-id", agent_id,
          "--archive-dir", archive_dir,
+         "--gateway-port", str(port),
          "-y"],
         f"Clean environment (agent={agent_id}, archive first)"
     )
+
+    result_dir = Path(SCRIPT_DIR) / "result"
+    if result_dir.exists() and any(result_dir.iterdir()):
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        backup_dir = Path(archive_dir) / f"{timestamp}_pre-clean" / "result"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for f in result_dir.iterdir():
+            if f.is_file():
+                shutil.copy2(f, backup_dir / f.name)
+                try:
+                    f.unlink()
+                except PermissionError:
+                    print(f"  [WARN] Cannot delete {f.name} (file locked). Archived copy saved.", file=sys.stderr)
+        print(f"  Result files archived to {backup_dir} and cleaned.")
+
+    ingest_record = Path(SCRIPT_DIR) / ".ingest_record.json"
+    if ingest_record.exists():
+        ingest_record.unlink()
+        print(f"  Ingest record cleared.")
 
 
 def step_ingest(cfg: dict):
@@ -172,6 +278,10 @@ def step_ingest(cfg: dict):
     sample = ing.get("sample", -1)
     if sample >= 0:
         cmd.extend(["--sample", str(sample)])
+
+    sessions = ing.get("sessions")
+    if sessions:
+        cmd.extend(["--sessions", str(sessions)])
 
     run_cmd(cmd, "Ingest conversations")
 
@@ -255,6 +365,8 @@ def step_archive(cfg: dict):
 
 STEP_MAP = {
     "clean": step_clean,
+    "stop_gateway": step_stop_gateway,
+    "start_gateway": step_start_gateway,
     "ingest": step_ingest,
     "snapshot_ingest": step_snapshot_ingest,
     "qa": step_qa,
@@ -316,9 +428,9 @@ def main():
         active_steps = [s for s in ALL_STEPS if steps_cfg.get(s, True)]
 
     if args.resume:
-        skip_on_resume = {"clean", "snapshot_ingest"}
+        skip_on_resume = {"clean", "stop_gateway", "start_gateway", "snapshot_ingest"}
         active_steps = [s for s in active_steps if s not in skip_on_resume]
-        print("[RESUME MODE] Skipping clean & snapshot_ingest, continuing from last checkpoint")
+        print("[RESUME MODE] Skipping clean/gateway/snapshot_ingest, continuing from last checkpoint")
 
     if args.skip:
         skip = {s.strip() for s in args.skip.split(",")}
@@ -333,7 +445,8 @@ def main():
             print(f"  - {s}")
         return
 
-    generate_openclaw_json(cfg)
+    if "start_gateway" not in active_steps:
+        generate_openclaw_json(cfg)
 
     start = time.time()
     for step_name in active_steps:
@@ -347,6 +460,15 @@ def main():
             print(f"[WARN] Unknown step: {step_name}")
 
     total = time.time() - start
+
+    if _gateway_proc and _gateway_proc.poll() is None:
+        print("\n  Stopping gateway launched by this script...")
+        _gateway_proc.terminate()
+        try:
+            _gateway_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _gateway_proc.kill()
+
     print(f"\n{'='*60}")
     print(f"  All done! Total time: {total:.1f}s ({total/60:.1f}min)")
     print(f"{'='*60}")
