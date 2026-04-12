@@ -379,16 +379,15 @@ def get_session_id(user: str, agent_id: str = "main") -> str | None:
         return None
 
 
-def reset_session(session_path: str, agent_id: str = "main") -> str | None:
+def reset_session(session_path: str, agent_id: str = "main", phase: str = "") -> str | None:
     """Rename the session .jsonl file with a timestamp suffix.
     Accepts either a session_id or a full path to the session file.
+    phase: optional label like 'ingest' or 'qa' inserted before the timestamp.
     Returns the new filename if successful, None otherwise.
     """
-    # Check if session_path is already a full path
     if os.path.isabs(session_path) and os.path.exists(session_path):
         src = session_path
     else:
-        # Treat as session_id
         sessions_dir = os.path.expanduser(f"~/.openclaw/agents/{agent_id}/sessions")
         src = os.path.join(sessions_dir, f"{session_path}.jsonl")
 
@@ -397,7 +396,8 @@ def reset_session(session_path: str, agent_id: str = "main") -> str | None:
         return None
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    dst = f"{src}.{timestamp}"
+    suffix = f".{phase}.{timestamp}" if phase else f".{timestamp}"
+    dst = f"{src}{suffix}"
     try:
         os.rename(src, dst)
         new_filename = os.path.basename(dst)
@@ -451,13 +451,14 @@ def calculate_usage_from_jsonl(jsonl_filename: str, agent_id: str = "main") -> d
 
 def send_message_with_retry(
     base_url: str, token: str, user: str, message: str, retries: int = 2,
-    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None
+    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None,
+    store: bool = True
 ) -> tuple[str, dict]:
     """Call send_message with up to `retries` retries on failure."""
     last_exc = None
     for attempt in range(retries + 1):
         try:
-            return send_message(base_url, token, user, message, agent_id, session_key)
+            return send_message(base_url, token, user, message, agent_id, session_key, store)
         except Exception as e:
             last_exc = e
             if attempt < retries:
@@ -467,7 +468,8 @@ def send_message_with_retry(
 
 def send_message(
     base_url: str, token: str, user: str, message: str,
-    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None
+    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None,
+    store: bool = True
 ) -> tuple[str, dict]:
     """Send a single message to the OpenClaw responses API.
 
@@ -481,13 +483,16 @@ def send_message(
     }
     if session_key:
         headers["X-OpenClaw-Session-Key"] = session_key
+    model_value = f"openclaw:{agent_id}" if agent_id != "main" else "openclaw"
     payload = {
-        "model": "openclaw",
+        "model": model_value,
         "input": message,
         "stream": False,
     }
     if user:
         payload["user"] = user
+    if not store:
+        payload["store"] = False
 
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=6000)
@@ -505,6 +510,14 @@ def send_message(
     print(body)
     usage = body.get("usage", {"input_tokens": 0, "output_tokens": 0, "cacheRead": 0, "total_tokens": 0})
     return extract_response_text(body), usage
+
+
+def _resolve_workspace(agent_id: str) -> str:
+    """Resolve the workspace directory for a given agent ID."""
+    openclaw_dir = os.path.expanduser("~/.openclaw")
+    if agent_id == "main":
+        return os.path.join(openclaw_dir, "workspace")
+    return os.path.join(openclaw_dir, f"workspace-{agent_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -555,8 +568,20 @@ def run_ingest(
                 print(f"  [{label}] {preview}...", file=sys.stderr)
 
                 try:
-                    reply, usage = send_message(args.base_url, args.token, user_key, msg, args.agent_id)
+                    ingest_msg = msg
+                    if args.compact:
+                        memory_prompt = (
+                            "Extract key facts from the next group conversation and store them "
+                            "in a SEPARATE memory file named memory/YYYY-MM-DD.md where YYYY-MM-DD "
+                            "is the CONVERSATION date (from the message header, NOT today). "
+                            "Use the write tool immediately. Do not append to existing files, "
+                            "create a new file per conversation date.\n\n"
+                        )
+                        ingest_msg = memory_prompt + msg
+                    reply, usage = send_message(args.base_url, args.token, user_key, ingest_msg, args.agent_id)
                     print(f"    -> {reply[:80]}{'...' if len(reply) > 80 else ''}", file=sys.stderr)
+
+
                     results.append({
                         "sample_id": sample_id,
                         "session": meta["session_key"],
@@ -583,7 +608,7 @@ def run_ingest(
                 if session_id is None:
                     session_id = get_session_id(user_key, args.agent_id)
                 if session_id:
-                    reset_session(session_id, args.agent_id)
+                    reset_session(session_id, args.agent_id, phase="ingest")
 
         if args.output:
             try:
@@ -607,6 +632,20 @@ def run_ingest(
         print(f"Total sessions: {total_processed}", file=sys.stderr)
         print(f"Completed: {len(results)}", file=sys.stderr)
         print(f"Skipped (already ingested): {skipped_count}", file=sys.stderr)
+
+        # Trigger memory index build by sending a warmup request that forces memory_search
+        if args.compact and len(results) > 0:
+            print(f"\n=== Triggering memory index build ===", file=sys.stderr)
+            user_key = args.user or "eval-1"
+            try:
+                warmup_reply, _ = send_message(
+                    args.base_url, args.token, f"_warmup_{user_key}",
+                    "Search your memory.",
+                    args.agent_id
+                )
+                print(f"  Index warmup OK: {warmup_reply[:80]}", file=sys.stderr)
+            except Exception as e:
+                print(f"  Index warmup failed (non-fatal): {e}", file=sys.stderr)
 
     else:
         # Original txt mode
@@ -636,7 +675,7 @@ def run_ingest(
             if session_id is None:
                 session_id = get_session_id(session_key, args.agent_id)
             if session_id:
-                reset_session(session_id, args.agent_id)
+                reset_session(session_id, args.agent_id, phase="ingest")
 
             results.append({"index": idx, "turns": turns, "evals": session["evals"]})
 
@@ -674,31 +713,29 @@ def process_single_question(
     category = qa.get("category", "")
     evidence = qa.get("evidence", [])
 
-    # Generate unique session_key based on sample_id + question_index
-    session_key = f"qa-{sample_id}-q{original_qi}"
-    user_key = args.user or f"eval-{sample_idx}"
+    user_key = args.user or f"qa-{sample_id}-q{original_qi}"
+    session_key = f"agent:{args.agent_id}:openresponses-user:{user_key}"
 
     print(f"  [{sample_idx}] Q{original_qi}: {question[:60]}{'...' if len(question) > 60 else ''}", file=sys.stderr)
-    # 如果有 question_time，注入到 prompt 中
+    memory_hint = "Search your memory first, then answer based on what you find. "
     if question_time:
-        input_msg = f"Current date: {question_time}. Answer the question directly: {question}"
+        input_msg = f"Current date: {question_time}. {memory_hint}{question}"
     else:
-        input_msg = f"Answer the question directly: {question}"
+        input_msg = f"{memory_hint}{question}"
 
     jsonl_filename = ""
     try:
         response, api_usage = send_message_with_retry(
-            args.base_url, args.token, sample_id, input_msg, 2, args.agent_id, session_key
+            args.base_url, args.token, user_key, input_msg, 2, args.agent_id, session_key
         )
         print(f"  [{sample_idx}]   A: {response[:60]}{'...' if len(response) > 60 else ''}", file=sys.stderr)
 
-        # Get sessionFile path from sessions.json using session_key
         session_file_path = get_session_id_from_key(session_key, user_key, args.agent_id)
         jsonl_filename = ""
 
         # Archive the session file if we found it
         if session_file_path:
-            jsonl_filename = reset_session(session_file_path, args.agent_id)
+            jsonl_filename = reset_session(session_file_path, args.agent_id, phase="qa")
 
         # Calculate usage from JSONL file if available, otherwise use API usage
         if jsonl_filename and session_file_path:
@@ -1021,8 +1058,13 @@ def main():
         default=False,
         help="Clear all existing ingest records before running",
     )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        default=False,
+        help="Ingest mode: send /compact after each session to trigger memory flush",
+    )
     args = parser.parse_args()
-    # 添加默认 CSV 路径到 args
     args.default_csv_path = default_csv_path
 
     if not args.token:

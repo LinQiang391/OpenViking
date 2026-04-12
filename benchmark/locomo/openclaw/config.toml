@@ -1,0 +1,60 @@
+# LoCoMo Benchmark - OpenClaw MemCore 测试配置
+# 将此文件复制为 config.local.toml，修改后使用
+
+[general]
+name = "memcore-embedding-v1"            # 测试名称（归档目录名）
+openclaw_dir = "~/.openclaw"             # OpenClaw 安装目录
+agent_id = "locomo-eval"                 # 测试用 Agent ID
+data_file = "../data/locomo10.json"      # LoCoMo 数据文件路径
+
+[vlm]
+provider = "volcengine-plan"
+model_id = "doubao-seed-2-0-code-preview-260215"
+api = "anthropic-messages"
+api_key = "YOUR_API_KEY"
+base_url = "https://ark.cn-beijing.volces.com/api/coding"
+
+[embedding]
+enabled = true                           # false = 不使用 embedding（仅文件读取）
+provider = "openai"
+model = "doubao-embedding-vision-250615"
+api_key = "YOUR_API_KEY"                 # 可与 vlm.api_key 相同
+base_url = "https://ark.cn-beijing.volces.com/api/coding/v3/"
+
+[memory_search]
+hybrid_enabled = true
+vector_weight = 0.7
+text_weight = 0.3
+min_score = 0                            # 0 = 纯 top-k 模式（推荐）
+max_results = 6
+
+[gateway]
+port = 18789
+token = "YOUR_GATEWAY_TOKEN"
+
+[ingest]
+user = "eval-1"
+compact = true                           # 每轮注入后触发记忆写入
+sample = -1                              # -1 = 全部，0 = 只测 sample 0
+
+[qa]
+parallel = 5
+sample = -1                              # -1 = 全部
+count = -1                               # -1 = 全部问题
+
+[judge]
+model = "doubao-seed-2-0-pro-260215"
+api_key = "YOUR_API_KEY"                 # 裁判模型 API key
+base_url = "https://ark.cn-beijing.volces.com/api/coding/v3"
+parallel = 10
+
+[archive]
+enabled = true                           # 测试完成后自动归档
+
+[steps]
+clean = true                             # 清理环境
+ingest = true                            # 注入对话
+qa = true                                # QA 测试
+judge = true                             # LLM 打分
+stat = true                              # 统计结果
+archive = true                           # 归档数据
