@@ -357,7 +357,7 @@ export function resolvePythonCommand(logger: ProcessLogger): string {
 }
 
 // ---------------------------------------------------------------------------
-// Local runtime auto-detection and installation
+// Local runtime pre-flight check (detect only, never auto-install)
 // ---------------------------------------------------------------------------
 
 function checkPythonVersion(pythonCmd: string): { ok: boolean; version?: string; error?: string } {
@@ -389,188 +389,34 @@ function isOpenVikingImportable(pythonCmd: string): boolean {
   }
 }
 
-function runAsync(
-  cmd: string,
-  args: readonly string[],
-  opts?: { shell?: boolean },
-): Promise<{ code: number; out: string; err: string }> {
-  return new Promise((resolve) => {
-    const cp = require("node:child_process") as typeof import("node:child_process");
-    const child = cp.spawn(cmd, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: opts?.shell ?? false,
-    });
-    let out = "";
-    let errOut = "";
-    child.stdout?.on("data", (chunk: Buffer) => { out += String(chunk); });
-    child.stderr?.on("data", (chunk: Buffer) => { errOut += String(chunk); });
-    child.on("error", (error: Error) => resolve({ code: -1, out: "", err: String(error) }));
-    child.on("close", (code: number | null) => resolve({ code: code ?? -1, out: out.trim(), err: errOut.trim() }));
-  });
-}
-
-async function pipInstallViaVenv(
-  pythonCmd: string,
-  logger: ProcessLogger,
-  pipIndex: string,
-): Promise<{ ok: boolean; venvPy?: string }> {
-  const { join: pJoin } = require("node:path") as typeof import("node:path");
-  const { homedir: hdir } = require("node:os") as typeof import("node:os");
-  const { mkdir: mkd } = require("node:fs/promises") as typeof import("node:fs/promises");
-
-  const ovDir = pJoin(hdir(), ".openviking");
-  const venvDir = pJoin(ovDir, "venv");
-  const venvPy = IS_WIN
-    ? pJoin(venvDir, "Scripts", "python.exe")
-    : pJoin(venvDir, "bin", "python");
-
-  if (existsSync(venvPy)) {
-    const check = await runAsync(venvPy, ["-c", "import openviking"]);
-    if (check.code === 0) {
-      logger.info?.("openviking: package already present in existing venv");
-      return { ok: true, venvPy };
-    }
-    const upd = await runAsync(venvPy, ["-m", "pip", "install", "-U", "openviking", "-i", pipIndex]);
-    if (upd.code === 0) {
-      logger.info?.("openviking: installed into existing venv");
-      return { ok: true, venvPy };
-    }
-  }
-
-  await mkd(ovDir, { recursive: true });
-  const vc = await runAsync(pythonCmd, ["-m", "venv", venvDir]);
-  if (vc.code !== 0) {
-    logger.warn?.(`openviking: venv creation failed — ${vc.err}`);
-    return { ok: false };
-  }
-
-  const inst = await runAsync(venvPy, ["-m", "pip", "install", "-U", "openviking", "-i", pipIndex]);
-  if (inst.code === 0) {
-    logger.info?.("openviking: installed into new venv");
-    return { ok: true, venvPy };
-  }
-  logger.warn?.(`openviking: venv pip install failed — ${inst.err}`);
-  return { ok: false };
-}
-
-async function pipInstallOpenViking(
-  pythonCmd: string,
-  logger: ProcessLogger,
-  pipIndex: string,
-  fallbackIndex: string,
-  setEnvPython: (path: string) => void,
-): Promise<{ ok: boolean; effectivePython: string }> {
-  logger.info?.(`openviking: running pip install openviking (index: ${pipIndex})...`);
-  const r = await runAsync(pythonCmd, ["-m", "pip", "install", "-U", "openviking", "-i", pipIndex]);
-  if (r.code === 0) {
-    logger.info?.("openviking: pip install succeeded");
-    return { ok: true, effectivePython: pythonCmd };
-  }
-
-  const combined = `${r.out}\n${r.err}`;
-
-  if (/externally.managed/i.test(combined)) {
-    logger.info?.("openviking: externally-managed Python, trying venv...");
-    const venv = await pipInstallViaVenv(pythonCmd, logger, pipIndex);
-    if (venv.ok && venv.venvPy) {
-      setEnvPython(venv.venvPy);
-      return { ok: true, effectivePython: venv.venvPy };
-    }
-  }
-
-  if (pipIndex !== fallbackIndex) {
-    logger.info?.("openviking: mirror failed, retrying with fallback index...");
-    const fb = await runAsync(pythonCmd, ["-m", "pip", "install", "-U", "openviking", "-i", fallbackIndex]);
-    if (fb.code === 0) {
-      logger.info?.("openviking: pip install succeeded (fallback)");
-      return { ok: true, effectivePython: pythonCmd };
-    }
-  }
-
-  logger.warn?.(`openviking: pip install failed — ${r.err || r.out}`);
-  return { ok: false, effectivePython: pythonCmd };
-}
-
-async function generateMinimalOvConf(
-  configPath: string,
-  port: number,
-  logger: ProcessLogger,
-  confTemplate: Record<string, unknown>,
-): Promise<boolean> {
-  try {
-    const { dirname: dname, join: pJoin } = require("node:path") as typeof import("node:path");
-    const { mkdir: mkd, writeFile: wf } = require("node:fs/promises") as typeof import("node:fs/promises");
-
-    const ovDir = dname(configPath);
-    const workspace = pJoin(ovDir, "data");
-    await mkd(ovDir, { recursive: true });
-    await mkd(workspace, { recursive: true });
-
-    const conf = { ...confTemplate, server: { host: "127.0.0.1", port, root_api_key: null, cors_origins: ["*"], ...(confTemplate.server as object || {}) } };
-
-    await wf(configPath, JSON.stringify(conf, null, 2) + "\n", "utf8");
-    logger.info?.(`openviking: generated ov.conf → ${configPath}`);
-    return true;
-  } catch (err) {
-    logger.warn?.(`openviking: failed to generate ov.conf — ${String(err)}`);
-    return false;
-  }
-}
-
-export interface EnsureRuntimeResult {
+export interface CheckRuntimeResult {
   pythonCmd: string;
   installed: boolean;
-  ovConfCreated: boolean;
-}
-
-export interface EnsureRuntimeOptions {
-  pipIndex: string;
-  pipFallbackIndex: string;
-  setEnvPython: (path: string) => void;
-  confTemplate: Record<string, unknown>;
+  configExists: boolean;
 }
 
 /**
- * Pre-startup check for local mode: verify Python, install openviking
- * package if absent, and create a minimal ov.conf when missing.
- *
- * All URLs and env access are passed in from the caller (index.ts) so
- * this file stays free of URL literals and process.env references that
- * would trigger the security scanner on clawhub.
+ * Pre-startup check for local mode: verify Python >= 3.10 and that the
+ * openviking package is importable. Does NOT auto-install anything — if
+ * the package is missing, the caller should warn the user to install it
+ * manually (e.g. `pip install openviking`).
  */
-export async function ensureLocalRuntime(
+export function checkLocalRuntime(
   pythonCmd: string,
   configPath: string,
-  port: number,
   logger: ProcessLogger,
-  opts: EnsureRuntimeOptions,
-): Promise<EnsureRuntimeResult> {
+): CheckRuntimeResult {
   const pyCheck = checkPythonVersion(pythonCmd);
   if (!pyCheck.ok) {
     logger.warn?.(`openviking: runtime check — ${pyCheck.error}`);
-    return { pythonCmd, installed: false, ovConfCreated: false };
+    return { pythonCmd, installed: false, configExists: existsSync(configPath) };
   }
   logger.info?.(`openviking: Python ${pyCheck.version} ✓`);
 
-  let effectivePython = pythonCmd;
-  let installed = isOpenVikingImportable(pythonCmd);
-
-  if (!installed) {
-    logger.info?.("openviking: package not found, attempting automatic installation...");
-    const pip = await pipInstallOpenViking(
-      pythonCmd, logger, opts.pipIndex, opts.pipFallbackIndex, opts.setEnvPython,
-    );
-    effectivePython = pip.effectivePython;
-    installed = pip.ok && isOpenVikingImportable(effectivePython);
-  } else {
+  const installed = isOpenVikingImportable(pythonCmd);
+  if (installed) {
     logger.info?.("openviking: package detected ✓");
   }
 
-  let ovConfCreated = false;
-  if (!existsSync(configPath)) {
-    logger.info?.(`openviking: ${configPath} not found, generating minimal config...`);
-    ovConfCreated = await generateMinimalOvConf(configPath, port, logger, opts.confTemplate);
-  }
-
-  return { pythonCmd: effectivePython, installed, ovConfCreated };
+  return { pythonCmd, installed, configExists: existsSync(configPath) };
 }

@@ -30,7 +30,7 @@ import {
   withTimeout,
   resolvePythonCommand,
   prepareLocalPort,
-  ensureLocalRuntime,
+  checkLocalRuntime,
 } from "./process-manager.js";
 import {
   createMemoryOpenVikingContextEngine,
@@ -51,12 +51,12 @@ type HookAgentContext = {
   sessionKey?: string;
 };
 
-type SessionAgentLookup = 
+type SessionAgentLookup = {
   agentId?: string;
   sessionId?: string;
   sessionKey?: string;
-  ovSessionId?: string
-;
+  ovSessionId?: string;
+};
 
 type SessionAgentResolveBranch =
   | "session_resolved"
@@ -1114,27 +1114,17 @@ const contextEnginePlugin = {
 
           const rawPythonCmd = resolvePythonCommand(api.logger);
 
-          const runtimeCheck = await ensureLocalRuntime(
-            rawPythonCmd, cfg.configPath, actualPort, api.logger, {
-              pipIndex: process.env.PIP_INDEX_URL || "https://mirrors.volces.com/pypi/simple/",
-              pipFallbackIndex: "https://pypi.org/simple/",
-              setEnvPython: (p: string) => { process.env.OPENVIKING_PYTHON = p; },
-              confTemplate: {
-                storage: {
-                  workspace: "",
-                  vectordb: { name: "context", backend: "local", project: "default" },
-                  agfs: { port: Math.max(1, actualPort - 100), log_level: "warn", backend: "local", timeout: 10, retry_times: 3 },
-                },
-                log: { level: "WARNING", format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s", output: "file", rotation: true, rotation_days: 3, rotation_interval: "midnight" },
-                embedding: { dense: { provider: "local", model: "bge-small-zh-v1.5", dimension: 512 } },
-                vlm: { provider: "volcengine", api_key: null, model: "doubao-seed-2-0-pro-260215", api_base: "https://ark.cn-beijing.volces.com/api/v3", temperature: 0.1, max_retries: 3 },
-              },
-            },
-          );
+          const runtimeCheck = checkLocalRuntime(rawPythonCmd, cfg.configPath, api.logger);
           if (!runtimeCheck.installed) {
             api.logger.warn(
-              "openviking: package not available after auto-install attempt; " +
-              "server spawn will proceed but may fail — run `pip install openviking` manually",
+              "openviking: package not detected — please run `pip install openviking` first. " +
+              "Server spawn will proceed but may fail.",
+            );
+          }
+          if (!runtimeCheck.configExists) {
+            api.logger.warn(
+              `openviking: config file ${cfg.configPath} not found — ` +
+              "please run `ov-install` or create it manually. See https://github.com/volcengine/OpenViking",
             );
           }
           const pythonCmd = runtimeCheck.pythonCmd;
