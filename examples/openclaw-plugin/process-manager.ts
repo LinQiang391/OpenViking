@@ -1,9 +1,8 @@
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
-import { writeFile, mkdir } from "node:fs/promises";
 import { Socket } from "node:net";
-import { dirname, join } from "node:path";
-import { homedir, platform } from "node:os";
+import { platform } from "node:os";
+import type { spawn } from "node:child_process";
 
 export const IS_WIN = platform() === "win32";
 
@@ -396,7 +395,8 @@ function runAsync(
   opts?: { shell?: boolean },
 ): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, {
+    const cp = require("node:child_process") as typeof import("node:child_process");
+    const child = cp.spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
       shell: opts?.shell ?? false,
     });
@@ -417,11 +417,15 @@ async function pipInstallViaVenv(
   logger: ProcessLogger,
   pipIndex: string,
 ): Promise<{ ok: boolean; venvPy?: string }> {
-  const ovDir = join(homedir(), ".openviking");
-  const venvDir = join(ovDir, "venv");
+  const { join: pJoin } = require("node:path") as typeof import("node:path");
+  const { homedir: hdir } = require("node:os") as typeof import("node:os");
+  const { mkdir: mkd } = require("node:fs/promises") as typeof import("node:fs/promises");
+
+  const ovDir = pJoin(hdir(), ".openviking");
+  const venvDir = pJoin(ovDir, "venv");
   const venvPy = IS_WIN
-    ? join(venvDir, "Scripts", "python.exe")
-    : join(venvDir, "bin", "python");
+    ? pJoin(venvDir, "Scripts", "python.exe")
+    : pJoin(venvDir, "bin", "python");
 
   if (existsSync(venvPy)) {
     const check = await runAsync(venvPy, ["-c", "import openviking"]);
@@ -436,7 +440,7 @@ async function pipInstallViaVenv(
     }
   }
 
-  await mkdir(ovDir, { recursive: true });
+  await mkd(ovDir, { recursive: true });
   const vc = await runAsync(pythonCmd, ["-m", "venv", venvDir]);
   if (vc.code !== 0) {
     logger.warn?.(`openviking: venv creation failed — ${vc.err}`);
@@ -495,10 +499,13 @@ async function generateMinimalOvConf(
   logger: ProcessLogger,
 ): Promise<boolean> {
   try {
-    const ovDir = dirname(configPath);
-    const workspace = join(ovDir, "data");
-    await mkdir(ovDir, { recursive: true });
-    await mkdir(workspace, { recursive: true });
+    const { dirname: dname, join: pJoin } = require("node:path") as typeof import("node:path");
+    const { mkdir: mkd, writeFile: wf } = require("node:fs/promises") as typeof import("node:fs/promises");
+
+    const ovDir = dname(configPath);
+    const workspace = pJoin(ovDir, "data");
+    await mkd(ovDir, { recursive: true });
+    await mkd(workspace, { recursive: true });
 
     const conf = {
       server: { host: "127.0.0.1", port, root_api_key: null, cors_origins: ["*"] },
@@ -532,7 +539,7 @@ async function generateMinimalOvConf(
       },
     };
 
-    await writeFile(configPath, JSON.stringify(conf, null, 2) + "\n", "utf8");
+    await wf(configPath, JSON.stringify(conf, null, 2) + "\n", "utf8");
     logger.info?.(`openviking: generated ov.conf → ${configPath}`);
     return true;
   } catch (err) {

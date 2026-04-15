@@ -1,8 +1,15 @@
 {
   "name": "@openclaw/openviking",
-  "version": "2026.4.14-dev.1",
+  "version": "2026.4.14-dev.2",
   "description": "OpenClaw OpenViking-backed long-term memory plugin (install to ~/.openclaw/extensions)",
   "type": "module",
+  "files": [
+    "*.ts",
+    "!vitest.config.ts",
+    "openclaw.plugin.json",
+    "package.json",
+    ".npmignore"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
