@@ -30,6 +30,7 @@ import {
   withTimeout,
   resolvePythonCommand,
   prepareLocalPort,
+  ensureLocalRuntime,
 } from "./process-manager.js";
 import {
   createMemoryOpenVikingContextEngine,
@@ -50,12 +51,12 @@ type HookAgentContext = {
   sessionKey?: string;
 };
 
-type SessionAgentLookup = {
+type SessionAgentLookup = 
   agentId?: string;
   sessionId?: string;
   sessionKey?: string;
-  ovSessionId?: string;
-};
+  ovSessionId?: string
+;
 
 type SessionAgentResolveBranch =
   | "session_resolved"
@@ -1111,7 +1112,18 @@ const contextEnginePlugin = {
           const actualPort = await prepareLocalPort(cfg.port, api.logger);
           const baseUrl = `http://127.0.0.1:${actualPort}`;
 
-          const pythonCmd = resolvePythonCommand(api.logger);
+          const rawPythonCmd = resolvePythonCommand(api.logger);
+
+          const runtimeCheck = await ensureLocalRuntime(
+            rawPythonCmd, cfg.configPath, actualPort, api.logger,
+          );
+          if (!runtimeCheck.installed) {
+            api.logger.warn(
+              "openviking: package not available after auto-install attempt; " +
+              "server spawn will proceed but may fail — run `pip install openviking` manually",
+            );
+          }
+          const pythonCmd = runtimeCheck.pythonCmd;
 
           // Inherit system environment; optionally override Go/Python paths via env vars
           const pathSep = IS_WIN ? ";" : ":";

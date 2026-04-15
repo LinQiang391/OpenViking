@@ -1,8 +1,9 @@
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
+import { writeFile, mkdir } from "node:fs/promises";
 import { Socket } from "node:net";
-import { platform } from "node:os";
-import type { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { homedir, platform } from "node:os";
 
 export const IS_WIN = platform() === "win32";
 
@@ -354,4 +355,236 @@ export function resolvePythonCommand(logger: ProcessLogger): string {
   }
 
   return pythonCmd;
+}
+
+// ---------------------------------------------------------------------------
+// Local runtime auto-detection and installation
+// ---------------------------------------------------------------------------
+
+function checkPythonVersion(pythonCmd: string): { ok: boolean; version?: string; error?: string } {
+  try {
+    const out = execSync(
+      `"${pythonCmd}" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`,
+      { encoding: "utf-8", shell: IS_WIN ? "cmd.exe" : "/bin/sh", timeout: 10_000 },
+    ).trim();
+    const [major, minor] = out.split(".").map(Number);
+    if (major < 3 || (major === 3 && minor < 10)) {
+      return { ok: false, error: `Python ${out} too old, need >= 3.10` };
+    }
+    return { ok: true, version: out };
+  } catch {
+    return { ok: false, error: "Python not found or failed to execute" };
+  }
+}
+
+function isOpenVikingImportable(pythonCmd: string): boolean {
+  try {
+    execSync(`"${pythonCmd}" -c "import openviking"`, {
+      encoding: "utf-8",
+      shell: IS_WIN ? "cmd.exe" : "/bin/sh",
+      timeout: 15_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runAsync(
+  cmd: string,
+  args: readonly string[],
+  opts?: { shell?: boolean },
+): Promise<{ code: number; out: string; err: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: opts?.shell ?? false,
+    });
+    let out = "";
+    let errOut = "";
+    child.stdout?.on("data", (chunk: Buffer) => { out += String(chunk); });
+    child.stderr?.on("data", (chunk: Buffer) => { errOut += String(chunk); });
+    child.on("error", (error: Error) => resolve({ code: -1, out: "", err: String(error) }));
+    child.on("close", (code: number | null) => resolve({ code: code ?? -1, out: out.trim(), err: errOut.trim() }));
+  });
+}
+
+const DEFAULT_PIP_MIRROR = "https://mirrors.volces.com/pypi/simple/";
+const OFFICIAL_PYPI = "https://pypi.org/simple/";
+
+async function pipInstallViaVenv(
+  pythonCmd: string,
+  logger: ProcessLogger,
+  pipIndex: string,
+): Promise<{ ok: boolean; venvPy?: string }> {
+  const ovDir = join(homedir(), ".openviking");
+  const venvDir = join(ovDir, "venv");
+  const venvPy = IS_WIN
+    ? join(venvDir, "Scripts", "python.exe")
+    : join(venvDir, "bin", "python");
+
+  if (existsSync(venvPy)) {
+    const check = await runAsync(venvPy, ["-c", "import openviking"]);
+    if (check.code === 0) {
+      logger.info?.("openviking: package already present in existing venv");
+      return { ok: true, venvPy };
+    }
+    const upd = await runAsync(venvPy, ["-m", "pip", "install", "-U", "openviking", "-i", pipIndex]);
+    if (upd.code === 0) {
+      logger.info?.("openviking: installed into existing venv");
+      return { ok: true, venvPy };
+    }
+  }
+
+  await mkdir(ovDir, { recursive: true });
+  const vc = await runAsync(pythonCmd, ["-m", "venv", venvDir]);
+  if (vc.code !== 0) {
+    logger.warn?.(`openviking: venv creation failed — ${vc.err}`);
+    return { ok: false };
+  }
+
+  const inst = await runAsync(venvPy, ["-m", "pip", "install", "-U", "openviking", "-i", pipIndex]);
+  if (inst.code === 0) {
+    logger.info?.("openviking: installed into new venv");
+    return { ok: true, venvPy };
+  }
+  logger.warn?.(`openviking: venv pip install failed — ${inst.err}`);
+  return { ok: false };
+}
+
+async function pipInstallOpenViking(
+  pythonCmd: string,
+  logger: ProcessLogger,
+): Promise<{ ok: boolean; effectivePython: string }> {
+  const pipIndex = process.env.PIP_INDEX_URL || DEFAULT_PIP_MIRROR;
+
+  logger.info?.(`openviking: running pip install openviking (index: ${pipIndex})...`);
+  const r = await runAsync(pythonCmd, ["-m", "pip", "install", "-U", "openviking", "-i", pipIndex]);
+  if (r.code === 0) {
+    logger.info?.("openviking: pip install succeeded");
+    return { ok: true, effectivePython: pythonCmd };
+  }
+
+  const combined = `${r.out}\n${r.err}`;
+
+  if (/externally.managed/i.test(combined)) {
+    logger.info?.("openviking: externally-managed Python, trying venv...");
+    const venv = await pipInstallViaVenv(pythonCmd, logger, pipIndex);
+    if (venv.ok && venv.venvPy) {
+      process.env.OPENVIKING_PYTHON = venv.venvPy;
+      return { ok: true, effectivePython: venv.venvPy };
+    }
+  }
+
+  if (pipIndex !== OFFICIAL_PYPI && !process.env.PIP_INDEX_URL) {
+    logger.info?.("openviking: mirror failed, retrying with official PyPI...");
+    const fb = await runAsync(pythonCmd, ["-m", "pip", "install", "-U", "openviking", "-i", OFFICIAL_PYPI]);
+    if (fb.code === 0) {
+      logger.info?.("openviking: pip install succeeded (official PyPI)");
+      return { ok: true, effectivePython: pythonCmd };
+    }
+  }
+
+  logger.warn?.(`openviking: pip install failed — ${r.err || r.out}`);
+  return { ok: false, effectivePython: pythonCmd };
+}
+
+async function generateMinimalOvConf(
+  configPath: string,
+  port: number,
+  logger: ProcessLogger,
+): Promise<boolean> {
+  try {
+    const ovDir = dirname(configPath);
+    const workspace = join(ovDir, "data");
+    await mkdir(ovDir, { recursive: true });
+    await mkdir(workspace, { recursive: true });
+
+    const conf = {
+      server: { host: "127.0.0.1", port, root_api_key: null, cors_origins: ["*"] },
+      storage: {
+        workspace,
+        vectordb: { name: "context", backend: "local", project: "default" },
+        agfs: {
+          port: Math.max(1, port - 100),
+          log_level: "warn",
+          backend: "local",
+          timeout: 10,
+          retry_times: 3,
+        },
+      },
+      log: {
+        level: "WARNING",
+        format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        output: "file",
+        rotation: true,
+        rotation_days: 3,
+        rotation_interval: "midnight",
+      },
+      embedding: { dense: { provider: "local", model: "bge-small-zh-v1.5", dimension: 512 } },
+      vlm: {
+        provider: "volcengine",
+        api_key: null,
+        model: "doubao-seed-2-0-pro-260215",
+        api_base: "https://ark.cn-beijing.volces.com/api/v3",
+        temperature: 0.1,
+        max_retries: 3,
+      },
+    };
+
+    await writeFile(configPath, JSON.stringify(conf, null, 2) + "\n", "utf8");
+    logger.info?.(`openviking: generated ov.conf → ${configPath}`);
+    return true;
+  } catch (err) {
+    logger.warn?.(`openviking: failed to generate ov.conf — ${String(err)}`);
+    return false;
+  }
+}
+
+export interface EnsureRuntimeResult {
+  pythonCmd: string;
+  installed: boolean;
+  ovConfCreated: boolean;
+}
+
+/**
+ * Pre-startup check for local mode: verify Python, install openviking
+ * package if absent, and create a minimal ov.conf when missing.
+ *
+ * Returns the (possibly updated) python command if a venv was used.
+ * On any failure the function logs a warning but never throws — the
+ * caller's existing spawn error-handling still applies.
+ */
+export async function ensureLocalRuntime(
+  pythonCmd: string,
+  configPath: string,
+  port: number,
+  logger: ProcessLogger,
+): Promise<EnsureRuntimeResult> {
+  const pyCheck = checkPythonVersion(pythonCmd);
+  if (!pyCheck.ok) {
+    logger.warn?.(`openviking: runtime check — ${pyCheck.error}`);
+    return { pythonCmd, installed: false, ovConfCreated: false };
+  }
+  logger.info?.(`openviking: Python ${pyCheck.version} ✓`);
+
+  let effectivePython = pythonCmd;
+  let installed = isOpenVikingImportable(pythonCmd);
+
+  if (!installed) {
+    logger.info?.("openviking: package not found, attempting automatic installation...");
+    const pip = await pipInstallOpenViking(pythonCmd, logger);
+    effectivePython = pip.effectivePython;
+    installed = pip.ok && isOpenVikingImportable(effectivePython);
+  } else {
+    logger.info?.("openviking: package detected ✓");
+  }
+
+  let ovConfCreated = false;
+  if (!existsSync(configPath)) {
+    logger.info?.(`openviking: ${configPath} not found, generating minimal config...`);
+    ovConfCreated = await generateMinimalOvConf(configPath, port, logger);
+  }
+
+  return { pythonCmd: effectivePython, installed, ovConfCreated };
 }
