@@ -12,12 +12,25 @@ export type MemoryOpenVikingConfig = {
   baseUrl?: string;
   agentId?: string;
   apiKey?: string;
+  /** Tenant account ID. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key. */
+  accountId?: string;
+  /** Tenant user ID. Only needed when using root key or trusted auth mode. */
+  userId?: string;
+  /**
+   * Controls how agent space is computed.
+   * "user_agent" (default): space = hash(userId + agentId) — per-user per-agent isolation.
+   * "agent": space = hash(agentId) — same agentId shares space across users within account.
+   * Must match the server's memory.agent_scope_mode setting.
+   */
+  agentScopeMode?: "user_agent" | "agent";
   targetUri?: string;
   timeoutMs?: number;
   autoCapture?: boolean;
   captureMode?: "semantic" | "keyword";
   captureMaxLength?: number;
   autoRecall?: boolean;
+  /** Include resources in auto-recall and default memory_recall search. Default false. */
+  recallResources?: boolean;
   recallLimit?: number;
   recallScoreThreshold?: number;
   recallMaxContentChars?: number;
@@ -148,12 +161,16 @@ export const memoryOpenVikingConfigSchema = {
         "baseUrl",
         "agentId",
         "apiKey",
+        "accountId",
+        "userId",
+        "agentScopeMode",
         "targetUri",
         "timeoutMs",
         "autoCapture",
         "captureMode",
         "captureMaxLength",
         "autoRecall",
+        "recallResources",
         "recallLimit",
         "recallScoreThreshold",
         "recallMaxContentChars",
@@ -197,6 +214,19 @@ export const memoryOpenVikingConfigSchema = {
       throw new Error(`openviking captureMode must be "semantic" or "keyword"`);
     }
 
+    const accountId =
+      typeof cfg.accountId === "string" && cfg.accountId.trim()
+        ? cfg.accountId.trim()
+        : (process.env.OPENVIKING_ACCOUNT_ID?.trim() || "");
+    const userId =
+      typeof cfg.userId === "string" && cfg.userId.trim()
+        ? cfg.userId.trim()
+        : (process.env.OPENVIKING_USER_ID?.trim() || "");
+
+    const rawAgentScope = cfg.agentScopeMode ?? process.env.OPENVIKING_AGENT_SCOPE_MODE;
+    const agentScopeMode =
+      rawAgentScope === "agent" ? "agent" as const : "user_agent" as const;
+
     return {
       mode,
       configPath,
@@ -204,6 +234,9 @@ export const memoryOpenVikingConfigSchema = {
       baseUrl: resolvedBaseUrl,
       agentId: resolveAgentId(cfg.agentId),
       apiKey: rawApiKey ? resolveEnvVars(rawApiKey) : "",
+      accountId,
+      userId,
+      agentScopeMode,
       targetUri: typeof cfg.targetUri === "string" ? cfg.targetUri : DEFAULT_TARGET_URI,
       timeoutMs: Math.max(1000, Math.floor(toNumber(cfg.timeoutMs, DEFAULT_TIMEOUT_MS))),
       autoCapture: cfg.autoCapture !== false,
@@ -213,6 +246,7 @@ export const memoryOpenVikingConfigSchema = {
         Math.min(200_000, Math.floor(toNumber(cfg.captureMaxLength, DEFAULT_CAPTURE_MAX_LENGTH))),
       ),
       autoRecall: cfg.autoRecall !== false,
+      recallResources: cfg.recallResources === true || envFlag("OPENVIKING_RECALL_RESOURCES"),
       recallLimit: Math.max(1, Math.floor(toNumber(cfg.recallLimit, DEFAULT_RECALL_LIMIT))),
       recallScoreThreshold: Math.min(
         1,
@@ -304,6 +338,24 @@ export const memoryOpenVikingConfigSchema = {
       placeholder: "${OPENVIKING_API_KEY}",
       help: "Optional API key for OpenViking server",
     },
+    accountId: {
+      label: "Account ID",
+      placeholder: "(derived from API key)",
+      help: "Tenant account ID. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key.",
+      advanced: true,
+    },
+    userId: {
+      label: "User ID",
+      placeholder: "(derived from API key)",
+      help: "Tenant user ID. Only needed when using root key or trusted auth mode.",
+      advanced: true,
+    },
+    agentScopeMode: {
+      label: "Agent Scope Mode",
+      placeholder: "user_agent",
+      help: 'Controls agent space isolation. "user_agent" (default): each user+agent pair gets a separate space. "agent": same agentId shares space across users. Must match server memory.agent_scope_mode.',
+      advanced: true,
+    },
     targetUri: {
       label: "Search Target URI",
       placeholder: DEFAULT_TARGET_URI,
@@ -333,6 +385,11 @@ export const memoryOpenVikingConfigSchema = {
     autoRecall: {
       label: "Auto-Recall",
       help: "Inject relevant OpenViking memories into agent context",
+    },
+    recallResources: {
+      label: "Recall Resources",
+      help: "Include resources (viking://resources) in auto-recall and default memory_recall search. Enables account-level shared knowledge retrieval.",
+      advanced: true,
     },
     recallLimit: {
       label: "Recall Limit",

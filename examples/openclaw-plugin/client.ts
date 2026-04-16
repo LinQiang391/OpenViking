@@ -27,6 +27,7 @@ export type FindResult = {
 
 export type CaptureMode = "semantic" | "keyword";
 export type ScopeName = "user" | "agent";
+export type AgentScopeMode = "user_agent" | "agent";
 export type RuntimeIdentity = {
   userId: string;
   agentId: string;
@@ -224,6 +225,12 @@ export class OpenVikingClient {
     private readonly userId: string = "",
     /** When set, logs routing for find + session writes (tenant headers + paths; never apiKey). */
     private readonly routingDebugLog?: (message: string) => void,
+    /**
+     * Controls how agent space is computed.
+     * "user_agent" (default): space = md5(userId:agentId) — per-user per-agent isolation.
+     * "agent": space = md5(agentId) — same agentId shares space across users within account.
+     */
+    private readonly agentScopeMode: AgentScopeMode = "user_agent",
   ) {}
 
   getDefaultAgentId(): string {
@@ -343,11 +350,15 @@ export class OpenVikingClient {
     }
 
     const identity = await this.getRuntimeIdentity(agentId);
+    const agentSpaceKey =
+      this.agentScopeMode === "agent"
+        ? identity.agentId
+        : `${identity.userId}:${identity.agentId}`;
     const fallbackSpace =
-      scope === "user" ? identity.userId : md5Short(`${identity.userId}:${identity.agentId}`);
+      scope === "user" ? identity.userId : md5Short(agentSpaceKey);
     const reservedDirs = scope === "user" ? USER_STRUCTURE_DIRS : AGENT_STRUCTURE_DIRS;
     const preferredSpace =
-      scope === "user" ? identity.userId : md5Short(`${identity.userId}:${identity.agentId}`);
+      scope === "user" ? identity.userId : md5Short(agentSpaceKey);
 
     const saveSpace = (space: string) => {
       const existing = this.spaceCache.get(effectiveAgentId) ?? {};
