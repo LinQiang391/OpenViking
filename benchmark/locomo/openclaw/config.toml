@@ -1,7 +1,7 @@
 # LoCoMo Benchmark - OpenClaw 记忆系统测试配置
 # 将此文件复制为 config.local.toml，修改后使用
 #
-# 支持三种记忆模式（memory.mode）：
+# 支持四种记忆模式（memory.mode）：
 #   memcore    - OpenClaw 自带记忆系统（sessions.compact + memoryFlush）
 #   openviking - OpenViking 外部记忆服务（session → messages → commit）
 #   both       - 同时使用两套记忆系统
@@ -9,82 +9,96 @@
 
 [general]
 name = "memcore-embedding-upstream-prompt"  # 测试名称（归档目录名）
-openclaw_dir = "~/.openclaw"             # OpenClaw 安装目录
-agent_id = "locomo-eval"                 # 测试用 Agent ID
-data_file = "../data/locomo10.json"      # LoCoMo 数据文件路径
+openclaw_dir = "~/.openclaw"                # OpenClaw 数据目录
+agent_id = "locomo-eval"                    # 测试用 Agent ID
+data_file = "../data/locomo10.json"         # LoCoMo 数据文件路径（相对于本文件）
 
 [memory]
-mode = "memcore"                         # "memcore" | "openviking" | "both" | "none"
+mode = "memcore"                            # ← 必填：选择记忆模式 "memcore" | "openviking" | "both" | "none"
 
+# ── VLM（大语言模型）配置 ──
+# OpenClaw Gateway 使用此模型处理对话、compact、memoryFlush 等
 [vlm]
-provider = "volcengine-plan"
-model_id = "doubao-seed-2-0-code-preview-260215"
-api = "anthropic-messages"
-api_key = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
-base_url = "https://ark.cn-beijing.volces.com/api/coding"
+provider = "volcengine-plan"                # ← 必填：模型提供商
+model_id = "doubao-seed-2-0-code-preview-260215"  # ← 必填：模型 ID
+api = "anthropic-messages"                  # API 协议格式
+api_key = ""                                # ← 必填：VLM API Key
+base_url = "https://ark.cn-beijing.volces.com/api/coding"  # ← 必填：VLM API 地址
 
+# ── Embedding 模型配置（仅 memcore / both 模式生效）──
 [embedding]
-enabled = true                           # false = 不使用 embedding（仅文件读取）
-provider = "openai"
-model = "doubao-embedding-vision-250615"
-api_key = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
-base_url = "https://ark.cn-beijing.volces.com/api/coding/v3/"
+enabled = true                              # false = 不使用 embedding（仅文件读取）
+provider = "openai"                         # ← 必填：embedding 提供商
+model = "doubao-embedding-vision-250615"    # ← 必填：embedding 模型名
+api_key = ""                                # ← 必填：Embedding API Key
+base_url = "https://ark.cn-beijing.volces.com/api/coding/v3/"  # ← 必填：Embedding API 地址
 
+# ── memcore 记忆搜索参数（仅 memcore / both 模式生效）──
 [memory_search]
-hybrid_enabled = true
-vector_weight = 0.7
-text_weight = 0.3
-min_score = 0                            # 0 = 纯 top-k 模式（推荐）
-max_results = 6
+hybrid_enabled = true                       # 混合搜索（向量 + 文本）
+vector_weight = 0.7                         # 向量搜索权重
+text_weight = 0.3                           # 文本搜索权重
+min_score = 0                               # 0 = 纯 top-k 模式（推荐）
+max_results = 6                             # 返回结果数上限
 
+# ── OpenClaw Gateway 配置 ──
 [gateway]
-port = 18789
-token = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
+port = 18789                                # Gateway 监听端口
+token = ""                                  # ← 必填：Gateway 认证 Token
 
+# ── Compaction 配置（仅 memcore / both 模式生效）──
 [compaction]
-memory_flush_enabled = true              # memcore 模式：reply pipeline 中触发记忆持久化
-# reserve_tokens_floor = 20000           # 保留 token 下限（可选）
+memory_flush_enabled = true                 # memcore 模式：reply pipeline 中触发记忆持久化
+# reserve_tokens_floor = 20000              # 保留 token 下限（可选）
 
-[openviking]
+# ── OpenViking 插件配置（openviking / both 模式需要填写）──
 # 变量名与 openclaw.json plugins.entries.openviking 插件配置一致
+[openviking]
 # pluginPath = "~/OpenViking/examples/openclaw-plugin"  # 自定义插件路径（可随时切换版本）
-mode = "remote"                          # "remote" = 连接已有 OV 服务；"local" = 插件自动启动
-baseUrl = "http://127.0.0.1:8080"       # OpenViking 服务地址（remote 模式）
-apiKey = ""                              # OpenViking API Key（留空则不传）
-autoCapture = true                       # afterTurn 自动抓取对话写入 OV session
-autoRecall = true                        # assemble 自动注入相关记忆
-commitTokenThreshold = 0                 # 0 = 每轮都 commit（测评推荐）
-ingestReplyAssist = true                 # 会话注入时加轻量回复指令，减少 NO_REPLY
-# recallLimit = 6                        # 召回记忆条数上限
-# recallTokenBudget = 2000               # 召回记忆 token 预算
+mode = "remote"                             # "remote" = 连接已有 OV 服务；"local" = 插件自动启动
+baseUrl = "http://127.0.0.1:8080"          # ← openviking 模式必填：OpenViking 服务地址
+apiKey = ""                                 # ← openviking 模式必填：OpenViking API Key
+autoCapture = true                          # afterTurn 自动抓取对话写入 OV session
+autoRecall = true                           # assemble 自动注入相关记忆
+commitTokenThreshold = 0                    # 0 = 每轮都 commit（测评推荐）
+ingestReplyAssist = true                    # 会话注入时加轻量回复指令，减少 NO_REPLY
+# recallLimit = 6                           # 召回记忆条数上限
+# recallTokenBudget = 2000                  # 召回记忆 token 预算
 
+# ── Ingest 阶段参数 ──
 [ingest]
-user = "eval-1"
-compact = true                           # 每轮注入后触发 compact / commit
-sample = 0                               # conv-26
+user = "eval-1"                             # 注入使用的用户名
+compact = true                              # 每轮注入后触发 compact / commit
+sample = 0                                  # 数据集 sample 索引（0-based），-1 = 全部
+# sessions = "1-4"                          # session 范围（可选），如 "1-4" 或 "3"
 
+# ── QA 阶段参数 ──
 [qa]
-parallel = 5
-sample = 0                               # conv-26
-count = -1                               # -1 = 全部问题
+parallel = 5                                # 并发问答数
+sample = 0                                  # 数据集 sample 索引（0-based），-1 = 全部
+count = -1                                  # 每个 sample 的问题数，-1 = 全部
 
+# ── Judge 评分配置 ──
 [judge]
-model = "doubao-seed-2-0-code-preview-260215"
-api_key = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
-base_url = "https://ark.cn-beijing.volces.com/api/coding/v3"
-parallel = 10
+model = "doubao-seed-2-0-code-preview-260215"  # ← 必填：评分使用的 LLM 模型
+api_key = ""                                   # ← 必填：评分 LLM 的 API Key
+base_url = "https://ark.cn-beijing.volces.com/api/coding/v3"  # ← 必填：评分 LLM API 地址
+parallel = 10                               # 并发评分数
 
+# ── 归档配置 ──
 [archive]
-enabled = true                           # 测试完成后自动归档
+enabled = true                              # 测试完成后自动归档结果到 archive/ 目录
 
+# ── 步骤开关 ──
+# 可单独关闭某些步骤，适用于服务已在运行或需要跳过的场景
 [steps]
-stop_gateway = true                      # 停止已有 OpenClaw Gateway
-stop_openviking = true                   # 停止已有 OpenViking（仅 openviking/both 模式）
-clean = true                             # 清理环境
-start_gateway = true                     # 自动启动 OpenClaw Gateway
-start_openviking = true                  # 自动启动 OpenViking 服务（仅 openviking/both + remote 模式）
-ingest = true                            # 注入对话
-qa = true                                # QA 测试
-judge = true                             # LLM 打分
-stat = true                              # 统计结果
-archive = true                           # 归档数据
+stop_gateway = true                         # 停止已有 OpenClaw Gateway
+stop_openviking = true                      # 停止已有 OpenViking（仅 openviking/both 模式）
+clean = true                                # 清理旧的 session 和 memory 文件
+start_gateway = true                        # 自动启动 OpenClaw Gateway
+start_openviking = true                     # 自动启动 OpenViking 服务（仅 openviking/both + remote 模式）
+ingest = true                               # 注入对话
+qa = true                                   # QA 问答测试
+judge = true                                # LLM 评分
+stat = true                                 # 统计正确率
+archive = true                              # 归档到 archive/ 目录
