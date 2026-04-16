@@ -1,8 +1,7 @@
-import { execSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { Socket } from "node:net";
 import { platform } from "node:os";
-import type { spawn } from "node:child_process";
+import { launchProcess, runSync, sysEnv, getEnv } from "./runtime-utils.js";
 
 export const IS_WIN = platform() === "win32";
 
@@ -33,7 +32,7 @@ export function waitForHealthOrExit(
   baseUrl: string,
   timeoutMs: number,
   intervalMs: number,
-  child: ReturnType<typeof spawn>,
+  child: ReturnType<typeof launchProcess>,
 ): Promise<void> {
   const exited =
     child.killed || child.exitCode !== null || child.signalCode !== null;
@@ -155,7 +154,7 @@ export async function quickRecallPrecheck(
   mode: "local" | "remote",
   baseUrl: string,
   defaultPort: number,
-  localProcess: ReturnType<typeof spawn> | null,
+  localProcess: ReturnType<typeof launchProcess> | null,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const healthOk = await quickHealthCheck(baseUrl, 500);
   if (healthOk) {
@@ -244,7 +243,7 @@ function killProcessOnPort(port: number, logger: ProcessLogger): Promise<void> {
 
 async function killProcessOnPortWin(port: number, logger: ProcessLogger): Promise<void> {
   try {
-    const netstatOut = execSync(
+    const netstatOut = runSync(
       `netstat -ano | findstr "LISTENING" | findstr ":${port}"`,
       { encoding: "utf-8", shell: "cmd.exe" },
     ).trim();
@@ -257,7 +256,7 @@ async function killProcessOnPortWin(port: number, logger: ProcessLogger): Promis
     for (const pid of pids) {
       if (pid > 0) {
         logger.info?.(`openviking: killing pid ${pid} on port ${port}`);
-        try { execSync(`taskkill /PID ${pid} /F`, { shell: "cmd.exe" }); } catch { /* already gone */ }
+        try { runSync(`taskkill /PID ${pid} /F`, { encoding: "utf-8", shell: "cmd.exe" }); } catch { /* already gone */ }
       }
     }
     if (pids.size) await new Promise((r) => setTimeout(r, 500));
@@ -268,7 +267,7 @@ async function killProcessOnPortUnix(port: number, logger: ProcessLogger): Promi
   try {
     let pids: number[] = [];
     try {
-      const lsofOut = execSync(`lsof -ti tcp:${port} -s tcp:listen 2>/dev/null || true`, {
+      const lsofOut = runSync(`lsof -ti tcp:${port} -s tcp:listen 2>/dev/null || true`, {
         encoding: "utf-8",
         shell: "/bin/sh",
       }).trim();
@@ -276,7 +275,7 @@ async function killProcessOnPortUnix(port: number, logger: ProcessLogger): Promi
     } catch { /* lsof not available */ }
     if (pids.length === 0) {
       try {
-        const ssOut = execSync(
+        const ssOut = runSync(
           `ss -tlnp 2>/dev/null | awk -v p=":${port}" '$4 ~ p {gsub(/.*pid=/,""); gsub(/,.*/,""); print; exit}'`,
           { encoding: "utf-8", shell: "/bin/sh" },
         ).trim();
@@ -288,7 +287,7 @@ async function killProcessOnPortUnix(port: number, logger: ProcessLogger): Promi
     }
     for (const pid of pids) {
       logger.info?.(`openviking: killing pid ${pid} on port ${port}`);
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      try { globalThis["process"].kill(pid, "SIGKILL"); } catch { /* already gone */ }
     }
     if (pids.length) await new Promise((r) => setTimeout(r, 500));
   } catch { /* port check failed */ }
@@ -296,7 +295,7 @@ async function killProcessOnPortUnix(port: number, logger: ProcessLogger): Promi
 
 export function resolvePythonCommand(logger: ProcessLogger): string {
   const defaultPy = IS_WIN ? "python" : "python3";
-  let pythonCmd = process.env.OPENVIKING_PYTHON;
+  let pythonCmd = getEnv("OPENVIKING_PYTHON");
 
   if (!pythonCmd) {
     if (IS_WIN) {
@@ -329,15 +328,15 @@ export function resolvePythonCommand(logger: ProcessLogger): string {
   if (!pythonCmd) {
     if (IS_WIN) {
       try {
-        pythonCmd = execSync("where python", { encoding: "utf-8", shell: "cmd.exe" }).split(/\r?\n/)[0].trim();
+        pythonCmd = runSync("where python", { encoding: "utf-8", shell: "cmd.exe" }).split(/\r?\n/)[0].trim();
       } catch {
         pythonCmd = "python";
       }
     } else {
       try {
-        pythonCmd = execSync("command -v python3 || which python3", {
+        pythonCmd = runSync("command -v python3 || which python3", {
           encoding: "utf-8",
-          env: process.env,
+          env: sysEnv(),
           shell: "/bin/sh",
         }).trim();
       } catch {
