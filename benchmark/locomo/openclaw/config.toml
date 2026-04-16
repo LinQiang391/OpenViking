@@ -1,24 +1,33 @@
-# LoCoMo Benchmark - OpenClaw MemCore 测试配置
+# LoCoMo Benchmark - OpenClaw 记忆系统测试配置
 # 将此文件复制为 config.local.toml，修改后使用
+#
+# 支持三种记忆模式（memory.mode）：
+#   memcore    - OpenClaw 自带记忆系统（sessions.compact + memoryFlush）
+#   openviking - OpenViking 外部记忆服务（session → messages → commit）
+#   both       - 同时使用两套记忆系统
+#   none       - 不使用任何记忆增强（基线对比）
 
 [general]
-name = "memcore-embedding-v1"            # 测试名称（归档目录名）
+name = "memcore-embedding-upstream-prompt"  # 测试名称（归档目录名）
 openclaw_dir = "~/.openclaw"             # OpenClaw 安装目录
 agent_id = "locomo-eval"                 # 测试用 Agent ID
 data_file = "../data/locomo10.json"      # LoCoMo 数据文件路径
+
+[memory]
+mode = "memcore"                         # "memcore" | "openviking" | "both" | "none"
 
 [vlm]
 provider = "volcengine-plan"
 model_id = "doubao-seed-2-0-code-preview-260215"
 api = "anthropic-messages"
-api_key = "YOUR_API_KEY"
+api_key = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
 base_url = "https://ark.cn-beijing.volces.com/api/coding"
 
 [embedding]
 enabled = true                           # false = 不使用 embedding（仅文件读取）
 provider = "openai"
 model = "doubao-embedding-vision-250615"
-api_key = "YOUR_API_KEY"                 # 可与 vlm.api_key 相同
+api_key = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
 base_url = "https://ark.cn-beijing.volces.com/api/coding/v3/"
 
 [memory_search]
@@ -30,21 +39,36 @@ max_results = 6
 
 [gateway]
 port = 18789
-token = "YOUR_GATEWAY_TOKEN"
+token = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
+
+[compaction]
+memory_flush_enabled = true              # memcore 模式：reply pipeline 中触发记忆持久化
+# reserve_tokens_floor = 20000           # 保留 token 下限（可选）
+
+[openviking]
+mode = "remote"                          # "remote" = 连接已有 OV 服务；"local" = 插件自动启动
+base_url = "http://127.0.0.1:8080"      # OpenViking 服务地址（remote 模式）
+api_key = ""                             # OpenViking API Key（留空则不传）
+auto_capture = true                      # afterTurn 自动抓取对话写入 OV session
+auto_recall = true                       # assemble 自动注入相关记忆
+commit_token_threshold = 0               # 0 = 每轮都 commit（测评推荐）
+ingest_reply_assist = true               # 会话注入时加轻量回复指令，减少 NO_REPLY
+# recall_limit = 6                       # 召回记忆条数上限
+# recall_token_budget = 2000             # 召回记忆 token 预算
 
 [ingest]
 user = "eval-1"
-compact = true                           # 每轮注入后触发记忆写入
-sample = -1                              # -1 = 全部，0 = 只测 sample 0
+compact = true                           # 每轮注入后触发 compact / commit
+sample = 0                               # conv-26
 
 [qa]
 parallel = 5
-sample = -1                              # -1 = 全部
+sample = 0                               # conv-26
 count = -1                               # -1 = 全部问题
 
 [judge]
-model = "doubao-seed-2-0-pro-260215"
-api_key = "YOUR_API_KEY"                 # 裁判模型 API key
+model = "doubao-seed-2-0-code-preview-260215"
+api_key = "1dee2cd7-c95a-4f97-89f8-a9a84d67f778"
 base_url = "https://ark.cn-beijing.volces.com/api/coding/v3"
 parallel = 10
 
@@ -52,7 +76,11 @@ parallel = 10
 enabled = true                           # 测试完成后自动归档
 
 [steps]
+stop_gateway = true                      # 停止已有 OpenClaw Gateway
+stop_openviking = true                   # 停止已有 OpenViking（仅 openviking/both 模式）
 clean = true                             # 清理环境
+start_gateway = true                     # 自动启动 OpenClaw Gateway
+start_openviking = true                  # 自动启动 OpenViking 服务（仅 openviking/both + remote 模式）
 ingest = true                            # 注入对话
 qa = true                                # QA 测试
 judge = true                             # LLM 打分

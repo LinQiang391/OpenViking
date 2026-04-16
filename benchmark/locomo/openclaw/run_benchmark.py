@@ -31,9 +31,10 @@ except ModuleNotFoundError:
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ALL_STEPS = ["stop_gateway", "clean", "start_gateway", "ingest", "snapshot_ingest", "qa", "judge", "stat", "archive"]
+ALL_STEPS = ["stop_gateway", "stop_openviking", "clean", "start_gateway", "start_openviking", "ingest", "snapshot_ingest", "qa", "judge", "stat", "archive"]
 INGEST_STAGING_DIR = os.path.join(SCRIPT_DIR, ".ingest_sessions_staging")
 _gateway_proc = None
+_openviking_proc = None
 
 
 def load_config(config_path: str) -> dict:
@@ -63,6 +64,9 @@ def generate_openclaw_json(cfg: dict) -> str:
     emb = cfg.get("embedding", {})
     mem = cfg.get("memory_search", {})
     gw = cfg["gateway"]
+
+    comp = cfg.get("compaction", {})
+    memory_mode = cfg.get("memory", {}).get("mode", "none")
 
     oc = {
         "agents": {
@@ -131,6 +135,35 @@ def generate_openclaw_json(cfg: dict) -> str:
             "query": query_cfg,
         }
 
+    if memory_mode in ("memcore", "both") and comp.get("memory_flush_enabled", False):
+        compaction_cfg = {"memoryFlush": {"enabled": True}}
+        reserve = comp.get("reserve_tokens_floor")
+        if reserve is not None:
+            compaction_cfg["reserveTokensFloor"] = reserve
+        oc["agents"]["defaults"]["compaction"] = compaction_cfg
+
+    if memory_mode in ("openviking", "both"):
+        ov = cfg.get("openviking", {})
+        ov_plugin_cfg = {
+            "enabled": True,
+            "mode": ov.get("mode", "remote"),
+            "baseUrl": ov.get("base_url", "http://127.0.0.1:8080"),
+            "autoCapture": ov.get("auto_capture", True),
+            "autoRecall": ov.get("auto_recall", True),
+            "commitTokenThreshold": ov.get("commit_token_threshold", 0),
+            "ingestReplyAssist": ov.get("ingest_reply_assist", True),
+        }
+        api_key = ov.get("api_key", "")
+        if api_key:
+            ov_plugin_cfg["apiKey"] = api_key
+        recall_limit = ov.get("recall_limit")
+        if recall_limit is not None:
+            ov_plugin_cfg["recallLimit"] = recall_limit
+        recall_token_budget = ov.get("recall_token_budget")
+        if recall_token_budget is not None:
+            ov_plugin_cfg["recallTokenBudget"] = recall_token_budget
+        oc["plugins"]["entries"]["openviking"] = ov_plugin_cfg
+
     out_path = os.path.join(openclaw_dir, "openclaw.json")
     os.makedirs(openclaw_dir, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -195,13 +228,21 @@ def step_start_gateway(cfg: dict):
 
     generate_openclaw_json(cfg)
 
-    print(f"  Starting openclaw gateway on port {port}...")
-    _gateway_proc = subprocess.Popen(
-        ["openclaw", "gateway"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        shell=True,
-    )
+    print(f"  Starting openclaw gateway on port {port} (new console window)...")
+    if sys.platform == "win32":
+        _gateway_proc = subprocess.Popen(
+            "openclaw gateway",
+            shell=True,
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+    else:
+        log_path = os.path.join(SCRIPT_DIR, "gateway.log")
+        log_file = open(log_path, "w", encoding="utf-8")
+        _gateway_proc = subprocess.Popen(
+            ["openclaw", "gateway"],
+            stdout=log_file,
+            stderr=log_file,
+        )
 
     import urllib.request
     url = f"http://127.0.0.1:{port}/v1/responses"
@@ -221,6 +262,94 @@ def step_start_gateway(cfg: dict):
             return
 
     print(f"  [WARN] Gateway may not be ready after {max_wait}s, proceeding anyway.")
+
+
+def step_stop_openviking(cfg: dict):
+    """Stop any running OpenViking server process."""
+    global _openviking_proc
+    memory_mode = cfg.get("memory", {}).get("mode", "none")
+    if memory_mode not in ("openviking", "both"):
+        print(f"  Skipping (memory mode={memory_mode}, OpenViking not needed).")
+        return
+
+    ov = cfg.get("openviking", {})
+    base_url = ov.get("base_url", "http://127.0.0.1:8080")
+
+    try:
+        from urllib.parse import urlparse
+        port = urlparse(base_url).port or 8080
+    except Exception:
+        port = 8080
+
+    pid = _find_gateway_pid(port)
+    if pid:
+        print(f"  Stopping OpenViking (PID {pid}) on port {port}...")
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], shell=True, capture_output=True)
+            else:
+                import signal
+                os.kill(pid, signal.SIGTERM)
+            time.sleep(2)
+            print(f"  OpenViking stopped.")
+        except Exception as e:
+            print(f"  [WARN] Could not stop OpenViking: {e}")
+    else:
+        print(f"  No OpenViking found on port {port}.")
+
+    if _openviking_proc and _openviking_proc.poll() is None:
+        _openviking_proc.terminate()
+        _openviking_proc.wait(timeout=5)
+        _openviking_proc = None
+
+
+def step_start_openviking(cfg: dict):
+    """Start OpenViking server in the background (only for openviking/both modes with remote config)."""
+    global _openviking_proc
+    memory_mode = cfg.get("memory", {}).get("mode", "none")
+    if memory_mode not in ("openviking", "both"):
+        print(f"  Skipping (memory mode={memory_mode}, OpenViking not needed).")
+        return
+
+    ov = cfg.get("openviking", {})
+    if ov.get("mode", "remote") == "local":
+        print(f"  Skipping (openviking.mode=local, plugin will auto-start OV server).")
+        return
+
+    base_url = ov.get("base_url", "http://127.0.0.1:8080")
+    print(f"  Starting OpenViking server (target: {base_url})...")
+
+    if sys.platform == "win32":
+        _openviking_proc = subprocess.Popen(
+            "openviking server start",
+            shell=True,
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+    else:
+        log_path = os.path.join(SCRIPT_DIR, "openviking.log")
+        log_file = open(log_path, "w", encoding="utf-8")
+        _openviking_proc = subprocess.Popen(
+            ["openviking", "server", "start"],
+            stdout=log_file,
+            stderr=log_file,
+        )
+
+    import urllib.request
+    health_url = f"{base_url}/health"
+    max_wait = 30
+    for i in range(max_wait):
+        time.sleep(1)
+        try:
+            req = urllib.request.Request(health_url)
+            resp = urllib.request.urlopen(req, timeout=2)
+            body = json.loads(resp.read())
+            if body.get("status") == "ok":
+                print(f"  OpenViking ready after {i+1}s.")
+                return
+        except Exception:
+            pass
+
+    print(f"  [WARN] OpenViking may not be ready after {max_wait}s, proceeding anyway.")
 
 
 def step_clean(cfg: dict):
@@ -262,16 +391,18 @@ def step_ingest(cfg: dict):
     ing = cfg["ingest"]
     gw = cfg["gateway"]
     gen = cfg["general"]
+    mem = cfg.get("memory", {})
     data_file = ing.get("data_file", gen.get("data_file", "../data/locomo10.json"))
+    memory_mode = mem.get("mode", "none")
 
     cmd = [
         "python", "eval.py", "ingest", data_file,
         "--token", gw["token"],
         "--agent-id", gen["agent_id"],
         "--user", ing.get("user", "eval-1"),
+        "--memory-mode", memory_mode,
     ]
-    if ing.get("compact", True):
-        cmd.append("--compact")
+
     if ing.get("clear_record", False):
         cmd.append("--clear-ingest-record")
 
@@ -283,7 +414,7 @@ def step_ingest(cfg: dict):
     if sessions:
         cmd.extend(["--sessions", str(sessions)])
 
-    run_cmd(cmd, "Ingest conversations")
+    run_cmd(cmd, f"Ingest conversations (memory={memory_mode})")
 
 
 def step_snapshot_ingest(cfg: dict):
@@ -298,7 +429,7 @@ def step_snapshot_ingest(cfg: dict):
     staging.mkdir(parents=True, exist_ok=True)
 
     moved = 0
-    for f in sorted(sessions_dir.glob("*.jsonl.ingest.*")):
+    for f in sorted(sessions_dir.glob("*.jsonl.*")):
         shutil.move(str(f), str(staging / f.name))
         moved += 1
 
@@ -366,7 +497,9 @@ def step_archive(cfg: dict):
 STEP_MAP = {
     "clean": step_clean,
     "stop_gateway": step_stop_gateway,
+    "stop_openviking": step_stop_openviking,
     "start_gateway": step_start_gateway,
+    "start_openviking": step_start_openviking,
     "ingest": step_ingest,
     "snapshot_ingest": step_snapshot_ingest,
     "qa": step_qa,
@@ -413,9 +546,11 @@ def main():
         sys.exit(1)
 
     cfg = load_config(config_path)
+    memory_mode = cfg.get("memory", {}).get("mode", "none")
     print(f"Config: {config_path}")
     print(f"Name:   {cfg['general']['name']}")
     print(f"Agent:  {cfg['general']['agent_id']}")
+    print(f"Memory: {memory_mode}")
 
     if args.generate_config_only:
         generate_openclaw_json(cfg)
@@ -428,9 +563,9 @@ def main():
         active_steps = [s for s in ALL_STEPS if steps_cfg.get(s, True)]
 
     if args.resume:
-        skip_on_resume = {"clean", "stop_gateway", "start_gateway", "snapshot_ingest"}
+        skip_on_resume = {"clean", "snapshot_ingest"}
         active_steps = [s for s in active_steps if s not in skip_on_resume]
-        print("[RESUME MODE] Skipping clean/gateway/snapshot_ingest, continuing from last checkpoint")
+        print("[RESUME MODE] Skipping clean/snapshot_ingest, services will restart, continuing from last checkpoint")
 
     if args.skip:
         skip = {s.strip() for s in args.skip.split(",")}
@@ -461,8 +596,16 @@ def main():
 
     total = time.time() - start
 
+    if _openviking_proc and _openviking_proc.poll() is None:
+        print("\n  Stopping OpenViking launched by this script...")
+        _openviking_proc.terminate()
+        try:
+            _openviking_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _openviking_proc.kill()
+
     if _gateway_proc and _gateway_proc.poll() is None:
-        print("\n  Stopping gateway launched by this script...")
+        print("  Stopping gateway launched by this script...")
         _gateway_proc.terminate()
         try:
             _gateway_proc.wait(timeout=10)

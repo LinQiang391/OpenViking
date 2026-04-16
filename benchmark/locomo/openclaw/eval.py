@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -379,10 +380,9 @@ def get_session_id(user: str, agent_id: str = "main") -> str | None:
         return None
 
 
-def reset_session(session_path: str, agent_id: str = "main", phase: str = "") -> str | None:
+def reset_session(session_path: str, agent_id: str = "main") -> str | None:
     """Rename the session .jsonl file with a timestamp suffix.
     Accepts either a session_id or a full path to the session file.
-    phase: optional label like 'ingest' or 'qa' inserted before the timestamp.
     Returns the new filename if successful, None otherwise.
     """
     if os.path.isabs(session_path) and os.path.exists(session_path):
@@ -396,8 +396,7 @@ def reset_session(session_path: str, agent_id: str = "main", phase: str = "") ->
         return None
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    suffix = f".{phase}.{timestamp}" if phase else f".{timestamp}"
-    dst = f"{src}{suffix}"
+    dst = f"{src}.{timestamp}"
     try:
         os.rename(src, dst)
         new_filename = os.path.basename(dst)
@@ -451,14 +450,13 @@ def calculate_usage_from_jsonl(jsonl_filename: str, agent_id: str = "main") -> d
 
 def send_message_with_retry(
     base_url: str, token: str, user: str, message: str, retries: int = 2,
-    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None,
-    store: bool = True
+    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None
 ) -> tuple[str, dict]:
     """Call send_message with up to `retries` retries on failure."""
     last_exc = None
     for attempt in range(retries + 1):
         try:
-            return send_message(base_url, token, user, message, agent_id, session_key, store)
+            return send_message(base_url, token, user, message, agent_id, session_key)
         except Exception as e:
             last_exc = e
             if attempt < retries:
@@ -468,8 +466,7 @@ def send_message_with_retry(
 
 def send_message(
     base_url: str, token: str, user: str, message: str,
-    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None,
-    store: bool = True
+    agent_id: str = DEFAULT_AGENT_ID, session_key: str | None = None
 ) -> tuple[str, dict]:
     """Send a single message to the OpenClaw responses API.
 
@@ -483,16 +480,13 @@ def send_message(
     }
     if session_key:
         headers["X-OpenClaw-Session-Key"] = session_key
-    model_value = f"openclaw:{agent_id}" if agent_id != "main" else "openclaw"
     payload = {
-        "model": model_value,
+        "model": "openclaw",
         "input": message,
         "stream": False,
     }
     if user:
         payload["user"] = user
-    if not store:
-        payload["store"] = False
 
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=6000)
@@ -512,12 +506,104 @@ def send_message(
     return extract_response_text(body), usage
 
 
-def _resolve_workspace(agent_id: str) -> str:
-    """Resolve the workspace directory for a given agent ID."""
-    openclaw_dir = os.path.expanduser("~/.openclaw")
-    if agent_id == "main":
-        return os.path.join(openclaw_dir, "workspace")
-    return os.path.join(openclaw_dir, f"workspace-{agent_id}")
+# ---------------------------------------------------------------------------
+# OpenClaw compact via WebSocket RPC
+# ---------------------------------------------------------------------------
+
+def trigger_openclaw_compact(
+    base_url: str, token: str, session_key: str, timeout: int = 300,
+) -> dict | None:
+    """Trigger OpenClaw sessions.compact via Gateway WebSocket RPC.
+
+    Connects to the gateway, performs the connect handshake, sends
+    sessions.compact {key}, waits for the result, then closes.
+    Returns the server payload dict on success, None on failure.
+    """
+    try:
+        import websocket  # websocket-client
+    except ImportError:
+        print(
+            "    [compact] websocket-client not installed, skipping compact\n"
+            "    [compact] Install with: pip install websocket-client",
+            file=sys.stderr,
+        )
+        return None
+
+    ws_url = base_url.replace("http://", "ws://").replace("https://", "wss://")
+
+    try:
+        ws = websocket.create_connection(ws_url, timeout=timeout)
+    except Exception as e:
+        print(f"    [compact] WebSocket connect failed: {e}", file=sys.stderr)
+        return None
+
+    try:
+        # 1. Server sends connect.challenge immediately after upgrade
+        challenge = json.loads(ws.recv())
+        if challenge.get("event") != "connect.challenge":
+            print(f"    [compact] Expected connect.challenge, got: {challenge}", file=sys.stderr)
+            return None
+
+        # 2. Handshake (protocol v3, control-ui identity for admin scope on local+token auth)
+        connect_id = str(uuid.uuid4())
+        ws.send(json.dumps({
+            "type": "req",
+            "id": connect_id,
+            "method": "connect",
+            "params": {
+                "minProtocol": 3,
+                "maxProtocol": 3,
+                "client": {
+                    "id": "openclaw-control-ui",
+                    "version": "1.0.0",
+                    "platform": sys.platform,
+                    "mode": "webchat",
+                },
+                "scopes": [
+                    "operator.admin", "operator.read", "operator.write",
+                ],
+                "auth": {"token": token},
+            },
+        }))
+
+        while True:
+            msg = json.loads(ws.recv())
+            if msg.get("type") == "res" and msg.get("id") == connect_id:
+                if not msg.get("ok"):
+                    err = msg.get("error", msg)
+                    print(f"    [compact] Handshake rejected: {err}", file=sys.stderr)
+                    return None
+                break
+
+        # 3. Send sessions.compact
+        compact_id = str(uuid.uuid4())
+        ws.send(json.dumps({
+            "type": "req",
+            "id": compact_id,
+            "method": "sessions.compact",
+            "params": {"key": session_key},
+        }))
+
+        while True:
+            msg = json.loads(ws.recv())
+            if msg.get("type") == "res" and msg.get("id") == compact_id:
+                payload = msg.get("payload", {})
+                if msg.get("ok"):
+                    compacted = payload.get("compacted", False)
+                    print(f"    [compact] OK (compacted={compacted})", file=sys.stderr)
+                else:
+                    err = msg.get("error", {})
+                    print(f"    [compact] Failed: {err}", file=sys.stderr)
+                return payload
+
+    except Exception as e:
+        print(f"    [compact] Error during compact RPC: {e}", file=sys.stderr)
+        return None
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -568,19 +654,12 @@ def run_ingest(
                 print(f"  [{label}] {preview}...", file=sys.stderr)
 
                 try:
-                    ingest_msg = msg
-                    if args.compact:
-                        memory_prompt = (
-                            "Extract key facts from the next group conversation and store them "
-                            "in a SEPARATE memory file named memory/YYYY-MM-DD.md where YYYY-MM-DD "
-                            "is the CONVERSATION date (from the message header, NOT today). "
-                            "Use the write tool immediately. Do not append to existing files, "
-                            "create a new file per conversation date.\n\n"
-                        )
-                        ingest_msg = memory_prompt + msg
-                    reply, usage = send_message(args.base_url, args.token, user_key, ingest_msg, args.agent_id)
+                    reply, usage = send_message(args.base_url, args.token, user_key, msg, args.agent_id)
                     print(f"    -> {reply[:80]}{'...' if len(reply) > 80 else ''}", file=sys.stderr)
 
+                    if args.memory_mode != "none":
+                        oc_session_key = f"agent:{args.agent_id}:openresponses-user:{user_key}"
+                        trigger_openclaw_compact(args.base_url, args.token, oc_session_key)
 
                     results.append({
                         "sample_id": sample_id,
@@ -589,7 +668,6 @@ def run_ingest(
                         "reply": reply,
                         "usage": usage,
                     })
-                    # Mark as successfully ingested
                     mark_ingested(args.agent_id, user_key, sample_id, meta['session_key'], ingest_record, {
                         "mode": "openclaw",
                         "date_time": meta['date_time'],
@@ -608,7 +686,7 @@ def run_ingest(
                 if session_id is None:
                     session_id = get_session_id(user_key, args.agent_id)
                 if session_id:
-                    reset_session(session_id, args.agent_id, phase="ingest")
+                    reset_session(session_id, args.agent_id)
 
         if args.output:
             try:
@@ -634,7 +712,7 @@ def run_ingest(
         print(f"Skipped (already ingested): {skipped_count}", file=sys.stderr)
 
         # Trigger memory index build by sending a warmup request that forces memory_search
-        if args.compact and len(results) > 0:
+        if args.memory_mode in ("memcore", "both") and len(results) > 0:
             print(f"\n=== Triggering memory index build ===", file=sys.stderr)
             user_key = args.user or "eval-1"
             try:
@@ -675,7 +753,7 @@ def run_ingest(
             if session_id is None:
                 session_id = get_session_id(session_key, args.agent_id)
             if session_id:
-                reset_session(session_id, args.agent_id, phase="ingest")
+                reset_session(session_id, args.agent_id)
 
             results.append({"index": idx, "turns": turns, "evals": session["evals"]})
 
@@ -713,32 +791,28 @@ def process_single_question(
     category = qa.get("category", "")
     evidence = qa.get("evidence", [])
 
-    # Each question needs a unique user to get its own session file, avoiding concurrent conflicts.
-    # session_key must use OpenClaw's internal format so sessions are created under the correct agent.
-    qa_user = f"qa-{sample_id}-q{original_qi}"
-    session_key = f"agent:{args.agent_id}:openresponses-user:{qa_user}"
+    session_key = f"qa-{sample_id}-q{original_qi}"
     user_key = args.user or f"eval-{sample_idx}"
 
     print(f"  [{sample_idx}] Q{original_qi}: {question[:60]}{'...' if len(question) > 60 else ''}", file=sys.stderr)
-    memory_hint = "Search your memory first, then answer based on what you find. "
     if question_time:
-        input_msg = f"Current date: {question_time}. {memory_hint}{question}"
+        input_msg = f"Current date: {question_time}. Answer the question directly: {question}"
     else:
-        input_msg = f"{memory_hint}{question}"
+        input_msg = f"Answer the question directly: {question}"
 
     jsonl_filename = ""
     try:
         response, api_usage = send_message_with_retry(
-            args.base_url, args.token, qa_user, input_msg, 2, args.agent_id, session_key
+            args.base_url, args.token, sample_id, input_msg, 2, args.agent_id, session_key
         )
         print(f"  [{sample_idx}]   A: {response[:60]}{'...' if len(response) > 60 else ''}", file=sys.stderr)
 
-        session_file_path = get_session_id_from_key(session_key, qa_user, args.agent_id)
+        session_file_path = get_session_id_from_key(session_key, user_key, args.agent_id)
         jsonl_filename = ""
 
         # Archive the session file if we found it
         if session_file_path:
-            jsonl_filename = reset_session(session_file_path, args.agent_id, phase="qa")
+            jsonl_filename = reset_session(session_file_path, args.agent_id)
 
         # Calculate usage from JSONL file if available, otherwise use API usage
         if jsonl_filename and session_file_path:
@@ -1065,9 +1139,18 @@ def main():
         "--compact",
         action="store_true",
         default=False,
-        help="Ingest mode: send /compact after each session to trigger memory flush",
+        help="(DEPRECATED, use --memory-mode) Alias for --memory-mode memcore",
+    )
+    parser.add_argument(
+        "--memory-mode",
+        default="none",
+        choices=["memcore", "openviking", "both", "none"],
+        help="Memory mode: memcore/openviking/both trigger compact after ingest; none skips",
     )
     args = parser.parse_args()
+
+    if args.compact and args.memory_mode == "none":
+        args.memory_mode = "memcore"
     args.default_csv_path = default_csv_path
 
     if not args.token:
