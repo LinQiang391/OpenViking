@@ -160,6 +160,7 @@ def generate_openclaw_json(cfg: dict) -> str:
             "enabled": True,
             "config": ov_config,
         }
+        oc["plugins"]["slots"] = {"contextEngine": "openviking"}
         plugin_path = ov.get("pluginPath")
         if plugin_path:
             oc["plugins"].setdefault("load", {}).setdefault("paths", []).append(

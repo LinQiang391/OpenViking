@@ -135,3 +135,16 @@ ingest_reply_assist = true
 - **触发位置**: `agent-runner.ts` → `runMemoryFlushIfNeeded()`（reply pipeline）
 - **不触发位置**: `sessions.compact` WS RPC → `compactEmbeddedPiSession()`
 - **依赖**: 需要 `memory-core` 插件注册 `flushPlanResolver`（内置默认加载）
+
+### OpenViking context-engine 激活的关键配置 (2026-04-16)
+
+- **问题**: OpenViking 插件注册了 context-engine（afterTurn, compact, assemble），但实测发现 afterTurn/compact 从未被调用
+- **根因**: 缺少 `plugins.slots.contextEngine: "openviking"` 配置。OpenClaw 使用 `plugins.slots.contextEngine` 决定哪个 context-engine 处于激活状态，默认使用内置 legacy engine
+- **解决**: 在 `openclaw.json` 中加入 `"plugins": { "slots": { "contextEngine": "openviking" } }`
+- **验证结果**:
+  - `assemble_entry` → context-engine 的 assemble 被调用 ✓
+  - `afterTurn_entry` → 每轮对话自动捕获到 OV session ✓
+  - `afterTurn_commit` → `commitTokenThreshold=0` 时每轮自动 commit ✓（status=accepted, archived=true）
+  - `before_prompt_build` → auto-recall 正常工作 ✓
+- **对 benchmark 的影响**: `run_benchmark.py` 的 `generate_openclaw_json` 在 openviking/both 模式下自动生成 `plugins.slots.contextEngine` 配置
+- **备注**: 有了 afterTurn 自动 capture + commit，`trigger_openclaw_compact` 在 openviking 模式下可能不再必需，但保留以确保 memcore 模式兼容
