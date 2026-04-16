@@ -339,7 +339,7 @@ def get_session_id_from_key(session_key: str, user: str, agent_id: str = "main")
             continue
 
         try:
-            with open(sessions_file, "r") as f:
+            with open(sessions_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             # Search for the session_key in this sessions.json
@@ -365,7 +365,7 @@ def get_session_id(user: str, agent_id: str = "main") -> str | None:
     """Read the current session ID for the given user from sessions.json."""
     sessions_file = os.path.expanduser(f"~/.openclaw/agents/{agent_id}/sessions/sessions.json")
     try:
-        with open(sessions_file, "r") as f:
+        with open(sessions_file, "r", encoding="utf-8") as f:
             data = json.load(f)
         key = f"agent:{agent_id}:openresponses-user:{user}"
         return data.get(key, {}).get("sessionId")
