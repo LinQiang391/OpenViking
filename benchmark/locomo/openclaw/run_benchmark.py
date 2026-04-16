@@ -113,7 +113,7 @@ def generate_openclaw_json(cfg: dict) -> str:
         "plugins": {"entries": {"volcengine": {"enabled": True}}},
     }
 
-    if emb.get("enabled", True):
+    if memory_mode in ("memcore", "both") and emb.get("enabled", True):
         query_cfg = {}
         if mem.get("hybrid_enabled", True):
             query_cfg["hybrid"] = {
@@ -144,25 +144,27 @@ def generate_openclaw_json(cfg: dict) -> str:
 
     if memory_mode in ("openviking", "both"):
         ov = cfg.get("openviking", {})
-        ov_plugin_cfg = {
+        ov_config = {}
+        passthrough_keys = [
+            "mode", "baseUrl", "apiKey", "autoCapture", "autoRecall",
+            "commitTokenThreshold", "ingestReplyAssist", "recallLimit",
+            "recallTokenBudget", "recallScoreThreshold", "recallMaxContentChars",
+            "recallPreferAbstract", "captureMode", "captureMaxLength",
+            "bypassSessionPatterns", "targetUri", "timeoutMs", "agentId",
+            "emitStandardDiagnostics", "logFindRequests",
+        ]
+        for key in passthrough_keys:
+            if key in ov:
+                ov_config[key] = ov[key]
+        oc["plugins"]["entries"]["openviking"] = {
             "enabled": True,
-            "mode": ov.get("mode", "remote"),
-            "baseUrl": ov.get("base_url", "http://127.0.0.1:8080"),
-            "autoCapture": ov.get("auto_capture", True),
-            "autoRecall": ov.get("auto_recall", True),
-            "commitTokenThreshold": ov.get("commit_token_threshold", 0),
-            "ingestReplyAssist": ov.get("ingest_reply_assist", True),
+            "config": ov_config,
         }
-        api_key = ov.get("api_key", "")
-        if api_key:
-            ov_plugin_cfg["apiKey"] = api_key
-        recall_limit = ov.get("recall_limit")
-        if recall_limit is not None:
-            ov_plugin_cfg["recallLimit"] = recall_limit
-        recall_token_budget = ov.get("recall_token_budget")
-        if recall_token_budget is not None:
-            ov_plugin_cfg["recallTokenBudget"] = recall_token_budget
-        oc["plugins"]["entries"]["openviking"] = ov_plugin_cfg
+        plugin_path = ov.get("pluginPath")
+        if plugin_path:
+            oc["plugins"].setdefault("load", {}).setdefault("paths", []).append(
+                expand_path(plugin_path)
+            )
 
     out_path = os.path.join(openclaw_dir, "openclaw.json")
     os.makedirs(openclaw_dir, exist_ok=True)
@@ -273,7 +275,7 @@ def step_stop_openviking(cfg: dict):
         return
 
     ov = cfg.get("openviking", {})
-    base_url = ov.get("base_url", "http://127.0.0.1:8080")
+    base_url = ov.get("baseUrl", "http://127.0.0.1:8080")
 
     try:
         from urllib.parse import urlparse
@@ -316,7 +318,7 @@ def step_start_openviking(cfg: dict):
         print(f"  Skipping (openviking.mode=local, plugin will auto-start OV server).")
         return
 
-    base_url = ov.get("base_url", "http://127.0.0.1:8080")
+    base_url = ov.get("baseUrl", "http://127.0.0.1:8080")
     print(f"  Starting OpenViking server (target: {base_url})...")
 
     if sys.platform == "win32":
