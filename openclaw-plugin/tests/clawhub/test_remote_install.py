@@ -49,7 +49,7 @@ from .._pipeline import (
 logger = logging.getLogger(__name__)
 
 TEST_ROOT_API_KEY = f"test-root-{secrets.token_hex(16)}"
-TEST_ACCOUNT_ID = "e2e-test-account"
+TEST_ACCOUNT_ID = "default"
 TEST_USER_ID = "default"
 
 
