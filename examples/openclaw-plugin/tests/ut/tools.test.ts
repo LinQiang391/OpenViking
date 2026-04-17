@@ -564,6 +564,66 @@ describe("Plugin registration", () => {
     expect(headers.get("X-OpenViking-Agent")).toBe("worker");
   });
 
+  it("search command propagates configured tenant headers", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/v1/search/find")) {
+        return okResponse({ memories: [], resources: [], skills: [], total: 0 });
+      }
+      return okResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { commands, api } = setupPlugin();
+    api.pluginConfig = {
+      ...api.pluginConfig,
+      accountId: "acct-shared",
+      userId: "alice",
+    };
+    contextEnginePlugin.register(api as any);
+
+    await commands.get("ov-search")!.handler({
+      args: "test query --uri viking://resources",
+      commandBody: "/ov-search",
+      agentId: "worker",
+      sessionId: "session-1",
+      sessionKey: "agent:worker:session-1",
+    });
+
+    const [, init] = fetchMock.mock.calls.find((call) => String(call[0]).endsWith("/api/v1/search/find")) as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("X-OpenViking-Account")).toBe("acct-shared");
+    expect(headers.get("X-OpenViking-User")).toBe("alice");
+    expect(headers.get("X-OpenViking-Agent")).toBe("worker");
+  });
+
+  it("import tool propagates configured tenant headers for resource imports", async () => {
+    const fetchMock = vi.fn(async () =>
+      okResponse({ root_uri: "viking://resources/shared-docs", status: "success" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { tools, api } = setupPlugin();
+    api.pluginConfig = {
+      ...api.pluginConfig,
+      accountId: "acct-shared",
+      userId: "alice",
+    };
+    contextEnginePlugin.register(api as any);
+
+    const tool = tools.get("ov_import")!;
+    await tool.execute("tc-import", {
+      kind: "resource",
+      source: "https://example.com/docs",
+      to: "viking://resources/shared-docs",
+      wait: true,
+    });
+
+    const [, init] = fetchMock.mock.calls.find((call) => String(call[0]).endsWith("/api/v1/resources")) as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("X-OpenViking-Account")).toBe("acct-shared");
+    expect(headers.get("X-OpenViking-User")).toBe("alice");
+  });
+
   it("slash commands honor bypassSessionPatterns", async () => {
     const fetchMock = vi.fn(async () => okResponse({}));
     vi.stubGlobal("fetch", fetchMock);

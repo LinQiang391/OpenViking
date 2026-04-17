@@ -51,6 +51,18 @@
 
 这样做是为了支持多 agent、多 session 并发时的记忆隔离，避免不同 OpenClaw 会话串用同一套长期上下文。
 
+默认推荐的远程模式配置只有：
+
+- `baseUrl`
+- `apiKey`
+- `agentId`
+
+其中：
+
+- `apiKey` 推荐使用某个 user 的 user key
+- `accountId` / `userId` 仅在 root key 或 `trusted` 模式下作为高级选项使用
+- `agentScopeMode` 默认不需要配置，只有服务端把 `memory.agent_scope_mode` 改成非默认值时才需要同步配置
+
 ## Prompt 前召回链路
 
 ![Prompt 前的自动召回流程](./images/openclaw-plugin-recall-flow.png)

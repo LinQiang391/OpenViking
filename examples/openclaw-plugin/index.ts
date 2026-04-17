@@ -555,7 +555,7 @@ const contextEnginePlugin = {
       : undefined;
     const tenantAccount = cfg.accountId;
     const tenantUser = cfg.userId;
-    const localCacheKey = `${cfg.mode}:${cfg.baseUrl}:${cfg.configPath}:${cfg.apiKey}:${tenantAccount}:${tenantUser}:${cfg.agentId}:${cfg.logFindRequests ? "1" : "0"}`;
+    const localCacheKey = `${cfg.mode}:${cfg.baseUrl}:${cfg.configPath}:${cfg.apiKey}:${tenantAccount}:${tenantUser}:${cfg.agentId}:${cfg.agentScopeMode}:${cfg.logFindRequests ? "1" : "0"}`;
 
     let clientPromise: Promise<OpenVikingClient>;
     let localProcess: ReturnType<typeof spawn> | null = null;

@@ -33,6 +33,24 @@
       "placeholder": "${OPENVIKING_API_KEY}",
       "help": "Optional API key for OpenViking server"
     },
+    "accountId": {
+      "label": "Account ID",
+      "placeholder": "(derived from API key)",
+      "help": "Advanced option. Tenant account ID. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key.",
+      "advanced": true
+    },
+    "userId": {
+      "label": "User ID",
+      "placeholder": "(derived from API key)",
+      "help": "Advanced option. Tenant user ID. Only needed when using root key or trusted auth mode.",
+      "advanced": true
+    },
+    "agentScopeMode": {
+      "label": "Agent Scope Mode",
+      "placeholder": "user_agent",
+      "help": "Advanced compatibility option. Normally leave unset. \"user_agent\" (default): each user+agent pair gets a separate space. \"agent\": same agentId shares space across users. Only set this when the server memory.agent_scope_mode is changed from the default and the plugin must match it.",
+      "advanced": true
+    },
     "targetUri": {
       "label": "Search Target URI",
       "placeholder": "viking://user/memories",
@@ -62,6 +80,11 @@
     "autoRecall": {
       "label": "Auto-Recall",
       "help": "Inject relevant OpenViking memories into agent context"
+    },
+    "recallResources": {
+      "label": "Recall Resources",
+      "help": "Include resources (viking://resources) in auto-recall and default memory_recall search. Enables account-level shared knowledge retrieval.",
+      "advanced": true
     },
     "recallLimit": {
       "label": "Recall Limit",
@@ -158,6 +181,15 @@
       "apiKey": {
         "type": "string"
       },
+      "accountId": {
+        "type": "string"
+      },
+      "userId": {
+        "type": "string"
+      },
+      "agentScopeMode": {
+        "type": "string"
+      },
       "targetUri": {
         "type": "string"
       },
@@ -174,6 +206,9 @@
         "type": "number"
       },
       "autoRecall": {
+        "type": "boolean"
+      },
+      "recallResources": {
         "type": "boolean"
       },
       "recallLimit": {

@@ -325,8 +325,8 @@ describe("OpenVikingClient resource and skill import", () => {
   });
 });
 
-describe("OpenVikingClient tenant headers (accountId / userId)", () => {
-  it("sends configured accountId and userId in request headers", async () => {
+describe("OpenVikingClient tenant headers (advanced accountId / userId overrides)", () => {
+  it("sends configured accountId and userId in request headers for root/trusted-style flows", async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -342,7 +342,7 @@ describe("OpenVikingClient tenant headers (accountId / userId)", () => {
     expect(headers.get("X-OpenViking-User")).toBe("user-456");
   });
 
-  it("defaults account and user to 'default' when empty", async () => {
+  it("keeps default user-key flow free of explicit tenant overrides", async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -358,7 +358,7 @@ describe("OpenVikingClient tenant headers (accountId / userId)", () => {
     expect(headers.get("X-OpenViking-User")).toBe("default");
   });
 
-  it("trims whitespace from accountId and userId", async () => {
+  it("trims whitespace from advanced accountId and userId overrides", async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
     vi.stubGlobal("fetch", fetchMock);
 

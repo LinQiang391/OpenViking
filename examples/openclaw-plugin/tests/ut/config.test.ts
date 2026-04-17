@@ -190,6 +190,17 @@ describe("memoryOpenVikingConfigSchema.parse()", () => {
     expect(cfg.userId).toBe("");
   });
 
+  it("default user-key flow does not require accountId, userId, or agentScopeMode", () => {
+    const cfg = memoryOpenVikingConfigSchema.parse({
+      baseUrl: "http://127.0.0.1:1933",
+      apiKey: "sk-user",
+      agentId: "coding-agent",
+    });
+    expect(cfg.accountId).toBe("");
+    expect(cfg.userId).toBe("");
+    expect(cfg.agentScopeMode).toBe("user_agent");
+  });
+
   it("defaults agentScopeMode to user_agent", () => {
     const cfg = memoryOpenVikingConfigSchema.parse({});
     expect(cfg.agentScopeMode).toBe("user_agent");

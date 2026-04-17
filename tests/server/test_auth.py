@@ -6,6 +6,7 @@
 import io
 import logging
 import uuid
+from contextlib import contextmanager
 
 import httpx
 import pytest
@@ -26,6 +27,7 @@ from openviking.service.core import OpenVikingService
 from openviking.service.task_tracker import get_task_tracker, reset_task_tracker
 from openviking_cli.exceptions import InvalidArgumentError, OpenVikingError
 from openviking_cli.session.user_id import UserIdentifier
+from openviking_cli.utils.config import get_openviking_config
 
 
 def _uid() -> str:
@@ -33,6 +35,30 @@ def _uid() -> str:
 
 
 ROOT_KEY = "root-secret-key-for-testing-only-1234567890abcdef"
+
+
+@contextmanager
+def _memory_agent_scope_mode(mode: str):
+    """Temporarily switch memory.agent_scope_mode for request-scoped ACL tests."""
+    config = get_openviking_config()
+    original = config.memory.agent_scope_mode
+    config.memory.agent_scope_mode = mode
+    try:
+        yield
+    finally:
+        config.memory.agent_scope_mode = original
+
+
+def _agent_collection_uri(account_id: str, user_id: str, agent_id: str) -> str:
+    """Build a tenant-scoped agent collection URI from logical identity."""
+    space = UserIdentifier(account_id, user_id, agent_id).agent_space_name()
+    return f"viking://agent/{space}/skills/auth-{uuid.uuid4().hex[:8]}"
+
+
+def _assert_forbidden(response: httpx.Response) -> None:
+    """Assert explicit space ACL failures use the structured 403 response."""
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "PERMISSION_DENIED"
 
 
 def _make_request(
@@ -402,6 +428,234 @@ async def test_cross_tenant_session_get_returns_not_found(auth_client: httpx.Asy
     )
     assert cross_get.status_code == 404
     assert cross_get.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_resources_are_isolated_across_accounts(auth_client: httpx.AsyncClient, auth_app):
+    """Resources created by one account must not be readable or listable by another."""
+    manager = auth_app.state.api_key_manager
+    alice_key = await manager.create_account(_uid(), "alice")
+    bob_key = await manager.create_account(_uid(), "bob")
+    resource_uri = f"viking://resources/shared-auth-{uuid.uuid4().hex[:8]}"
+
+    create_resp = await auth_client.post(
+        "/api/v1/fs/mkdir",
+        json={"uri": resource_uri},
+        headers={"X-API-Key": alice_key},
+    )
+    assert create_resp.status_code == 200
+
+    owner_stat = await auth_client.get(
+        "/api/v1/fs/stat",
+        params={"uri": resource_uri},
+        headers={"X-API-Key": alice_key},
+    )
+    assert owner_stat.status_code == 200
+    assert owner_stat.json()["result"]["name"] == resource_uri.rsplit("/", 1)[-1]
+
+    cross_stat = await auth_client.get(
+        "/api/v1/fs/stat",
+        params={"uri": resource_uri},
+        headers={"X-API-Key": bob_key},
+    )
+    assert cross_stat.status_code == 404
+    assert cross_stat.json()["error"]["code"] == "NOT_FOUND"
+
+    cross_ls = await auth_client.get(
+        "/api/v1/fs/ls",
+        params={"uri": "viking://resources", "simple": True},
+        headers={"X-API-Key": bob_key},
+    )
+    assert cross_ls.status_code == 404
+    assert cross_ls.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_resources_are_shared_within_same_account(auth_client: httpx.AsyncClient, auth_app):
+    """Resources remain visible to other users inside the same account."""
+    manager = auth_app.state.api_key_manager
+    alice_key = await manager.create_account(_uid(), "alice")
+    alice_identity = manager.resolve(alice_key)
+    account_id = alice_identity.account_id
+    resource_uri = f"viking://resources/shared-auth-{uuid.uuid4().hex[:8]}"
+
+    register_resp = await auth_client.post(
+        f"/api/v1/admin/accounts/{account_id}/users",
+        json={"user_id": "charlie", "role": "user"},
+        headers={"X-API-Key": alice_key},
+    )
+    assert register_resp.status_code == 200
+    charlie_key = register_resp.json()["result"]["user_key"]
+
+    create_resp = await auth_client.post(
+        "/api/v1/fs/mkdir",
+        json={"uri": resource_uri},
+        headers={"X-API-Key": alice_key},
+    )
+    assert create_resp.status_code == 200
+
+    shared_stat = await auth_client.get(
+        "/api/v1/fs/stat",
+        params={"uri": resource_uri},
+        headers={"X-API-Key": charlie_key},
+    )
+    assert shared_stat.status_code == 200
+    assert shared_stat.json()["result"]["name"] == resource_uri.rsplit("/", 1)[-1]
+
+    shared_ls = await auth_client.get(
+        "/api/v1/fs/ls",
+        params={"uri": "viking://resources", "simple": True},
+        headers={"X-API-Key": charlie_key},
+    )
+    assert shared_ls.status_code == 200
+    assert resource_uri in shared_ls.json()["result"]
+
+
+async def test_agent_memory_is_isolated_across_users_in_user_agent_mode(
+    auth_client: httpx.AsyncClient, auth_app
+):
+    """user+agent mode should isolate agent-scoped paths across different users."""
+    manager = auth_app.state.api_key_manager
+    alice_key = await manager.create_account(_uid(), "alice")
+    alice_identity = manager.resolve(alice_key)
+    account_id = alice_identity.account_id
+    agent_id = "shared-bot"
+
+    register_resp = await auth_client.post(
+        f"/api/v1/admin/accounts/{account_id}/users",
+        json={"user_id": "charlie", "role": "user"},
+        headers={"X-API-Key": alice_key},
+    )
+    assert register_resp.status_code == 200
+    charlie_key = register_resp.json()["result"]["user_key"]
+
+    with _memory_agent_scope_mode("user+agent"):
+        agent_uri = _agent_collection_uri(account_id, "alice", agent_id)
+
+        create_resp = await auth_client.post(
+            "/api/v1/fs/mkdir",
+            json={"uri": agent_uri},
+            headers={"X-API-Key": alice_key, "X-OpenViking-Agent": agent_id},
+        )
+        assert create_resp.status_code == 200
+
+        owner_stat = await auth_client.get(
+            "/api/v1/fs/stat",
+            params={"uri": agent_uri},
+            headers={"X-API-Key": alice_key, "X-OpenViking-Agent": agent_id},
+        )
+        assert owner_stat.status_code == 200
+
+        cross_stat = await auth_client.get(
+            "/api/v1/fs/stat",
+            params={"uri": agent_uri},
+            headers={"X-API-Key": charlie_key, "X-OpenViking-Agent": agent_id},
+        )
+        _assert_forbidden(cross_stat)
+
+
+async def test_agent_memory_is_isolated_across_agents_in_user_agent_mode(
+    auth_client: httpx.AsyncClient, auth_app
+):
+    """user+agent mode should isolate agent-scoped paths across different agent IDs."""
+    manager = auth_app.state.api_key_manager
+    alice_key = await manager.create_account(_uid(), "alice")
+    alice_identity = manager.resolve(alice_key)
+    account_id = alice_identity.account_id
+
+    with _memory_agent_scope_mode("user+agent"):
+        agent_uri = _agent_collection_uri(account_id, "alice", "assistant-a")
+
+        create_resp = await auth_client.post(
+            "/api/v1/fs/mkdir",
+            json={"uri": agent_uri},
+            headers={"X-API-Key": alice_key, "X-OpenViking-Agent": "assistant-a"},
+        )
+        assert create_resp.status_code == 200
+
+        owner_stat = await auth_client.get(
+            "/api/v1/fs/stat",
+            params={"uri": agent_uri},
+            headers={"X-API-Key": alice_key, "X-OpenViking-Agent": "assistant-a"},
+        )
+        assert owner_stat.status_code == 200
+
+        cross_stat = await auth_client.get(
+            "/api/v1/fs/stat",
+            params={"uri": agent_uri},
+            headers={"X-API-Key": alice_key, "X-OpenViking-Agent": "assistant-b"},
+        )
+        _assert_forbidden(cross_stat)
+
+
+async def test_agent_memory_is_shared_for_same_agent_in_agent_mode(
+    auth_client: httpx.AsyncClient, auth_app
+):
+    """agent mode should share agent-scoped paths across users of the same agent."""
+    manager = auth_app.state.api_key_manager
+    alice_key = await manager.create_account(_uid(), "alice")
+    alice_identity = manager.resolve(alice_key)
+    account_id = alice_identity.account_id
+    agent_id = "shared-bot"
+
+    register_resp = await auth_client.post(
+        f"/api/v1/admin/accounts/{account_id}/users",
+        json={"user_id": "charlie", "role": "user"},
+        headers={"X-API-Key": alice_key},
+    )
+    assert register_resp.status_code == 200
+    charlie_key = register_resp.json()["result"]["user_key"]
+
+    with _memory_agent_scope_mode("agent"):
+        agent_uri = _agent_collection_uri(account_id, "alice", agent_id)
+
+        create_resp = await auth_client.post(
+            "/api/v1/fs/mkdir",
+            json={"uri": agent_uri},
+            headers={"X-API-Key": alice_key, "X-OpenViking-Agent": agent_id},
+        )
+        assert create_resp.status_code == 200
+
+        shared_stat = await auth_client.get(
+            "/api/v1/fs/stat",
+            params={"uri": agent_uri},
+            headers={"X-API-Key": charlie_key, "X-OpenViking-Agent": agent_id},
+        )
+        assert shared_stat.status_code == 200
+        assert shared_stat.json()["result"]["name"] == agent_uri.rsplit("/", 1)[-1]
+
+
+async def test_agent_memory_remains_isolated_across_agents_in_agent_mode(
+    auth_client: httpx.AsyncClient, auth_app
+):
+    """agent mode should still isolate agent-scoped paths for different agent IDs."""
+    manager = auth_app.state.api_key_manager
+    alice_key = await manager.create_account(_uid(), "alice")
+    alice_identity = manager.resolve(alice_key)
+    account_id = alice_identity.account_id
+
+    register_resp = await auth_client.post(
+        f"/api/v1/admin/accounts/{account_id}/users",
+        json={"user_id": "charlie", "role": "user"},
+        headers={"X-API-Key": alice_key},
+    )
+    assert register_resp.status_code == 200
+    charlie_key = register_resp.json()["result"]["user_key"]
+
+    with _memory_agent_scope_mode("agent"):
+        agent_uri = _agent_collection_uri(account_id, "alice", "assistant-a")
+
+        create_resp = await auth_client.post(
+            "/api/v1/fs/mkdir",
+            json={"uri": agent_uri},
+            headers={"X-API-Key": alice_key, "X-OpenViking-Agent": "assistant-a"},
+        )
+        assert create_resp.status_code == 200
+
+        cross_stat = await auth_client.get(
+            "/api/v1/fs/stat",
+            params={"uri": agent_uri},
+            headers={"X-API-Key": charlie_key, "X-OpenViking-Agent": "assistant-b"},
+        )
+        _assert_forbidden(cross_stat)
 
 
 async def test_root_tenant_scoped_requests_require_explicit_identity():

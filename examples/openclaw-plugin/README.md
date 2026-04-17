@@ -51,6 +51,18 @@ The main rules are:
 
 This matters because the plugin is built to support multi-agent and multi-session OpenClaw usage without mixing memories across sessions.
 
+The recommended remote-mode configuration only needs:
+
+- `baseUrl`
+- `apiKey`
+- `agentId`
+
+In this setup:
+
+- `apiKey` should usually be a user key
+- `accountId` / `userId` are advanced options only for root-key or `trusted` deployments
+- `agentScopeMode` is normally left unset and only needs to be configured when the server's `memory.agent_scope_mode` is changed from the default
+
 ## Prompt-Front Recall Flow
 
 ![Automatic recall flow before prompt build](./images/openclaw-plugin-recall-flow.png)

@@ -12,15 +12,16 @@ export type MemoryOpenVikingConfig = {
   baseUrl?: string;
   agentId?: string;
   apiKey?: string;
-  /** Tenant account ID. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key. */
+  /** Advanced option. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key. */
   accountId?: string;
-  /** Tenant user ID. Only needed when using root key or trusted auth mode. */
+  /** Advanced option. Only needed when using root key or trusted auth mode. */
   userId?: string;
   /**
-   * Controls how agent space is computed.
+   * Advanced compatibility option. Controls how agent space is computed.
    * "user_agent" (default): space = hash(userId + agentId) — per-user per-agent isolation.
    * "agent": space = hash(agentId) — same agentId shares space across users within account.
-   * Must match the server's memory.agent_scope_mode setting.
+   * Leave unset in the default user-key flow. Only configure it when the server's
+   * memory.agent_scope_mode is changed from the default and the plugin must match it.
    */
   agentScopeMode?: "user_agent" | "agent";
   targetUri?: string;
@@ -341,19 +342,19 @@ export const memoryOpenVikingConfigSchema = {
     accountId: {
       label: "Account ID",
       placeholder: "(derived from API key)",
-      help: "Tenant account ID. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key.",
+      help: "Advanced option. Tenant account ID. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key.",
       advanced: true,
     },
     userId: {
       label: "User ID",
       placeholder: "(derived from API key)",
-      help: "Tenant user ID. Only needed when using root key or trusted auth mode.",
+      help: "Advanced option. Tenant user ID. Only needed when using root key or trusted auth mode.",
       advanced: true,
     },
     agentScopeMode: {
       label: "Agent Scope Mode",
       placeholder: "user_agent",
-      help: 'Controls agent space isolation. "user_agent" (default): each user+agent pair gets a separate space. "agent": same agentId shares space across users. Must match server memory.agent_scope_mode.',
+      help: 'Advanced compatibility option. Normally leave unset. "user_agent" (default): each user+agent pair gets a separate space. "agent": same agentId shares space across users. Only set this when the server memory.agent_scope_mode is changed from the default and the plugin must match it.',
       advanced: true,
     },
     targetUri: {
