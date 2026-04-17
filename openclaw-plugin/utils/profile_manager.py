@@ -782,6 +782,12 @@ class ProfileManager:
         steps = {}
         steps["mode"] = mode
 
+        # 0) 清理残留环境（应对上次 Ctrl+C 中断 teardown 未执行）
+        if self.exists():
+            logger.info("full_setup: cleaning up leftover profile '%s'", self.profile_name)
+            self.full_teardown()
+            time.sleep(1)
+
         # 1) Create profile
         steps["create"] = self.create()
         assert steps["create"], f"failed to create profile {self.profile_name}"

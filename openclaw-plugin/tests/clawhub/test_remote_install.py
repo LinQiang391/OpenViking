@@ -71,6 +71,18 @@ class TestRemoteE2ESingle:
         logger.info("config: %s", json.dumps(cfg, indent=2, ensure_ascii=False))
         logger.info("=" * 60)
 
+        # 0) 清理残留环境（应对 Ctrl+C 中断后 teardown 未执行的情况）
+        ov_port = OPENVIKING_PORT + 100
+        if ProcessManager.is_port_listening(ov_port):
+            logger.info("cleanup: killing leftover OV on port %d", ov_port)
+            ProcessManager.kill_by_port(ov_port, wait=3.0)
+            time.sleep(1)
+        stale_profile = ProfileManager()
+        if stale_profile.exists():
+            logger.info("cleanup: destroying leftover profile '%s'", PROFILE_NAME)
+            stale_profile.full_teardown()
+            time.sleep(1)
+
         cls.profile = ProfileManager()
 
         # 1) 创建 profile
@@ -186,13 +198,13 @@ class TestRemoteE2ESingle:
         """通过 OV Admin API 创建账户并注册用户，返回用户 API key。
 
         POST /api/v1/admin/accounts → 创建账户（同时返回 admin user key）
+        如果账户已存在 (409)，先删除再重建，确保幂等。
         """
         headers = {
             "Content-Type": "application/json",
             "X-API-Key": TEST_ROOT_API_KEY,
         }
 
-        # 创建账户（admin_user_id = TEST_USER_ID）
         resp = requests.post(
             f"{base_url}/api/v1/admin/accounts",
             json={
@@ -202,6 +214,25 @@ class TestRemoteE2ESingle:
             headers=headers,
             timeout=15,
         )
+
+        if resp.status_code == 409:
+            logger.info("account '%s' already exists, deleting and recreating...", TEST_ACCOUNT_ID)
+            del_resp = requests.delete(
+                f"{base_url}/api/v1/admin/accounts/{TEST_ACCOUNT_ID}",
+                headers=headers,
+                timeout=15,
+            )
+            logger.info("delete account: %d %s", del_resp.status_code, del_resp.text[:200])
+            resp = requests.post(
+                f"{base_url}/api/v1/admin/accounts",
+                json={
+                    "account_id": TEST_ACCOUNT_ID,
+                    "admin_user_id": TEST_USER_ID,
+                },
+                headers=headers,
+                timeout=15,
+            )
+
         resp.raise_for_status()
         data = resp.json()
         logger.info("create account response: %s", json.dumps(data, ensure_ascii=False)[:300])

@@ -95,16 +95,23 @@ def judge_answer(question: str, gold_answer: str, response: str) -> Dict[str, An
 # ── 通用工具 ──────────────────────────────────────────────────────
 
 def ov_auth_headers(profile: ProfileManager) -> Dict[str, str]:
-    """从隔离 ov.conf 中读取 API key，构造 Authorization 头。"""
+    """从隔离 ov.conf 中读取认证信息，构造请求头。
+
+    优先使用 server.root_api_key (X-API-Key)，否则尝试 vlm.api_key (Bearer)。
+    """
     headers: Dict[str, str] = {}
     ov_conf = getattr(profile, "_ov_conf", None)
     if ov_conf and os.path.isfile(ov_conf):
         try:
             with open(ov_conf) as f:
                 conf = json.load(f)
-            api_key = conf.get("vlm", {}).get("api_key", "") or conf.get("api_key", "")
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            root_key = conf.get("server", {}).get("root_api_key", "")
+            if root_key:
+                headers["X-API-Key"] = root_key
+            else:
+                api_key = conf.get("vlm", {}).get("api_key", "") or conf.get("api_key", "")
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
         except Exception:
             pass
     return headers
