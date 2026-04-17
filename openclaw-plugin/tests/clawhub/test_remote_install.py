@@ -145,10 +145,11 @@ class TestRemoteE2ESingle:
 
     @classmethod
     def _start_ov_server(cls, ov_conf: str, port: int):
-        """启动独立的 OpenViking 服务器进程。"""
+        """启动独立的 OpenViking 服务器进程（如果端口被占用则先 kill）。"""
         if ProcessManager.is_port_listening(port):
-            logger.info("OV already listening on port %d", port)
-            return
+            logger.info("port %d already in use, killing existing process...", port)
+            ProcessManager.kill_by_port(port, wait=3.0)
+            time.sleep(2)
 
         python_path = ProfileManager._resolve_openviking_python() or "python3"
         cmd = [
