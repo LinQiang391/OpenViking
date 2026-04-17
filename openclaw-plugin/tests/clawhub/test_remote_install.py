@@ -3,22 +3,26 @@ Remote 模式 E2E 测试 — clawhub 安装场景
 
 与 local 模式的区别:
   - OpenViking 服务由测试框架预先启动（不由插件自动管理）
-  - 插件通过 HTTP API 连接到外部 OV 服务
-  - 交互式 setup 配置 baseUrl / apiKey / agentId
+  - 启动前配置 root_api_key 开启 API key 认证
+  - 通过 OV Admin API 注册租户/用户 → 获取用户 API key
+  - 插件通过 HTTP API + API key 连接到外部 OV 服务
+  - 交互式 setup 配置 baseUrl / apiKey / agentId(default)
 
 测试流程:
-  1. Setup: clawhub 安装插件 → 启动 OV 服务 → 交互式 setup (remote 模式)
+  1. Setup: clawhub 安装插件 → 配置 root_api_key → 启动 OV → 注册租户获取 key
+           → 交互式 setup (remote 模式)
   2. Pipeline: ingest → compact → QA → judge → verify
   3. Teardown: 停止 OV 服务 → 销毁 profile
 """
 
 import json
 import logging
-import subprocess
+import secrets
 import time
 import uuid
 
 import pytest
+import requests
 
 from config.settings import (
     MODEL_PRIMARY,
@@ -44,15 +48,20 @@ from .._pipeline import (
 
 logger = logging.getLogger(__name__)
 
+TEST_ROOT_API_KEY = f"test-root-{secrets.token_hex(16)}"
+TEST_ACCOUNT_ID = "e2e-test-account"
+TEST_USER_ID = "default"
+
 
 @pytest.mark.clawhub
 @pytest.mark.remote
 class TestRemoteE2ESingle:
-    """Remote 模式 E2E: clawhub 安装 → 外部 OV 服务 → 交互式配置 → ingest → QA → judge → verify。"""
+    """Remote 模式 E2E: clawhub 安装 → OV 服务 → 注册租户 → 交互式配置 → ingest → QA → judge → verify。"""
 
     SESSION_ID = f"e2e-remote-{uuid.uuid4().hex[:8]}"
     profile: ProfileManager = None
     _ov_process = None
+    _user_api_key: str = ""
 
     @classmethod
     def setup_class(cls):
@@ -72,28 +81,33 @@ class TestRemoteE2ESingle:
         assert install_result["success"], f"plugin install failed: {install_result}"
         logger.info("plugin installed: %s", install_result.get("spec"))
 
-        # 3) 创建隔离 ov.conf（用独立端口和存储）
+        # 3) 创建隔离 ov.conf 并配置 root_api_key（启用 api_key 认证模式）
         cls.profile.create_isolated_ov_conf()
-        ov_port = getattr(cls.profile, "_ov_port", OPENVIKING_PORT + 100)
         ov_conf = getattr(cls.profile, "_ov_conf", "")
-        logger.info("isolated ov.conf: %s (port=%d)", ov_conf, ov_port)
+        ov_port = getattr(cls.profile, "_ov_port", OPENVIKING_PORT + 100)
 
-        # 4) 在 remote 模式下，需要手动启动 OV 服务
+        with open(ov_conf) as f:
+            ov_cfg = json.load(f)
+        ov_cfg.setdefault("server", {})["root_api_key"] = TEST_ROOT_API_KEY
+        with open(ov_conf, "w") as f:
+            json.dump(ov_cfg, f, indent=2, ensure_ascii=False)
+        logger.info("configured ov.conf: root_api_key set, auth_mode=api_key (port=%d)", ov_port)
+
+        # 4) 启动 OV 服务
         cls._start_ov_server(ov_conf, ov_port)
 
-        # 5) 读取 ov.conf 获取 API key（用于 remote 模式认证）
-        api_key = ""
-        if ov_conf:
-            with open(ov_conf) as f:
-                ov_cfg = json.load(f)
-            api_key = ov_cfg.get("vlm", {}).get("api_key", "") or ov_cfg.get("api_key", "")
+        # 5) 通过 Admin API 注册租户和用户 → 获取用户 API key
+        base_url = f"http://127.0.0.1:{ov_port}"
+        cls._user_api_key = cls._register_tenant_and_user(base_url)
+        logger.info("registered user '%s' in account '%s', got API key",
+                     TEST_USER_ID, TEST_ACCOUNT_ID)
 
         # 6) 运行 `openclaw openviking setup` 交互式配置 (remote 模式)
-        base_url = f"http://127.0.0.1:{ov_port}"
         setup_result = cls.profile.run_interactive_setup(
             mode="remote",
             base_url=base_url,
-            api_key=api_key,
+            api_key=cls._user_api_key,
+            agent_id="default",
         )
         assert setup_result["success"], f"interactive setup failed: {setup_result}"
         logger.info("interactive setup completed: steps=%s",
@@ -114,12 +128,12 @@ class TestRemoteE2ESingle:
         assert cls.profile.start_gateway(), "gateway failed to start"
         logger.info("gateway started on port %d", PROFILE_GATEWAY_PORT)
 
-        # 9) 等待 remote OV 可访问（应该已经在步骤 4 启动了）
+        # 9) 验证 OV 可访问
         time.sleep(3)
         assert ProcessManager.is_port_listening(ov_port), (
             f"OV server not listening on port {ov_port}"
         )
-        logger.info("setup OK (remote OV at port %d)", ov_port)
+        logger.info("setup OK (remote OV at %s, auth=api_key)", base_url)
 
     @classmethod
     def teardown_class(cls):
@@ -164,6 +178,35 @@ class TestRemoteE2ESingle:
                 cls._ov_process.wait(timeout=5)
             except Exception:
                 pass
+
+    @classmethod
+    def _register_tenant_and_user(cls, base_url: str) -> str:
+        """通过 OV Admin API 创建账户并注册用户，返回用户 API key。
+
+        POST /api/v1/admin/accounts → 创建账户（同时返回 admin user key）
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": TEST_ROOT_API_KEY,
+        }
+
+        # 创建账户（admin_user_id = TEST_USER_ID）
+        resp = requests.post(
+            f"{base_url}/api/v1/admin/accounts",
+            json={
+                "account_id": TEST_ACCOUNT_ID,
+                "admin_user_id": TEST_USER_ID,
+            },
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info("create account response: %s", json.dumps(data, ensure_ascii=False)[:300])
+
+        user_key = data.get("result", {}).get("user_key", "")
+        assert user_key, f"failed to get user_key from account creation: {data}"
+        return user_key
 
     def test_e2e_flow(self):
         """完整 E2E 管线: ingest → sessions.compact → QA(独立session) → judge → verify。"""
