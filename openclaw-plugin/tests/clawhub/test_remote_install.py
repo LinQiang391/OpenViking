@@ -81,7 +81,7 @@ class TestRemoteE2ESingle:
         assert install_result["success"], f"plugin install failed: {install_result}"
         logger.info("plugin installed: %s", install_result.get("spec"))
 
-        # 3) 创建隔离 ov.conf 并配置 root_api_key（启用 api_key 认证模式）
+        # 3) 创建隔离 ov.conf 并配置 root_api_key + bind 0.0.0.0（remote 场景）
         cls.profile.create_isolated_ov_conf()
         ov_conf = getattr(cls.profile, "_ov_conf", "")
         ov_port = getattr(cls.profile, "_ov_port", OPENVIKING_PORT + 100)
@@ -89,9 +89,10 @@ class TestRemoteE2ESingle:
         with open(ov_conf) as f:
             ov_cfg = json.load(f)
         ov_cfg.setdefault("server", {})["root_api_key"] = TEST_ROOT_API_KEY
+        ov_cfg["server"]["host"] = "0.0.0.0"
         with open(ov_conf, "w") as f:
             json.dump(ov_cfg, f, indent=2, ensure_ascii=False)
-        logger.info("configured ov.conf: root_api_key set, auth_mode=api_key (port=%d)", ov_port)
+        logger.info("configured ov.conf: root_api_key set, host=0.0.0.0, port=%d", ov_port)
 
         # 4) 启动 OV 服务
         cls._start_ov_server(ov_conf, ov_port)
