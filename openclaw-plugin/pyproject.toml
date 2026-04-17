@@ -1,0 +1,39 @@
+[project]
+name = "openclaw-plugin-tests"
+version = "0.1.0"
+description = "OpenClaw OpenViking 插件自动化测试框架"
+authors = [{ name = "OpenClaw Team" }]
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.28.0",
+    "psutil>=5.9.0",
+    "pexpect>=4.8.0",
+    "websocket-client>=1.6.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-html>=4.0.0",
+    "pytest-timeout>=2.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "clawhub: clawhub 安装场景",
+    "local: 本地模式测试",
+    "remote: 远程模式测试",
+    "slow: 耗时较长的测试",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+timeout = 600
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
