@@ -428,14 +428,14 @@ class ProfileManager:
                 step("port", r"(?:Port|端口)", p)
 
             elif mode == "remote":
-                # Step 2: 服务器地址 (en: "Base URL"/"Server URL", zh: "服务器地址")
+                # Step 2: 服务器地址 (en: "OpenViking server URL", zh: "服务器地址")
                 url = base_url or f"http://127.0.0.1:{OPENVIKING_PORT}"
-                step("base_url", r"(?:Base URL|Server|服务器地址)", url)
+                step("base_url", r"(?:server URL|服务器地址)", url)
 
-                # Step 3: API Key
+                # Step 3: API Key (en: "API Key (optional)", zh: "API Key（可选）")
                 step("api_key", r"API [Kk]ey", api_key or "")
 
-                # Step 4: Agent ID
+                # Step 4: Agent ID (en: "Agent ID (optional)", zh: "Agent ID（可选）")
                 step("agent_id", r"Agent ID", agent_id or "")
 
             child.expect(pexpect.EOF, timeout=timeout)
