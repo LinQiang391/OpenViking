@@ -94,10 +94,13 @@ def judge_answer(question: str, gold_answer: str, response: str) -> Dict[str, An
 
 # ── 通用工具 ──────────────────────────────────────────────────────
 
-def ov_auth_headers(profile: ProfileManager) -> Dict[str, str]:
+def ov_auth_headers(profile: ProfileManager,
+                    account_id: str = "default",
+                    user_id: str = "default") -> Dict[str, str]:
     """从隔离 ov.conf 中读取认证信息，构造请求头。
 
-    优先使用 server.root_api_key (X-API-Key)，否则尝试 vlm.api_key (Bearer)。
+    优先使用 server.root_api_key (X-API-Key) + tenant/user scope headers，
+    否则尝试 vlm.api_key (Bearer)。
     """
     headers: Dict[str, str] = {}
     ov_conf = getattr(profile, "_ov_conf", None)
@@ -108,6 +111,8 @@ def ov_auth_headers(profile: ProfileManager) -> Dict[str, str]:
             root_key = conf.get("server", {}).get("root_api_key", "")
             if root_key:
                 headers["X-API-Key"] = root_key
+                headers["X-OpenViking-Account"] = account_id
+                headers["X-OpenViking-User"] = user_id
             else:
                 api_key = conf.get("vlm", {}).get("api_key", "") or conf.get("api_key", "")
                 if api_key:
