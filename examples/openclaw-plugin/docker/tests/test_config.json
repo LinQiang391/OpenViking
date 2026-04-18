@@ -1,0 +1,74 @@
+{
+  "services": {
+    "openviking": {
+      "host": "127.0.0.1",
+      "port": 1933,
+      "root_api_key": "openviking-root-key-2026",
+      "account_id": "default",
+      "user_id": "default"
+    },
+    "openclaw": {
+      "host": "127.0.0.1",
+      "port": 18789,
+      "gateway_token": ""
+    },
+    "opengauss": {
+      "host": "127.0.0.1",
+      "port": 15432,
+      "user": "gaussdb",
+      "db_name": "omm"
+    }
+  },
+
+  "models": {
+    "primary": "volcengine/doubao-seed-2-0-code-preview-260215",
+    "judge": "doubao-seed-2-0-code-preview-260215",
+    "provider": {
+      "name": "volcengine",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3"
+    }
+  },
+
+  "judge": {
+    "enabled": true,
+    "api_key_env": "VOLCENGINE_API_KEY",
+    "api_key_from_ov_conf": true
+  },
+
+  "test_data": {
+    "session_messages": [
+      "我叫小明，今年28岁，我是一名后端工程师，最喜欢用 Python 和 Rust 编程",
+      "我最近在学习机器学习，特别是自然语言处理方向",
+      "我养了一只叫「咪咪」的橘猫，已经3岁了"
+    ],
+    "expected_entities": ["小明", "咪咪"],
+    "qa_pairs": [
+      {
+        "question": "我叫什么名字？我是做什么工作的？",
+        "expected_keywords": ["小明", "工程师"],
+        "gold_answer": "你叫小明，是一名后端工程师"
+      },
+      {
+        "question": "我最喜欢用什么编程语言？",
+        "expected_keywords": ["Python", "Rust"],
+        "gold_answer": "你最喜欢用 Python 和 Rust"
+      },
+      {
+        "question": "我养的宠物叫什么？什么品种？",
+        "expected_keywords": ["咪咪", "橘猫"],
+        "gold_answer": "你养了一只叫咪咪的橘猫"
+      }
+    ]
+  },
+
+  "timeouts": {
+    "health_check": 30,
+    "message": 120,
+    "memory_wait": 180,
+    "memory_poll_interval": 10,
+    "compact": 300,
+    "message_gap": 10,
+    "max_retries": 3,
+    "retry_delay": 15
+  }
+}
