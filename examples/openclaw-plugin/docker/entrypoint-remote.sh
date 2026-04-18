@@ -33,6 +33,8 @@ OPENVIKING_AUTO_CAPTURE="${OPENVIKING_AUTO_CAPTURE:-true}"
 
 # OpenClaw default model and provider API keys (optional)
 OPENCLAW_DEFAULT_MODEL="${OPENCLAW_DEFAULT_MODEL:-}"
+OPENCLAW_LLM_API_KEY="${OPENCLAW_LLM_API_KEY:-}"
+OPENCLAW_LLM_API_BASE="${OPENCLAW_LLM_API_BASE:-}"
 
 mkdir -p "${OPENCLAW_DIR}" "${PLUGIN_DIR}"
 
@@ -115,6 +117,54 @@ if [[ "${RUN_OPENCLAW_BOOTSTRAP}" == "1" ]]; then
   fi
   if [[ -n "${VOLCANO_ENGINE_API_KEY:-}" ]]; then
     openclaw config set models.providers.volcengine.apiKey "${VOLCANO_ENGINE_API_KEY}" 2>/dev/null || true
+  fi
+
+  # 通用 LLM 配置（OPENCLAW_LLM_API_KEY / OPENCLAW_LLM_API_BASE）
+  # 直接写 openclaw.json 的 models 部分（openclaw config set 不支持 models.providers 路径）
+  if [[ -n "${OPENCLAW_DEFAULT_MODEL}" && -n "${OPENCLAW_LLM_API_KEY}" ]]; then
+    _oc_provider=""
+    _oc_model_id=""
+    if [[ "${OPENCLAW_DEFAULT_MODEL}" == */* ]]; then
+      _oc_provider="${OPENCLAW_DEFAULT_MODEL%%/*}"
+      _oc_model_id="${OPENCLAW_DEFAULT_MODEL#*/}"
+    else
+      _oc_provider="volcengine"
+      _oc_model_id="${OPENCLAW_DEFAULT_MODEL}"
+    fi
+
+    # 用 node 直接写入 openclaw.json 的 models.providers（与 pytest configure_models 一致）
+    node -e "
+const fs = require('fs');
+const cfgPath = '${OPENCLAW_DIR}/openclaw.json';
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch(e) {}
+if (!cfg.models) cfg.models = {};
+cfg.models.mode = 'merge';
+if (!cfg.models.providers) cfg.models.providers = {};
+const p = cfg.models.providers['${_oc_provider}'] || {};
+p.api = 'openai-completions';
+if ('${OPENCLAW_LLM_API_BASE}') p.baseUrl = '${OPENCLAW_LLM_API_BASE}';
+if (!p.models || !p.models.length) p.models = [{id:'${_oc_model_id}',name:'${_oc_model_id}'}];
+cfg.models.providers['${_oc_provider}'] = p;
+fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+" 2>/dev/null || true
+
+    # 写入 auth-profiles.json
+    AUTH_DIR="${OPENCLAW_DIR}/agents/main/agent"
+    mkdir -p "${AUTH_DIR}"
+    cat > "${AUTH_DIR}/auth-profiles.json" <<EOAUTH
+{
+  "version": 1,
+  "profiles": {
+    "${_oc_provider}:default": {
+      "type": "api_key",
+      "provider": "${_oc_provider}",
+      "key": "${OPENCLAW_LLM_API_KEY}"
+    }
+  }
+}
+EOAUTH
+    echo "[INFO] Configured LLM: model=${OPENCLAW_DEFAULT_MODEL} provider=${_oc_provider}"
   fi
 
   touch "${BOOTSTRAP_MARKER}"

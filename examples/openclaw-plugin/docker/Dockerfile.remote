@@ -5,6 +5,7 @@
 #   docker build --network=host \
 #     --build-arg HTTP_PROXY=http://127.0.0.1:7897 \
 #     --build-arg HTTPS_PROXY=http://127.0.0.1:7897 \
+#     --build-arg OPENCLAW_VERSION=0.1.27 \
 #     -f examples/openclaw-plugin/docker/Dockerfile.remote \
 #     -t swr.cn-north-4.myhuaweicloud.com/kunpeng-ai/openclaw-openviking:remote-0406 .
 
@@ -12,6 +13,10 @@ ARG NODE_VERSION=22
 ARG NVM_VERSION=v0.40.1
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG NPM_REGISTRY_FALLBACK=https://registry.npmjs.org
+ARG OPENCLAW_VERSION=latest
+ARG SETUP_HELPER_VERSION=latest
+ARG PLUGIN_REPO=volcengine/OpenViking
+ARG PLUGIN_BRANCH=main
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 
@@ -21,6 +26,10 @@ ARG NODE_VERSION
 ARG NVM_VERSION
 ARG NPM_REGISTRY
 ARG NPM_REGISTRY_FALLBACK
+ARG OPENCLAW_VERSION
+ARG SETUP_HELPER_VERSION
+ARG PLUGIN_REPO
+ARG PLUGIN_BRANCH
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 
@@ -77,10 +86,10 @@ RUN set -e; \
  && node --version && npm --version \
  && npm install -g node-gyp --registry="${NPM_REGISTRY}" \
  || npm install -g node-gyp --registry="${NPM_REGISTRY_FALLBACK}" \
- && npm install -g openclaw --registry="${NPM_REGISTRY}" \
- || npm install -g openclaw --registry="${NPM_REGISTRY_FALLBACK}" \
- && npm install -g openclaw-openviking-setup-helper --registry="${NPM_REGISTRY}" \
- || npm install -g openclaw-openviking-setup-helper --registry="${NPM_REGISTRY_FALLBACK}" \
+ && npm install -g "openclaw@${OPENCLAW_VERSION}" --registry="${NPM_REGISTRY}" \
+ || npm install -g "openclaw@${OPENCLAW_VERSION}" --registry="${NPM_REGISTRY_FALLBACK}" \
+ && npm install -g "openclaw-openviking-setup-helper@${SETUP_HELPER_VERSION}" --registry="${NPM_REGISTRY}" \
+ || npm install -g "openclaw-openviking-setup-helper@${SETUP_HELPER_VERSION}" --registry="${NPM_REGISTRY_FALLBACK}" \
  && openclaw --version \
  && ov-install --help | head -5 \
  && rm -rf /root/.npm /root/.cache /tmp/* 2>/dev/null || true \
@@ -98,9 +107,10 @@ RUN openclaw config set gateway.mode local \
  && openclaw config set gateway.port 18789
 
 # 使用安装助手下载并安装 openviking 插件（remote 模式，不需要 Python）
+# REPO/BRANCH 控制插件文件从哪个仓库/分支下载
 # yes "" 保持 stdin 开放避免 readline EOF 退出；前 4 行提供交互答案
 RUN (echo "remote"; echo "http://127.0.0.1:1933"; echo ""; echo ""; yes "") \
-  | SKIP_OPENVIKING=1 ov-install \
+  | SKIP_OPENVIKING=1 REPO="${PLUGIN_REPO}" BRANCH="${PLUGIN_BRANCH}" ov-install \
  && ls -la /root/.openclaw/extensions/
 
 # 清理编译工具（运行时不需要），dnf 不走代理

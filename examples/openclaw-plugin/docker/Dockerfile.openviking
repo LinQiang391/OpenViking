@@ -1,5 +1,11 @@
 # OpenViking Server Docker Image
 # 基于 openEuler 22.03，多阶段构建优化镜像大小
+#
+# 特性:
+#   - 预装 llama-cpp-python，支持 local embedding (bge-small-zh-v1.5-f16)
+#   - 预下载 GGUF 模型文件，容器启动即可用，无需联网
+#   - 支持 openGauss 向量数据库后端 (通过 opengauss-minimal.patch)
+#   - 用户不配置 embedding 时自动使用 local 模式
 
 ARG OPENEULER_IMAGE=openeuler/openeuler:22.03-lts
 ARG PYTHON_VERSION=3.11.12
@@ -11,6 +17,7 @@ ARG GO_DIST_MIRROR_BASE=https://go.dev/dl
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 ARG GOPROXY_URL=https://goproxy.cn,direct
+ARG BGE_MODEL_URL=https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/main/bge-small-zh-v1.5-f16.gguf?download=true
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 
@@ -46,7 +53,13 @@ ARG GO_DIST_MIRROR_BASE
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
 ARG GOPROXY_URL
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
 
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV http_proxy=${HTTP_PROXY}
+ENV https_proxy=${HTTPS_PROXY}
 ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 ENV GOPROXY=${GOPROXY_URL}
@@ -81,23 +94,27 @@ RUN set -eux; \
     curl -fsSLO "${GO_DIST_BASE}/${go_pkg}" || curl -fsSLO "${GO_DIST_MIRROR_BASE}/${go_pkg}"; \
     tar -C /usr/local -xzf "${go_pkg}"; rm -f "${go_pkg}"
 
-# 安装 Rust
-RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+# 安装 Rust（使用清华 TUNA 镜像加速）
+ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 
-# 编译 OpenViking wheel
+# 编译 OpenViking wheel + local-embed 依赖 + openGauss 依赖
 COPY . /tmp/openviking-src
 WORKDIR /tmp/openviking-src
-RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel build \
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel build maturin \
  && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels . \
- && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels psycopg2-binary
+ && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels psycopg2-binary \
+ && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels "llama-cpp-python>=0.3.0"
 
 # ============ Stage 3: Final Runtime Image (精简) ============
 FROM ${OPENEULER_IMAGE}
 ARG PYTHON_VERSION
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
+ARG BGE_MODEL_URL
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
 
 ENV OPENVIKING_HOME=/root/.openviking
 ENV OPENVIKING_CONFIG_FILE=/root/.openviking/ov.conf
@@ -105,11 +122,12 @@ ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# 只安装运行时依赖（不需要编译工具）
+# 安装运行时依赖 + libstdc++ (llama-cpp-python 运行时需要)
 RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
     dnf install -y \
-    ca-certificates gettext \
+    ca-certificates gettext curl \
     openssl-libs bzip2-libs libffi zlib readline sqlite xz-libs ncurses-libs gdbm libuuid \
+    libstdc++ libgomp \
  && dnf clean all && rm -rf /var/cache/dnf
 
 # 复制 Python（只复制必要的运行时文件）
@@ -124,7 +142,7 @@ RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/python-local.conf && ldconfig \
  && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip3 \
  && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip
 
-# 从构建阶段复制 wheels 并安装
+# 从构建阶段复制 wheels 并安装（包含 openviking + llama-cpp-python + psycopg2）
 COPY --from=openviking-builder /wheels /tmp/wheels
 RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
     python3 -m pip install --no-cache-dir --upgrade pip \
@@ -132,15 +150,34 @@ RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
  && rm -rf /tmp/wheels
 
 # 验证安装
-RUN python3 -c "import openviking; print('OpenViking version:', openviking.__version__)"
+RUN python3 -c "import openviking; print('OpenViking version:', openviking.__version__)" \
+ && python3 -c "import llama_cpp; print('llama-cpp-python OK')"
 
-# 创建数据目录
-RUN mkdir -p /root/.openviking/data
+# 创建数据目录和模型缓存目录
+RUN mkdir -p /root/.openviking/data /root/.cache/openviking/models
+
+# 预置 bge-small-zh-v1.5-f16 GGUF 模型（~46MB），实现零配置启动
+# 优先使用构建脚本拷入的本地文件，不存在时在线下载
+COPY examples/openclaw-plugin/docker/models/ /tmp/_bge_model_stage/
+RUN set -eux; \
+    MODEL_DST=/root/.cache/openviking/models/bge-small-zh-v1.5-f16.gguf; \
+    if [ -f /tmp/_bge_model_stage/bge-small-zh-v1.5-f16.gguf ]; then \
+        mv /tmp/_bge_model_stage/bge-small-zh-v1.5-f16.gguf "${MODEL_DST}"; \
+        echo "[model] copied from local build context"; \
+    else \
+        echo "[model] local file not found, downloading from ${BGE_MODEL_URL}"; \
+        HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} \
+        http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} \
+        curl -fSL -o "${MODEL_DST}" "${BGE_MODEL_URL}"; \
+    fi; \
+    rm -rf /tmp/_bge_model_stage; \
+    ls -lh "${MODEL_DST}"
 
 WORKDIR /app
 
-# 复制配置模板和启动脚本
+# 复制配置模板（含 local embedding 模板）和启动脚本
 COPY examples/openclaw-plugin/docker/ov.conf.template.json /app/ov.conf.template.json
+COPY examples/openclaw-plugin/docker/ov.conf.local-embed.template.json /app/ov.conf.local-embed.template.json
 COPY examples/openclaw-plugin/docker/entrypoint-openviking.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
