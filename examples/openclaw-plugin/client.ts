@@ -252,8 +252,8 @@ export class OpenVikingClient {
         JSON.stringify({
           ...detail,
           X_OpenViking_Agent: effectiveAgentId,
-          X_OpenViking_Account: this.accountId.trim() || "default",
-          X_OpenViking_User: this.userId.trim() || "default",
+          X_OpenViking_Account: this.accountId.trim() || null,
+          X_OpenViking_User: this.userId.trim() || null,
           resolved_user_id: identity.userId,
           session_vfs_hint: detail.sessionId
             ? `viking://session/${identity.userId}/${String(detail.sessionId)}`
@@ -276,8 +276,14 @@ export class OpenVikingClient {
       if (this.apiKey) {
         headers.set("X-API-Key", this.apiKey);
       }
-      headers.set("X-OpenViking-Account", this.accountId.trim() || "default");
-      headers.set("X-OpenViking-User", this.userId.trim() || "default");
+      const accountId = this.accountId.trim();
+      const userId = this.userId.trim();
+      if (accountId) {
+        headers.set("X-OpenViking-Account", accountId);
+      }
+      if (userId) {
+        headers.set("X-OpenViking-User", userId);
+      }
       if (effectiveAgentId) {
         headers.set("X-OpenViking-Agent", effectiveAgentId);
       }
@@ -378,10 +384,6 @@ export class OpenVikingClient {
           saveSpace(preferredSpace);
           return preferredSpace;
         }
-        if (scope === "user" && spaces.includes("default")) {
-          saveSpace("default");
-          return "default";
-        }
         if (spaces.length === 1) {
           saveSpace(spaces[0]!);
           return spaces[0]!;
@@ -442,8 +444,8 @@ export class OpenVikingClient {
       `openviking: find POST ${this.baseUrl}/api/v1/search/find ` +
         JSON.stringify({
           X_OpenViking_Agent: effectiveAgentId,
-          X_OpenViking_Account: this.accountId.trim() || "default",
-          X_OpenViking_User: this.userId.trim() || "default",
+          X_OpenViking_Account: this.accountId.trim() || null,
+          X_OpenViking_User: this.userId.trim() || null,
           resolved_user_id: identity.userId,
           target_uri: normalizedTargetUri,
           target_uri_input: options.targetUri,

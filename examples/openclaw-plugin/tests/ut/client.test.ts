@@ -354,8 +354,8 @@ describe("OpenVikingClient tenant headers (accountId / userId)", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = new Headers(init.headers);
-    expect(headers.get("X-OpenViking-Account")).toBe("default");
-    expect(headers.get("X-OpenViking-User")).toBe("default");
+    expect(headers.has("X-OpenViking-Account")).toBe(false);
+    expect(headers.has("X-OpenViking-User")).toBe(false);
   });
 
   it("trims whitespace from accountId and userId", async () => {
@@ -515,5 +515,32 @@ describe("OpenVikingClient agentScopeMode", () => {
 
     expect(capturedUris).toHaveLength(2);
     expect(capturedUris[0]).toBe(capturedUris[1]);
+  });
+
+  it("does not fall back to default user space when preferred user space is absent", async () => {
+    const capturedUris: string[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/v1/system/status")) {
+        return okResponse({ user: "alice" });
+      }
+      if (url.includes("/api/v1/fs/ls")) {
+        return okResponse([{ name: "default", isDir: true }, { name: "bob", isDir: true }]);
+      }
+      if (url.endsWith("/api/v1/search/find")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        capturedUris.push(body.target_uri);
+        return okResponse({ memories: [], total: 0 });
+      }
+      return okResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new OpenVikingClient(
+      "http://127.0.0.1:1933", "", "agent", 5000,
+      "", "", undefined, "user_agent",
+    );
+    await client.find("test", { targetUri: "viking://user/memories" });
+
+    expect(capturedUris).toEqual(["viking://user/alice/memories"]);
   });
 });
