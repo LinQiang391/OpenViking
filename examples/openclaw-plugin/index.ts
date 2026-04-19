@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 
 import { Type } from "@sinclair/typebox";
 import { memoryOpenVikingConfigSchema } from "./config.js";
+import { registerSetupCli } from "./commands/setup.js";
 
 import { OpenVikingClient, localClientCache, localClientPendingPromises, isMemoryUri } from "./client.js";
 import type { FindResultItem, PendingClientEntry, CommitSessionResult, OVMessage } from "./client.js";
@@ -102,6 +103,10 @@ type OpenClawPluginApi = {
     stop?: (ctx?: unknown) => void | Promise<void>;
   }) => void;
   registerContextEngine?: (id: string, factory: () => unknown) => void;
+  registerCli?: (
+    factory: (ctx: { program: unknown; workspaceDir?: string }) => void,
+    opts?: { commands?: string[] },
+  ) => void;
   on: (
     hookName: string,
     handler: (event: unknown, ctx?: HookAgentContext) => unknown,
@@ -1091,6 +1096,8 @@ const contextEnginePlugin = {
         "openviking: registerContextEngine is unavailable; context-engine behavior will not run",
       );
     }
+
+    registerSetupCli(api);
 
     api.registerService({
       id: "openviking",

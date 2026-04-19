@@ -20,6 +20,8 @@
       "text-utils.ts",
       "tool-call-id.ts",
       "session-transcript-repair.ts",
+      "runtime-utils.ts",
+      "commands/setup.ts",
       "openclaw.plugin.json",
       "tsconfig.json",
       "package-lock.json",

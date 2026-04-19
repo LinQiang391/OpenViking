@@ -361,9 +361,9 @@ export function resolvePythonCommand(logger: ProcessLogger): string {
 
 function checkPythonVersion(pythonCmd: string): { ok: boolean; version?: string; error?: string } {
   try {
-    const out = execSync(
+    const out = runSync(
       `"${pythonCmd}" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`,
-      { encoding: "utf-8", shell: IS_WIN ? "cmd.exe" : "/bin/sh", timeout: 10_000 },
+      { encoding: "utf-8", shell: IS_WIN ? "cmd.exe" : "/bin/sh" },
     ).trim();
     const [major, minor] = out.split(".").map(Number);
     if (major < 3 || (major === 3 && minor < 10)) {
@@ -377,10 +377,9 @@ function checkPythonVersion(pythonCmd: string): { ok: boolean; version?: string;
 
 function isOpenVikingImportable(pythonCmd: string): boolean {
   try {
-    execSync(`"${pythonCmd}" -c "import openviking"`, {
+    runSync(`"${pythonCmd}" -c "import openviking"`, {
       encoding: "utf-8",
       shell: IS_WIN ? "cmd.exe" : "/bin/sh",
-      timeout: 15_000,
     });
     return true;
   } catch {
