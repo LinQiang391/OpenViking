@@ -27,6 +27,9 @@ describe("memoryOpenVikingConfigSchema.parse()", () => {
     expect(cfg.captureMaxLength).toBe(24000);
     expect(cfg.recallMaxContentChars).toBe(500);
     expect(cfg.agentId).toBe("default");
+    expect(cfg.serverAuthMode).toBe("api_key");
+    expect(cfg.isolateUserScopeByAgent).toBe(false);
+    expect(cfg.isolateAgentScopeByUser).toBe(true);
     expect(cfg.emitStandardDiagnostics).toBe(false);
   });
 
@@ -199,21 +202,50 @@ describe("memoryOpenVikingConfigSchema.parse()", () => {
     expect(cfg.accountId).toBe("");
     expect(cfg.userId).toBe("");
     expect(cfg.agentScopeMode).toBe("user_agent");
+    expect(cfg.isolateUserScopeByAgent).toBe(false);
+    expect(cfg.isolateAgentScopeByUser).toBe(true);
   });
 
-  it("defaults agentScopeMode to user_agent", () => {
+  it("defaults namespace policy to user root + agent-per-user root", () => {
     const cfg = memoryOpenVikingConfigSchema.parse({});
     expect(cfg.agentScopeMode).toBe("user_agent");
+    expect(cfg.isolateUserScopeByAgent).toBe(false);
+    expect(cfg.isolateAgentScopeByUser).toBe(true);
   });
 
-  it("accepts agentScopeMode 'agent'", () => {
+  it("maps deprecated agentScopeMode 'agent' to false/false namespace policy", () => {
     const cfg = memoryOpenVikingConfigSchema.parse({ agentScopeMode: "agent" });
     expect(cfg.agentScopeMode).toBe("agent");
+    expect(cfg.isolateUserScopeByAgent).toBe(false);
+    expect(cfg.isolateAgentScopeByUser).toBe(false);
   });
 
   it("falls back to user_agent for invalid agentScopeMode", () => {
     const cfg = memoryOpenVikingConfigSchema.parse({ agentScopeMode: "invalid" });
     expect(cfg.agentScopeMode).toBe("user_agent");
+    expect(cfg.isolateUserScopeByAgent).toBe(false);
+    expect(cfg.isolateAgentScopeByUser).toBe(true);
+  });
+
+  it("explicit namespace policy overrides deprecated agentScopeMode", () => {
+    const cfg = memoryOpenVikingConfigSchema.parse({
+      agentScopeMode: "agent",
+      isolateUserScopeByAgent: true,
+      isolateAgentScopeByUser: true,
+    });
+    expect(cfg.agentScopeMode).toBe("agent");
+    expect(cfg.isolateUserScopeByAgent).toBe(true);
+    expect(cfg.isolateAgentScopeByUser).toBe(true);
+  });
+
+  it("parses trusted serverAuthMode", () => {
+    const cfg = memoryOpenVikingConfigSchema.parse({ serverAuthMode: "trusted" });
+    expect(cfg.serverAuthMode).toBe("trusted");
+  });
+
+  it("falls back to api_key for invalid serverAuthMode", () => {
+    const cfg = memoryOpenVikingConfigSchema.parse({ serverAuthMode: "invalid" });
+    expect(cfg.serverAuthMode).toBe("api_key");
   });
 
   it("defaults recallResources to false", () => {

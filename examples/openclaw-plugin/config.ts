@@ -11,17 +11,21 @@ export type MemoryOpenVikingConfig = {
   port?: number;
   baseUrl?: string;
   agentId?: string;
+  serverAuthMode?: "api_key" | "trusted";
   apiKey?: string;
   /** Advanced option. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key. */
   accountId?: string;
   /** Advanced option. Only needed when using root key or trusted auth mode. */
   userId?: string;
   /**
-   * Advanced compatibility option. Controls how agent space is computed.
-   * "user_agent" (default): space = hash(userId + agentId) — per-user per-agent isolation.
-   * "agent": space = hash(agentId) — same agentId shares space across users within account.
-   * Leave unset in the default user-key flow. Only configure it when the server's
-   * memory.agent_scope_mode is changed from the default and the plugin must match it.
+   * Canonical namespace policy. Must match the server-side account namespace
+   * policy because current /system/status does not expose it.
+   */
+  isolateUserScopeByAgent?: boolean;
+  isolateAgentScopeByUser?: boolean;
+  /**
+   * Deprecated compatibility alias for older hash-based agent space behavior.
+   * Prefer isolateUserScopeByAgent / isolateAgentScopeByUser.
    */
   agentScopeMode?: "user_agent" | "agent";
   targetUri?: string;
@@ -74,6 +78,7 @@ const DEFAULT_EMIT_STANDARD_DIAGNOSTICS = false;
 const DEFAULT_LOCAL_CONFIG_PATH = join(homedir(), ".openviking", "ov.conf");
 
 const DEFAULT_AGENT_ID = "default";
+const DEFAULT_SERVER_AUTH_MODE = "api_key";
 
 function resolveAgentId(configured: unknown): string {
   if (typeof configured === "string" && configured.trim()) {
@@ -161,9 +166,12 @@ export const memoryOpenVikingConfigSchema = {
         "port",
         "baseUrl",
         "agentId",
+        "serverAuthMode",
         "apiKey",
         "accountId",
         "userId",
+        "isolateUserScopeByAgent",
+        "isolateAgentScopeByUser",
         "agentScopeMode",
         "targetUri",
         "timeoutMs",
@@ -206,6 +214,10 @@ export const memoryOpenVikingConfigSchema = {
       mode === "local" ? localBaseUrl : (typeof cfg.baseUrl === "string" ? cfg.baseUrl : resolveDefaultBaseUrl());
     const resolvedBaseUrl = resolveEnvVars(rawBaseUrl).replace(/\/+$/, "");
     const rawApiKey = typeof cfg.apiKey === "string" ? cfg.apiKey : process.env.OPENVIKING_API_KEY;
+    const rawServerAuthMode =
+      cfg.serverAuthMode ?? process.env.OPENVIKING_SERVER_AUTH_MODE;
+    const serverAuthMode =
+      rawServerAuthMode === "trusted" ? "trusted" as const : "api_key" as const;
     const captureMode = cfg.captureMode;
     if (
       typeof captureMode !== "undefined" &&
@@ -227,6 +239,32 @@ export const memoryOpenVikingConfigSchema = {
     const rawAgentScope = cfg.agentScopeMode ?? process.env.OPENVIKING_AGENT_SCOPE_MODE;
     const agentScopeMode =
       rawAgentScope === "agent" ? "agent" as const : "user_agent" as const;
+    const explicitIsolateUserScopeByAgent =
+      typeof cfg.isolateUserScopeByAgent === "boolean"
+        ? cfg.isolateUserScopeByAgent
+        : undefined;
+    const explicitIsolateAgentScopeByUser =
+      typeof cfg.isolateAgentScopeByUser === "boolean"
+        ? cfg.isolateAgentScopeByUser
+        : undefined;
+    const envIsolateUserScopeByAgent =
+      explicitIsolateUserScopeByAgent === undefined &&
+      process.env.OPENVIKING_ISOLATE_USER_SCOPE_BY_AGENT !== undefined
+        ? envFlag("OPENVIKING_ISOLATE_USER_SCOPE_BY_AGENT")
+        : undefined;
+    const envIsolateAgentScopeByUser =
+      explicitIsolateAgentScopeByUser === undefined &&
+      process.env.OPENVIKING_ISOLATE_AGENT_SCOPE_BY_USER !== undefined
+        ? envFlag("OPENVIKING_ISOLATE_AGENT_SCOPE_BY_USER")
+        : undefined;
+    const isolateUserScopeByAgent =
+      explicitIsolateUserScopeByAgent ??
+      envIsolateUserScopeByAgent ??
+      (agentScopeMode === "agent" ? false : false);
+    const isolateAgentScopeByUser =
+      explicitIsolateAgentScopeByUser ??
+      envIsolateAgentScopeByUser ??
+      (agentScopeMode === "agent" ? false : true);
 
     return {
       mode,
@@ -234,9 +272,12 @@ export const memoryOpenVikingConfigSchema = {
       port,
       baseUrl: resolvedBaseUrl,
       agentId: resolveAgentId(cfg.agentId),
+      serverAuthMode,
       apiKey: rawApiKey ? resolveEnvVars(rawApiKey) : "",
       accountId,
       userId,
+      isolateUserScopeByAgent,
+      isolateAgentScopeByUser,
       agentScopeMode,
       targetUri: typeof cfg.targetUri === "string" ? cfg.targetUri : DEFAULT_TARGET_URI,
       timeoutMs: Math.max(1000, Math.floor(toNumber(cfg.timeoutMs, DEFAULT_TIMEOUT_MS))),
@@ -331,7 +372,12 @@ export const memoryOpenVikingConfigSchema = {
     agentId: {
       label: "Agent ID",
       placeholder: "auto-generated",
-      help: 'OpenViking X-OpenViking-Agent: non-default values combine with OpenClaw ctx.agentId as "<config>_<sessionAgent>" (then sanitized to [a-zA-Z0-9_-]). Use "default" to send only ctx.agentId.',
+      help: 'OpenViking X-OpenViking-Agent. "default" follows OpenClaw ctx.agentId. Non-default values are prepended as "<config>_<ctx.agentId>" (sanitized to [a-zA-Z0-9_-]).',
+    },
+    serverAuthMode: {
+      label: "Server Auth Mode",
+      placeholder: DEFAULT_SERVER_AUTH_MODE,
+      help: 'OpenViking auth behavior. "api_key" (default): send X-API-Key when configured, otherwise dev fallback to X-OpenViking-Account/User default/default. "trusted": always send accountId/userId and optionally send apiKey when configured.',
     },
     apiKey: {
       label: "OpenViking API Key",
@@ -351,10 +397,22 @@ export const memoryOpenVikingConfigSchema = {
       help: "Advanced option. Tenant user ID. Only needed when using root key or trusted auth mode.",
       advanced: true,
     },
+    isolateUserScopeByAgent: {
+      label: "Isolate User Scope By Agent",
+      placeholder: "false",
+      help: "Canonical namespace policy. false (default): user alias expands to viking://user/<user_id>/... . true: expands to viking://user/<user_id>/agent/<agent_id>/... . Must match the server-side account namespace policy.",
+      advanced: true,
+    },
+    isolateAgentScopeByUser: {
+      label: "Isolate Agent Scope By User",
+      placeholder: "true",
+      help: "Canonical namespace policy. true (default): agent alias expands to viking://agent/<agent_id>/user/<user_id>/... . false: expands to viking://agent/<agent_id>/... . Must match the server-side account namespace policy.",
+      advanced: true,
+    },
     agentScopeMode: {
-      label: "Agent Scope Mode",
+      label: "Deprecated Agent Scope Mode",
       placeholder: "user_agent",
-      help: 'Advanced compatibility option. Normally leave unset. "user_agent" (default): each user+agent pair gets a separate space. "agent": same agentId shares space across users. Only set this when the server memory.agent_scope_mode is changed from the default and the plugin must match it.',
+      help: 'Deprecated compatibility alias for older hash-based routing. Prefer isolateUserScopeByAgent / isolateAgentScopeByUser. Mapping: "user_agent" => false/true, "agent" => false/false.',
       advanced: true,
     },
     targetUri: {

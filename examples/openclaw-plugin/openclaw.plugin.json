@@ -25,7 +25,12 @@
     "agentId": {
       "label": "Agent ID",
       "placeholder": "random unique ID",
-      "help": "Instance prefix for X-OpenViking-Agent. Non-default: `<this>_<OpenClaw ctx.agentId>` (sanitized to letters/digits/_/-). default: use OpenClaw session agent only."
+      "help": "OpenViking agent identity. default: follow OpenClaw ctx.agentId. Non-default: use `<this>_<OpenClaw ctx.agentId>` (sanitized to letters/digits/_/-), so the configured value acts as a prefix."
+    },
+    "serverAuthMode": {
+      "label": "Server Auth Mode",
+      "placeholder": "api_key",
+      "help": "api_key (default): send X-API-Key when configured, otherwise dev fallback to default/default tenant headers. trusted: always send accountId/userId and optionally send apiKey when configured."
     },
     "apiKey": {
       "label": "OpenViking API Key",
@@ -45,10 +50,22 @@
       "help": "Advanced option. Tenant user ID. Only needed when using root key or trusted auth mode.",
       "advanced": true
     },
+    "isolateUserScopeByAgent": {
+      "label": "Isolate User Scope By Agent",
+      "placeholder": "false",
+      "help": "Canonical namespace policy. false (default): user alias expands to viking://user/<user_id>/... . true: expands to viking://user/<user_id>/agent/<agent_id>/... . Must match the server-side account namespace policy.",
+      "advanced": true
+    },
+    "isolateAgentScopeByUser": {
+      "label": "Isolate Agent Scope By User",
+      "placeholder": "true",
+      "help": "Canonical namespace policy. true (default): agent alias expands to viking://agent/<agent_id>/user/<user_id>/... . false: expands to viking://agent/<agent_id>/... . Must match the server-side account namespace policy.",
+      "advanced": true
+    },
     "agentScopeMode": {
-      "label": "Agent Scope Mode",
+      "label": "Deprecated Agent Scope Mode",
       "placeholder": "user_agent",
-      "help": "Advanced compatibility option. Normally leave unset. \"user_agent\" (default): each user+agent pair gets a separate space. \"agent\": same agentId shares space across users. Only set this when the server memory.agent_scope_mode is changed from the default and the plugin must match it.",
+      "help": "Deprecated compatibility alias for older routing. Prefer isolateUserScopeByAgent / isolateAgentScopeByUser. Mapping: user_agent => false/true, agent => false/false.",
       "advanced": true
     },
     "targetUri": {
@@ -178,6 +195,9 @@
       "agentId": {
         "type": "string"
       },
+      "serverAuthMode": {
+        "type": "string"
+      },
       "apiKey": {
         "type": "string"
       },
@@ -186,6 +206,12 @@
       },
       "userId": {
         "type": "string"
+      },
+      "isolateUserScopeByAgent": {
+        "type": "boolean"
+      },
+      "isolateAgentScopeByUser": {
+        "type": "boolean"
       },
       "agentScopeMode": {
         "type": "string"
