@@ -34,14 +34,18 @@ class ProcessManager:
 
         merged_env = {**os.environ, **(env or {})}
         logger.debug("exec: %s (cwd=%s)", " ".join(cmd), cwd)
+        use_shell = os.name == "nt"
         return subprocess.run(
             cmd,
             capture_output=capture,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             cwd=cwd,
             env=merged_env,
             check=check,
+            shell=use_shell,
         )
 
     @staticmethod
@@ -56,18 +60,22 @@ class ProcessManager:
             cmd = cmd.split()
 
         merged_env = {**os.environ, **(env or {})}
-        stdout = open(log_path, "w") if log_path else subprocess.DEVNULL
+        stdout = open(log_path, "w", encoding="utf-8") if log_path else subprocess.DEVNULL
         stderr = subprocess.STDOUT if log_path else subprocess.DEVNULL
 
-        logger.info("background: %s -> %s", " ".join(cmd), log_path or "/dev/null")
-        return subprocess.Popen(
-            cmd,
+        logger.info("background: %s -> %s", " ".join(cmd), log_path or "(devnull)")
+        popen_kwargs = dict(
             stdout=stdout,
             stderr=stderr,
             cwd=cwd,
             env=merged_env,
-            start_new_session=True,
         )
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            popen_kwargs["shell"] = True
+        else:
+            popen_kwargs["start_new_session"] = True
+        return subprocess.Popen(cmd, **popen_kwargs)
 
     @staticmethod
     def is_port_listening(port: int) -> bool:

@@ -106,7 +106,7 @@ def ov_auth_headers(profile: ProfileManager,
     ov_conf = getattr(profile, "_ov_conf", None)
     if ov_conf and os.path.isfile(ov_conf):
         try:
-            with open(ov_conf) as f:
+            with open(ov_conf, encoding="utf-8") as f:
                 conf = json.load(f)
             root_key = conf.get("server", {}).get("root_api_key", "")
             if root_key:
@@ -230,7 +230,7 @@ def wait_for_memory_files(profile: ProfileManager, max_wait: int = 180,
                     entity_hits.append(ent)
                     break
                 try:
-                    with open(mf) as fh:
+                    with open(mf, encoding="utf-8") as fh:
                         if ent in fh.read():
                             entity_hits.append(ent)
                             break
@@ -369,7 +369,7 @@ def verify_ov_storage(profile: ProfileManager,
                 found_in_file = True
                 break
             try:
-                with open(mf) as fh:
+                with open(mf, encoding="utf-8") as fh:
                     if ent in fh.read():
                         found_in_file = True
                         break
@@ -426,7 +426,7 @@ def verify_ov_storage(profile: ProfileManager,
         assert session_files, "no session JSONL files found"
 
         latest = max(session_files, key=os.path.getmtime)
-        with open(latest) as fh:
+        with open(latest, encoding="utf-8") as fh:
             lines = fh.readlines()
         has_message = any(
             json.loads(l).get("type") == "message"

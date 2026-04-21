@@ -98,11 +98,11 @@ class TestRemoteE2ESingle:
         ov_conf = getattr(cls.profile, "_ov_conf", "")
         ov_port = getattr(cls.profile, "_ov_port", OPENVIKING_PORT + 100)
 
-        with open(ov_conf) as f:
+        with open(ov_conf, encoding="utf-8") as f:
             ov_cfg = json.load(f)
         ov_cfg.setdefault("server", {})["root_api_key"] = TEST_ROOT_API_KEY
         ov_cfg["server"]["host"] = "0.0.0.0"
-        with open(ov_conf, "w") as f:
+        with open(ov_conf, "w", encoding="utf-8") as f:
             json.dump(ov_cfg, f, indent=2, ensure_ascii=False)
         logger.info("configured ov.conf: root_api_key set, host=0.0.0.0, port=%d", ov_port)
 

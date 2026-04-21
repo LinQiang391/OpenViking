@@ -102,6 +102,34 @@ openclaw-plugin/
 | `OV_CONF` | 指定 ov.conf 路径 |
 | `OPENVIKING_PYTHON` | OpenViking 使用的 Python 路径 |
 
+## 常见问题
+
+### ClawHub 429 Rate Limit Exceeded
+
+**现象**：`openclaw plugins install clawhub:@openclaw/openviking@version` 报错 `(429): Rate limit exceeded`
+
+**原因**：ClawHub 的下载 API 对未认证请求有严格的限流。OpenClaw CLI 默认不传递 ClawHub 认证 token。
+
+**解决方法**：设置 `CLAWHUB_TOKEN` 环境变量，让 OpenClaw CLI 发送认证请求绕过限流。
+
+```bash
+# Linux/macOS
+export CLAWHUB_TOKEN=$(jq -r .token ~/.config/clawhub/config.json)
+
+# Windows PowerShell
+$env:CLAWHUB_TOKEN = (Get-Content "$env:APPDATA\clawhub\config.json" | ConvertFrom-Json).token
+```
+
+测试框架会自动从 ClawHub 配置文件读取 token 并注入到环境变量中（见 `profile_manager.py` 的 `_resolve_clawhub_token` 方法）。确保 `clawhub whoami` 显示已登录。
+
+### Windows 上 setup 向导 readline 报错
+
+**现象**：`openclaw openviking setup` 在 Windows 上通过 stdin 管道输入时报 `ERR_USE_AFTER_CLOSE: readline was closed`
+
+**原因**：Node.js readline 在非 TTY stdin（管道）下会在数据读完后立即关闭，导致后续 `question()` 调用失败。
+
+**处理**：测试框架会自动检测此错误并回退到直接写入 `openclaw.json` 配置文件，功能等效。
+
 ## 隔离机制
 
 测试通过 `OPENCLAW_STATE_DIR` 环境变量创建完全隔离的 OpenClaw 环境：

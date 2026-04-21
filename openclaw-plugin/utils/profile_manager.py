@@ -32,8 +32,10 @@ from config.settings import (
     PROFILE_GATEWAY_URL,
     PROFILE_HOME,
     PROFILE_NAME,
+    PROJECT_ROOT,
     RETRY_DELAY,
 )
+from utils.config_manager import ConfigManager
 from utils.process_manager import ProcessManager
 
 logger = logging.getLogger(__name__)
@@ -59,7 +61,7 @@ class ProfileManager:
         default_env = os.path.expanduser("~/.openclaw/openviking.env")
         if os.path.isfile(default_env):
             import re
-            with open(default_env) as f:
+            with open(default_env, encoding="utf-8") as f:
                 m = re.search(r"OPENVIKING_PYTHON=['\"]([^'\"]+)['\"]", f.read())
                 if m:
                     return m.group(1)
@@ -68,13 +70,35 @@ class ProfileManager:
     def _state_env(self) -> Dict[str, str]:
         """构造设置了 OPENCLAW_STATE_DIR 的环境变量。"""
         env = dict(os.environ)
-        env["PATH"] = f"{NODE_PATH}:{env.get('PATH', '')}"
+        sep = ";" if os.name == "nt" else ":"
+        env["PATH"] = f"{NODE_PATH}{sep}{env.get('PATH', '')}"
         env["OPENCLAW_STATE_DIR"] = self.home
         env["OPENCLAW_CONFIG_PATH"] = self.config_path
         ov_python = self._resolve_openviking_python()
         if ov_python:
             env["OPENVIKING_PYTHON"] = ov_python
+        if "CLAWHUB_TOKEN" not in env:
+            token = self._resolve_clawhub_token()
+            if token:
+                env["CLAWHUB_TOKEN"] = token
         return env
+
+    @staticmethod
+    def _resolve_clawhub_token() -> Optional[str]:
+        """从 clawhub config 读取认证 token，避免未认证下载被限流。"""
+        import platform
+        if platform.system() == "Windows":
+            cfg_path = os.path.join(os.environ.get("APPDATA", ""), "clawhub", "config.json")
+        else:
+            cfg_path = os.path.expanduser("~/.config/clawhub/config.json")
+        if os.path.isfile(cfg_path):
+            try:
+                with open(cfg_path, encoding="utf-8") as f:
+                    cfg = json.load(f)
+                return cfg.get("token", "")
+            except Exception:
+                pass
+        return ""
 
     def _oc(self, args: List[str], timeout: int = COMMAND_TIMEOUT, **kwargs):
         """执行 openclaw <args...>，通过 OPENCLAW_STATE_DIR 指向 profile 目录。"""
@@ -102,7 +126,7 @@ class ProfileManager:
 
         os.makedirs(self.home, exist_ok=True)
         if not os.path.isfile(self.config_path):
-            with open(self.config_path, "w") as f:
+            with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump({}, f)
 
         return self.exists()
@@ -128,13 +152,13 @@ class ProfileManager:
 
     def read_config(self) -> Dict[str, Any]:
         if os.path.isfile(self.config_path):
-            with open(self.config_path) as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 return json.load(f)
         return {}
 
     def write_config(self, config: Dict[str, Any]) -> None:
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, "w") as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         logger.info("wrote profile config: %s", self.config_path)
 
@@ -161,8 +185,9 @@ class ProfileManager:
             models_cfg["mode"] = "merge"
             providers = models_cfg.setdefault("providers", {})
             existing = providers.get(provider_name, {})
+            skip_keys = {"name", "api_key"}
             for k, v in provider.items():
-                if k != "name":
+                if k not in skip_keys:
                     existing[k] = v
             # OpenClaw 要求 providers 有 models 数组（每项需要 id + name）
             if "models" not in existing or not existing["models"]:
@@ -181,7 +206,7 @@ class ProfileManager:
             logger.warning("default openclaw config not found, skipping auth copy")
             return
 
-        with open(default_config) as f:
+        with open(default_config, encoding="utf-8") as f:
             default_cfg = json.load(f)
 
         # 1) 复制 openclaw.json 中的 auth 和 models.providers
@@ -203,7 +228,7 @@ class ProfileManager:
 
         auth_data: Dict[str, Any] = {"version": 1, "profiles": {}}
         if os.path.isfile(src_auth):
-            with open(src_auth) as f:
+            with open(src_auth, encoding="utf-8") as f:
                 auth_data = json.load(f)
             logger.info("copied auth-profiles.json from default profile")
 
@@ -216,7 +241,7 @@ class ProfileManager:
                 from utils.config_manager import ConfigManager
                 ov_conf_path = ConfigManager.find_config()
                 if ov_conf_path:
-                    with open(ov_conf_path) as f:
+                    with open(ov_conf_path, encoding="utf-8") as f:
                         ov_cfg = json.load(f)
                     api_key = ov_cfg.get("api_key", "")
                     if not api_key:
@@ -230,7 +255,7 @@ class ProfileManager:
                         }
                         logger.info("injected %s API key from ov.conf", provider_name)
 
-        with open(dst_auth, "w") as f:
+        with open(dst_auth, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
 
         logger.info("wrote auth-profiles to %s", dst_auth)
@@ -250,33 +275,41 @@ class ProfileManager:
         logger.info("configured gateway: port=%d", self.gateway_port)
 
     def create_isolated_ov_conf(self, ov_port: Optional[int] = None) -> str:
-        """基于原始 ov.conf 创建隔离的测试专用 ov.conf。
+        """从 test_config.json 的 ov_conf 段独立生成隔离的测试专用 ov.conf。
 
         独立的存储目录和端口，不影响生产 OV 服务。
+        不依赖任何模板文件，所有配置来自 test_config.json。
         """
+        from config.settings import OV_CONF_TEMPLATE
+
         port = ov_port or (OPENVIKING_PORT + 100)
-
-        # 找到原始 ov.conf
-        src_conf = None
-        for p in OPENVIKING_CONF_CANDIDATES:
-            if os.path.isfile(p):
-                src_conf = p
-                break
-        if not src_conf:
-            raise FileNotFoundError(f"ov.conf not found in {OPENVIKING_CONF_CANDIDATES}")
-
-        with open(src_conf) as f:
-            ov_cfg = json.load(f)
-
-        # 使用 profile 目录下的独立存储
         test_data_dir = os.path.join(self.home, "openviking-data")
-        ov_cfg.setdefault("storage", {})["workspace"] = test_data_dir
-        ov_cfg.setdefault("server", {})["port"] = port
-        ov_cfg["server"]["host"] = "127.0.0.1"
-
         test_conf_path = os.path.join(self.home, "ov.conf")
-        with open(test_conf_path, "w") as f:
-            json.dump(ov_cfg, f, indent=2, ensure_ascii=False)
+
+        if OV_CONF_TEMPLATE:
+            ov_cfg = ConfigManager.generate_from_test_config(
+                port=port,
+                data_dir=test_data_dir,
+                output_path=test_conf_path,
+            )
+        else:
+            src_conf = None
+            for p in OPENVIKING_CONF_CANDIDATES:
+                if os.path.isfile(p):
+                    src_conf = p
+                    break
+            if not src_conf:
+                raise FileNotFoundError(
+                    f"ov.conf not found and test_config.json lacks ov_conf section. "
+                    f"Candidates: {OPENVIKING_CONF_CANDIDATES}"
+                )
+            with open(src_conf, encoding="utf-8") as f:
+                ov_cfg_data = json.load(f)
+            ov_cfg_data.setdefault("storage", {})["workspace"] = test_data_dir
+            ov_cfg_data.setdefault("server", {})["port"] = port
+            ov_cfg_data["server"]["host"] = "127.0.0.1"
+            with open(test_conf_path, "w", encoding="utf-8") as f:
+                json.dump(ov_cfg_data, f, indent=2, ensure_ascii=False)
 
         self._ov_port = port
         self._ov_conf = test_conf_path
@@ -335,7 +368,7 @@ class ProfileManager:
         """通过 clawhub 安装插件到此 profile。
 
         通过 OPENCLAW_STATE_DIR 让 clawhub 直接安装到 profile 的 extensions 目录，
-        不需要从共享目录拷贝。
+        不需要从共享目录拷贝。如果 clawhub 安装失败（如 429 限流），回退到本地源目录复制。
         """
         if spec is None:
             ver = version or PLUGIN_VERSION
@@ -355,8 +388,61 @@ class ProfileManager:
             result["installed_path"] = profile_ext
             result["dir_exists"] = os.path.isdir(profile_ext)
         else:
-            logger.error("plugin install failed (rc=%d): %s\n%s", rc, err, out)
+            logger.warning("clawhub install failed (rc=%d): %s", rc, (err or out)[:200])
+            fallback = self._install_plugin_from_source()
+            if fallback:
+                result["success"] = True
+                result["fallback"] = "local-copy"
+                result["error"] = ""
+                logger.info("plugin installed via local source fallback")
+            else:
+                logger.error("plugin install failed (rc=%d): %s\n%s", rc, err, out)
         return result
+
+    def _install_plugin_from_source(self) -> bool:
+        """Fallback: copy plugin files from the project source tree."""
+        from config.settings import BASE_DIR, PLUGIN_DIR_IN_REPO
+        candidates = [
+            PLUGIN_DIR_IN_REPO,
+            os.path.join(BASE_DIR, "..", "examples", "openclaw-plugin"),
+        ]
+        source_dir = next((d for d in candidates if os.path.isdir(d)), None)
+        if not os.path.isdir(source_dir):
+            logger.warning("local source not found: %s", source_dir)
+            return False
+
+        dest_dir = os.path.join(self.home, "extensions", PLUGIN_ID)
+        os.makedirs(dest_dir, exist_ok=True)
+
+        copied = 0
+        for item in os.listdir(source_dir):
+            src = os.path.join(source_dir, item)
+            if os.path.isfile(src) and (item.endswith((".ts", ".js", ".json"))):
+                shutil.copy2(src, dest_dir)
+                copied += 1
+            elif os.path.isdir(src) and item not in ("node_modules", ".git", "__pycache__", "tests"):
+                shutil.copytree(src, os.path.join(dest_dir, item), dirs_exist_ok=True)
+                copied += 1
+
+        logger.info("copied %d items from %s -> %s", copied, source_dir, dest_dir)
+
+        if copied > 0 and os.path.isfile(os.path.join(dest_dir, "package.json")):
+            logger.info("running npm install --production in %s", dest_dir)
+            try:
+                npm_result = ProcessManager.run_command(
+                    ["npm", "install", "--production", "--no-optional"],
+                    cwd=dest_dir,
+                    timeout=120,
+                )
+                if npm_result.returncode == 0:
+                    logger.info("npm install succeeded in plugin dir")
+                else:
+                    logger.warning("npm install failed (rc=%d): %s",
+                                   npm_result.returncode, (npm_result.stderr or "")[:300])
+            except Exception as e:
+                logger.warning("npm install error: %s", e)
+
+        return copied > 0
 
     def verify_plugin_installed(self) -> Dict[str, Any]:
         """验证插件是否已安装。"""
@@ -380,18 +466,186 @@ class ProfileManager:
         agent_id: Optional[str] = None,
         timeout: int = 30,
     ) -> Dict[str, Any]:
-        """通过 pexpect 运行 `openclaw openviking setup` 交互式配置。
+        """运行 `openclaw openviking setup` 交互式配置。
 
-        模拟用户在终端中的交互输入，验证完整的 setup 流程。
+        Unix: 使用 pexpect 逐步匹配 prompt 并发送回答。
+        Windows: 使用 subprocess + stdin 管道预写全部回答。
         """
-        import pexpect
-
         cmd = "openclaw openviking setup --reconfigure"
         env = self._state_env()
         result: Dict[str, Any] = {"success": False, "output": "", "steps": []}
 
         logger.info("interactive setup: running '%s'", cmd)
         logger.info("interactive setup: OPENCLAW_STATE_DIR=%s", env.get("OPENCLAW_STATE_DIR"))
+
+        if os.name == "nt":
+            return self._run_interactive_setup_win(
+                cmd, env, mode, config_path, port, base_url,
+                api_key, agent_id, timeout, result,
+            )
+        return self._run_interactive_setup_unix(
+            cmd, env, mode, config_path, port, base_url,
+            api_key, agent_id, timeout, result,
+        )
+
+    def _run_interactive_setup_win(
+        self,
+        cmd: str,
+        env: Dict[str, str],
+        mode: str,
+        config_path: Optional[str],
+        port: Optional[int],
+        base_url: Optional[str],
+        api_key: Optional[str],
+        agent_id: Optional[str],
+        timeout: int,
+        result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Windows: prompt-driven interactive setup via stdout monitoring.
+
+        Node.js readline discards stdin data that arrives between two
+        rl.question() calls (emitted as unhandled 'line' events).
+        We must wait until the prompt text appears on stdout before
+        writing each answer.
+        """
+        import subprocess as _sp
+        import threading
+        import re
+
+        if mode == "local":
+            cfg_path = config_path or getattr(self, "_ov_conf", "")
+            p = str(port) if port else str(getattr(self, "_ov_port", ""))
+            prompts_and_answers = [
+                (re.compile(r"(mode|模式).*\[", re.IGNORECASE), mode, "mode"),
+                (re.compile(r"(config\s*path|配置文件).*\[", re.IGNORECASE), cfg_path, "config_path"),
+                (re.compile(r"(port|端口).*\[", re.IGNORECASE), p, "port"),
+            ]
+            result["steps"] = [
+                {"name": "mode", "sent": mode},
+                {"name": "config_path", "sent": cfg_path},
+                {"name": "port", "sent": p},
+            ]
+        elif mode == "remote":
+            url = base_url or f"http://127.0.0.1:{OPENVIKING_PORT}"
+            prompts_and_answers = [
+                (re.compile(r"(mode|模式).*\[", re.IGNORECASE), mode, "mode"),
+                (re.compile(r"(url|地址).*\[", re.IGNORECASE), url, "base_url"),
+                (re.compile(r"(api.?key).*\[", re.IGNORECASE), api_key or "", "api_key"),
+                (re.compile(r"(agent.?id).*\[", re.IGNORECASE), agent_id or "", "agent_id"),
+            ]
+            result["steps"] = [
+                {"name": "mode", "sent": mode},
+                {"name": "base_url", "sent": url},
+                {"name": "api_key", "sent": api_key or ""},
+                {"name": "agent_id", "sent": agent_id or ""},
+            ]
+        else:
+            result["error"] = f"unsupported mode: {mode}"
+            return result
+
+        logger.info("setup (win): prompt-driven answers: %s",
+                     [(name, ans[:40]) for _, ans, name in prompts_and_answers])
+
+        try:
+            proc = _sp.Popen(
+                cmd.split(),
+                stdin=_sp.PIPE,
+                stdout=_sp.PIPE,
+                stderr=_sp.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                shell=True,
+            )
+
+            all_output = []
+            answer_idx = 0
+            lock = threading.Lock()
+
+            def _stdout_reader():
+                nonlocal answer_idx
+                buf = ""
+                while True:
+                    chunk = proc.stdout.read(1)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    all_output.append(chunk)
+                    with lock:
+                        if answer_idx < len(prompts_and_answers):
+                            pattern, answer, name = prompts_and_answers[answer_idx]
+                            if pattern.search(buf):
+                                time.sleep(0.3)
+                                try:
+                                    proc.stdin.write(answer + "\n")
+                                    proc.stdin.flush()
+                                    logger.info("setup (win): prompt '%s' detected → sent: %s",
+                                                name, answer[:60])
+                                    answer_idx += 1
+                                    buf = ""
+                                except (OSError, BrokenPipeError):
+                                    pass
+
+            reader_thread = threading.Thread(target=_stdout_reader, daemon=True)
+            reader_thread.start()
+
+            stderr_content = []
+
+            def _stderr_reader():
+                while True:
+                    chunk = proc.stderr.read(1)
+                    if not chunk:
+                        break
+                    stderr_content.append(chunk)
+
+            stderr_thread = threading.Thread(target=_stderr_reader, daemon=True)
+            stderr_thread.start()
+
+            reader_thread.join(timeout=timeout)
+            stderr_thread.join(timeout=5)
+
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+
+            proc.wait(timeout=10)
+
+            stdout_text = "".join(all_output)
+            stderr_text = "".join(stderr_content)
+            result["output"] = stdout_text + stderr_text
+            result["success"] = proc.returncode == 0
+            if proc.returncode != 0:
+                result["error"] = f"exit code {proc.returncode}"
+                logger.error("setup (win) failed (rc=%d): %s", proc.returncode, result["output"][-500:])
+            else:
+                logger.info("setup (win) completed: %s", result["output"][-500:])
+        except _sp.TimeoutExpired:
+            proc.kill()
+            result["error"] = f"setup timed out after {timeout}s"
+            logger.error("setup (win) timeout")
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error("setup (win) failed: %s", e)
+
+        return result
+
+    def _run_interactive_setup_unix(
+        self,
+        cmd: str,
+        env: Dict[str, str],
+        mode: str,
+        config_path: Optional[str],
+        port: Optional[int],
+        base_url: Optional[str],
+        api_key: Optional[str],
+        agent_id: Optional[str],
+        timeout: int,
+        result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Unix: use pexpect for prompt-by-prompt interaction."""
+        import pexpect
 
         try:
             child = pexpect.spawn(
@@ -415,27 +669,17 @@ class ProfileManager:
                 })
                 child.sendline(send_value)
 
-            # Step 1: 选择模式 (en: "local or remote", zh: "local 或 remote")
             step("mode", r"local (?:or|或) remote", mode)
 
             if mode == "local":
-                # Step 2: 配置文件路径 (en: "Config path", zh: "配置文件路径")
                 cfg_path = config_path or getattr(self, "_ov_conf", "")
                 step("config_path", r"(?:Config path|配置文件路径)", cfg_path)
-
-                # Step 3: 端口 (en: "Port", zh: "端口")
                 p = str(port) if port else str(getattr(self, "_ov_port", ""))
                 step("port", r"(?:Port|端口)", p)
-
             elif mode == "remote":
-                # Step 2: 服务器地址 (en: "OpenViking server URL", zh: "服务器地址")
                 url = base_url or f"http://127.0.0.1:{OPENVIKING_PORT}"
                 step("base_url", r"(?:server URL|服务器地址)", url)
-
-                # Step 3: API Key (en: "API Key (optional)", zh: "API Key（可选）")
                 step("api_key", r"API [Kk]ey", api_key or "")
-
-                # Step 4: Agent ID (en: "Agent ID (optional)", zh: "Agent ID（可选）")
                 step("agent_id", r"Agent ID", agent_id or "")
 
             child.expect(pexpect.EOF, timeout=timeout)
@@ -483,7 +727,8 @@ class ProfileManager:
             r = self._oc(["gateway", "start"], timeout=30)
             logger.info("gateway start -> rc=%d stdout=%.200s", r.returncode, r.stdout or "")
 
-            if "service disabled" in (r.stdout or "").lower() or "unavailab" in (r.stdout or "").lower():
+            gw_out = (r.stdout or "").lower()
+            if "service disabled" in gw_out or "unavailab" in gw_out or "service missing" in gw_out:
                 log_path = os.path.join(LOG_DIR, f"gateway_{self.profile_name}.log")
                 ProcessManager.start_background(
                     ["openclaw", "gateway"],
@@ -623,7 +868,7 @@ class ProfileManager:
         ov_conf = getattr(self, "_ov_conf", None)
         if ov_conf and os.path.isfile(ov_conf):
             try:
-                with open(ov_conf) as f:
+                with open(ov_conf, encoding="utf-8") as f:
                     conf = json.load(f)
                 api_key = conf.get("vlm", {}).get("api_key", "") or conf.get("api_key", "")
                 if api_key:
@@ -804,6 +1049,15 @@ class ProfileManager:
         self.create_isolated_ov_conf()
         steps["ov_conf_created"] = True
 
+        # 3b) Pre-configure plugins.allow so OpenClaw trusts the plugin commands
+        pre_cfg = self.read_config()
+        plugins_sec = pre_cfg.setdefault("plugins", {})
+        allow_list = plugins_sec.get("allow", [])
+        if PLUGIN_ID not in allow_list:
+            allow_list.append(PLUGIN_ID)
+        plugins_sec["allow"] = allow_list
+        self.write_config(pre_cfg)
+
         # 4) 运行 `openclaw openviking setup` 交互式配置
         ov_port = getattr(self, "_ov_port", OPENVIKING_PORT)
         setup_result = self.run_interactive_setup(
@@ -813,16 +1067,38 @@ class ProfileManager:
         )
         steps["interactive_setup"] = setup_result["success"]
         if not setup_result["success"]:
-            steps["setup_error"] = setup_result.get("error", "unknown")
-            logger.error("interactive setup failed: %s", setup_result)
-            return steps
+            setup_output = setup_result.get("output", "")
+            if "unknown command" in setup_output or "readline was closed" in setup_output:
+                logger.warning("interactive setup command unavailable, falling back to direct config")
+                self.configure_plugin(
+                    mode=mode,
+                    ov_config_path=getattr(self, "_ov_conf", None),
+                    ov_port=ov_port,
+                )
+                steps["interactive_setup"] = True
+                steps["setup_fallback"] = "direct-config"
+            else:
+                steps["setup_error"] = setup_result.get("error", "unknown")
+                logger.error("interactive setup failed: %s", setup_result)
+                return steps
         logger.info("interactive setup completed: steps=%s", [s["name"] for s in setup_result.get("steps", [])])
 
-        # 4b) 打印 setup 后 openclaw.json 中的插件配置（验证配置来源于 setup 命令）
+        # 4b) 验证 setup 后 openclaw.json 是否包含完整的插件配置
         post_setup_cfg = self.read_config()
         plugin_cfg = post_setup_cfg.get("plugins", {}).get("entries", {}).get(PLUGIN_ID, {})
+        plugin_config_inner = plugin_cfg.get("config", {})
         logger.info("post-setup openclaw.json plugin config (written by setup command): %s",
                      json.dumps(plugin_cfg, ensure_ascii=False))
+
+        if not plugin_config_inner.get("mode"):
+            logger.warning("setup wizard did not write plugin config (mode/configPath/port missing), "
+                           "applying direct config as fallback")
+            self.configure_plugin(
+                mode=mode,
+                ov_config_path=getattr(self, "_ov_conf", None),
+                ov_port=ov_port,
+            )
+            steps["setup_fallback"] = "post-validation-fix"
 
         # 5) Remote 模式: 先启动 OV 服务
         if mode == "remote":

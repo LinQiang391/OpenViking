@@ -18,7 +18,7 @@ PROJECT_ROOT = os.environ.get("PROJECT_DIR", os.path.abspath(os.path.join(BASE_D
 def _load_test_config() -> Dict[str, Any]:
     config_path = os.environ.get("TEST_CONFIG", os.path.join(BASE_DIR, "test_config.json"))
     if os.path.isfile(config_path):
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -33,6 +33,7 @@ _PROFILE = _CFG.get("profile", {})
 _MODELS = _CFG.get("models", {})
 _JUDGE = _CFG.get("judge", {})
 _TEST_DATA = _CFG.get("test_data", {})
+_OV_CONF = _CFG.get("ov_conf", {})
 
 
 def _cfg_str(section: Dict, key: str, env_key: str, default: str) -> str:
@@ -64,7 +65,14 @@ PROFILE_HOME = os.path.expanduser(f"~/.openclaw-{PROFILE_NAME}")
 PROFILE_GATEWAY_URL = f"http://127.0.0.1:{PROFILE_GATEWAY_PORT}"
 
 # Node.js path (openclaw requires Node >=22.12)
-NODE_PATH = _cfg_str(_PATHS, "node_bin", "NODE_BIN", os.path.expanduser("~/.nvm/versions/node/v22.22.2/bin"))
+def _default_node_path() -> str:
+    import shutil
+    node_exe = shutil.which("node")
+    if node_exe:
+        return os.path.dirname(os.path.realpath(node_exe))
+    return os.path.expanduser("~/.nvm/versions/node/v22.22.2/bin")
+
+NODE_PATH = _cfg_str(_PATHS, "node_bin", "NODE_BIN", _default_node_path())
 
 
 # ── OpenClaw ──────────────────────────────────────────────────
@@ -89,6 +97,7 @@ else:
     OPENVIKING_CONF_CANDIDATES = [
         os.path.join(PROJECT_ROOT, "ov.conf.temp"),
         os.path.join(PROJECT_ROOT, "ov.conf"),
+        os.path.join(BASE_DIR, "ov.conf"),
         os.path.join(OPENVIKING_HOME, "ov.conf"),
         os.path.join(PROJECT_ROOT, "examples", "ov.conf.example"),
     ]
@@ -103,7 +112,7 @@ def _detect_ov_port() -> int:
     for path in OPENVIKING_CONF_CANDIDATES:
         if os.path.isfile(path):
             try:
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     cfg = json.load(f)
                 port = cfg.get("server", {}).get("port")
                 if port:
@@ -150,7 +159,7 @@ if not _judge_api_key and _JUDGE.get("api_key_from_ov_conf"):
     for _ov_candidate in OPENVIKING_CONF_CANDIDATES:
         if os.path.isfile(_ov_candidate):
             try:
-                with open(_ov_candidate) as _f:
+                with open(_ov_candidate, encoding="utf-8") as _f:
                     _ov = json.load(_f)
                 _judge_api_key = _ov.get("vlm", {}).get("api_key", "") or _ov.get("api_key", "")
                 if _judge_api_key:
@@ -229,3 +238,7 @@ def get_effective_config() -> Dict[str, Any]:
             "profile_gateway": PROFILE_GATEWAY_PORT,
         },
     }
+
+
+# ── ov.conf 模板（从 test_config.json 的 ov_conf 段读取）───────
+OV_CONF_TEMPLATE: Dict[str, Any] = _OV_CONF

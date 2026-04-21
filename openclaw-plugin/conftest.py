@@ -3,10 +3,17 @@ OpenClaw Plugin 测试框架 — 全局 Fixtures & 配置
 """
 
 import logging
+import os
+import sys
 
 import pytest
 
 from config.settings import get_effective_config
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 logger = logging.getLogger(__name__)
 

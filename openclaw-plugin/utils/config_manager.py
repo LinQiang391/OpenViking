@@ -34,7 +34,7 @@ class ConfigManager:
         if not path or not os.path.isfile(path):
             return None
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as exc:
             logger.error("failed to read config %s: %s", path, exc)
@@ -44,7 +44,7 @@ class ConfigManager:
     def write_config(config: Dict[str, Any], path: Optional[str] = None) -> str:
         path = path or os.path.join(OPENVIKING_HOME, "ov.conf")
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         logger.info("wrote ov.conf to %s", path)
         return path
@@ -197,6 +197,31 @@ class ConfigManager:
         return config
 
     @staticmethod
+    def generate_from_test_config(
+        port: int = 1933,
+        data_dir: Optional[str] = None,
+        output_path: Optional[str] = None,
+    ) -> str:
+        """从 test_config.json 的 ov_conf 段独立生成完整 ov.conf。
+
+        不依赖任何模板文件。port 和 data_dir (storage.workspace) 由调用方
+        按隔离 profile 的需求覆盖。其余配置项全部取自 test_config.json。
+        """
+        from config.settings import OV_CONF_TEMPLATE
+
+        config = copy.deepcopy(OV_CONF_TEMPLATE)
+        if not config:
+            raise ValueError("test_config.json 中缺少 ov_conf 段，无法生成 ov.conf")
+
+        config.setdefault("server", {})["port"] = port
+        if data_dir:
+            config.setdefault("storage", {})["workspace"] = data_dir
+
+        output = output_path or os.path.join(OPENVIKING_HOME, "ov.conf")
+        ConfigManager.write_config(config, output)
+        return output
+
+    @staticmethod
     def create_test_config(
         port: int = 1933,
         host: str = "0.0.0.0",
@@ -204,7 +229,7 @@ class ConfigManager:
         base_config_path: Optional[str] = None,
         output_path: Optional[str] = None,
     ) -> str:
-        """基于已有配置创建测试用的临时配置"""
+        """基于已有配置创建测试用的临时配置（兼容旧模板方式）。"""
         if base_config_path:
             config = ConfigManager.read_config(base_config_path) or {}
         else:
