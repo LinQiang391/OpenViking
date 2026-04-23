@@ -91,6 +91,21 @@ else
         echo "[INFO] Generated config with local embedding at ${OV_CONF_PATH}"
     fi
 
+    # VLM API Key 未设置时移除 vlm 配置块（避免 api_key 空字符串校验报错）
+    if [[ -z "${OPENVIKING_VLM_API_KEY}" ]]; then
+        python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    conf = json.load(f)
+conf.pop('vlm', None)
+with open(sys.argv[1], 'w') as f:
+    json.dump(conf, f, indent=2)
+" "${OV_CONF_PATH}"
+        echo "[INFO] VLM not configured (no OPENVIKING_VLM_API_KEY)"
+    else
+        echo "[INFO] VLM configured: provider=${OPENVIKING_VLM_PROVIDER}, model=${OPENVIKING_VLM_MODEL}"
+    fi
+
     if [[ "${OPENVIKING_VECTORDB_BACKEND}" == "opengauss" ]]; then
         echo "[INFO] VectorDB backend: opengauss (host=${OG_HOST}:${OG_PORT}, db=${OG_DB_NAME}, mode=${OG_MODE})"
         inject_opengauss_config

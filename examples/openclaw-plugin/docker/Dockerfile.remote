@@ -9,8 +9,7 @@
 #     -f examples/openclaw-plugin/docker/Dockerfile.remote \
 #     -t swr.cn-north-4.myhuaweicloud.com/kunpeng-ai/openclaw-openviking:remote-0406 .
 
-ARG NODE_VERSION=22
-ARG NVM_VERSION=v0.40.1
+ARG NODE_VERSION=22.22.2
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG NPM_REGISTRY_FALLBACK=https://registry.npmjs.org
 ARG OPENCLAW_VERSION=latest
@@ -23,7 +22,6 @@ ARG HTTPS_PROXY
 FROM openeuler/openeuler:22.03-lts
 
 ARG NODE_VERSION
-ARG NVM_VERSION
 ARG NPM_REGISTRY
 ARG NPM_REGISTRY_FALLBACK
 ARG OPENCLAW_VERSION
@@ -34,7 +32,6 @@ ARG HTTP_PROXY
 ARG HTTPS_PROXY
 
 ENV OPENCLAW_STATE_DIR=/root/.openclaw
-ENV NVM_DIR=/root/.nvm
 ENV npm_config_registry=${NPM_REGISTRY}
 ENV npm_config_optional=true
 
@@ -67,24 +64,24 @@ ENV https_proxy=${HTTPS_PROXY}
 RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
  && git config --global url."https://github.com/".insteadOf "git@github.com:"
 
-# 安装 NVM
-RUN mkdir -p "${NVM_DIR}" /tmp/nvm-dl \
- && (curl -fsSL "https://github.com/nvm-sh/nvm/archive/refs/tags/${NVM_VERSION}.tar.gz" -o /tmp/nvm.tar.gz) \
- || (unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy 2>/dev/null; \
-     curl -fsSL "https://github.com/nvm-sh/nvm/archive/refs/tags/${NVM_VERSION}.tar.gz" -o /tmp/nvm.tar.gz) \
- && tar -xzf /tmp/nvm.tar.gz -C /tmp/nvm-dl \
- && cp -a /tmp/nvm-dl/nvm-*/. "${NVM_DIR}" \
- && rm -rf /tmp/nvm-dl /tmp/nvm.tar.gz \
- && echo 'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /root/.bashrc
+# 直接下载 Node.js 二进制包（不依赖 NVM 的版本解析）
+RUN set -eux; \
+    ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x64/'); \
+    NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.gz"; \
+    MIRROR_URL="https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.gz"; \
+    (curl -fSL --connect-timeout 15 --max-time 300 -o /tmp/node.tar.gz "${MIRROR_URL}" \
+     || curl -fSL --connect-timeout 15 --max-time 300 -o /tmp/node.tar.gz "${NODE_URL}") \
+ && mkdir -p /usr/local/lib/nodejs \
+ && tar -xzf /tmp/node.tar.gz -C /usr/local/lib/nodejs --strip-components=1 \
+ && rm /tmp/node.tar.gz \
+ && ln -sf /usr/local/lib/nodejs/bin/node /usr/local/bin/node \
+ && ln -sf /usr/local/lib/nodejs/bin/npm /usr/local/bin/npm \
+ && ln -sf /usr/local/lib/nodejs/bin/npx /usr/local/bin/npx \
+ && node --version && npm --version
 
-# 安装 Node.js + 最新 openclaw + 安装助手
+# 安装 openclaw + 安装助手
 RUN set -e; \
-    . "${NVM_DIR}/nvm.sh" \
- && nvm install ${NODE_VERSION} \
- && nvm alias default ${NODE_VERSION} \
- && nvm use default \
- && node --version && npm --version \
- && npm install -g node-gyp --registry="${NPM_REGISTRY}" \
+    npm install -g node-gyp --registry="${NPM_REGISTRY}" \
  || npm install -g node-gyp --registry="${NPM_REGISTRY_FALLBACK}" \
  && npm install -g "openclaw@${OPENCLAW_VERSION}" --registry="${NPM_REGISTRY}" \
  || npm install -g "openclaw@${OPENCLAW_VERSION}" --registry="${NPM_REGISTRY_FALLBACK}" \
@@ -93,11 +90,7 @@ RUN set -e; \
  && openclaw --version \
  && ov-install --help | head -5 \
  && rm -rf /root/.npm /root/.cache /tmp/* 2>/dev/null || true \
- && NODE_BIN="$(. ${NVM_DIR}/nvm.sh && nvm which current)" \
- && BIN_DIR="$(dirname "${NODE_BIN}")" \
- && ln -sf "${NODE_BIN}" /usr/local/bin/node \
- && ln -sf "${BIN_DIR}/npm" /usr/local/bin/npm \
- && ln -sf "${BIN_DIR}/npx" /usr/local/bin/npx \
+ && BIN_DIR="/usr/local/lib/nodejs/bin" \
  && ([ -x "${BIN_DIR}/openclaw" ] && ln -sf "${BIN_DIR}/openclaw" /usr/local/bin/openclaw || true) \
  && ([ -x "${BIN_DIR}/ov-install" ] && ln -sf "${BIN_DIR}/ov-install" /usr/local/bin/ov-install || true)
 
@@ -106,11 +99,9 @@ RUN openclaw config set gateway.mode local \
  && openclaw config set gateway.bind lan \
  && openclaw config set gateway.port 18789
 
-# 使用安装助手下载并安装 openviking 插件（remote 模式，不需要 Python）
-# REPO/BRANCH 控制插件文件从哪个仓库/分支下载
-# yes "" 保持 stdin 开放避免 readline EOF 退出；前 4 行提供交互答案
+# 使用 ov-install 下载并安装 openviking 插件（remote 模式）
 RUN (echo "remote"; echo "http://127.0.0.1:1933"; echo ""; echo ""; yes "") \
-  | SKIP_OPENVIKING=1 REPO="${PLUGIN_REPO}" BRANCH="${PLUGIN_BRANCH}" ov-install \
+  | SKIP_OPENVIKING=1 PLUGIN_VERSION="${PLUGIN_BRANCH}" ov-install \
  && ls -la /root/.openclaw/extensions/
 
 # 清理编译工具（运行时不需要），dnf 不走代理

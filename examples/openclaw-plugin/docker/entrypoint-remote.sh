@@ -30,6 +30,10 @@ OPENVIKING_AGENT_ID="${OPENVIKING_AGENT_ID:-main}"
 OPENVIKING_TARGET_URI="${OPENVIKING_TARGET_URI:-viking://user/memories}"
 OPENVIKING_AUTO_RECALL="${OPENVIKING_AUTO_RECALL:-true}"
 OPENVIKING_AUTO_CAPTURE="${OPENVIKING_AUTO_CAPTURE:-true}"
+OPENVIKING_RECALL_MAX_CONTENT_CHARS="${OPENVIKING_RECALL_MAX_CONTENT_CHARS:-10000}"
+OPENVIKING_RECALL_TOKEN_BUDGET="${OPENVIKING_RECALL_TOKEN_BUDGET:-8000}"
+OPENVIKING_ACCOUNT_ID="${OPENVIKING_ACCOUNT_ID:-default}"
+OPENVIKING_USER_ID="${OPENVIKING_USER_ID:-default}"
 
 # OpenClaw default model and provider API keys (optional)
 OPENCLAW_DEFAULT_MODEL="${OPENCLAW_DEFAULT_MODEL:-}"
@@ -85,6 +89,10 @@ if [[ "${RUN_OPENCLAW_BOOTSTRAP}" == "1" ]]; then
   openclaw config set "plugins.entries.${PLUGIN_ID}.config.targetUri" "${OPENVIKING_TARGET_URI}"
   openclaw config set "plugins.entries.${PLUGIN_ID}.config.autoRecall" "${OPENVIKING_AUTO_RECALL}" --json
   openclaw config set "plugins.entries.${PLUGIN_ID}.config.autoCapture" "${OPENVIKING_AUTO_CAPTURE}" --json
+  openclaw config set "plugins.entries.${PLUGIN_ID}.config.recallMaxContentChars" "${OPENVIKING_RECALL_MAX_CONTENT_CHARS}" --json
+  openclaw config set "plugins.entries.${PLUGIN_ID}.config.recallTokenBudget" "${OPENVIKING_RECALL_TOKEN_BUDGET}" --json
+  openclaw config set "plugins.entries.${PLUGIN_ID}.config.accountId" "${OPENVIKING_ACCOUNT_ID}"
+  openclaw config set "plugins.entries.${PLUGIN_ID}.config.userId" "${OPENVIKING_USER_ID}"
 
   if [[ -n "${OPENCLAW_DEFAULT_MODEL}" ]]; then
     openclaw config set agents.defaults.model.primary "${OPENCLAW_DEFAULT_MODEL}" 2>/dev/null || true

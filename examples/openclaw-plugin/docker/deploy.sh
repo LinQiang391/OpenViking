@@ -133,10 +133,15 @@ load_config() {
 
     OV_CONTAINER_NAME="${OV_CONTAINER_NAME:-openviking}"
     OV_PORT="${OV_PORT:-1933}"
+    OV_HOST_PORT="${OV_HOST_PORT:-${OV_PORT}}"
     HOST_IP="${HOST_IP:-172.17.0.1}"
 
     OC_CONTAINER_NAME="${OC_CONTAINER_NAME:-openclaw}"
     OC_PORT="${OC_PORT:-18790}"
+    OC_HOST_PORT="${OC_HOST_PORT:-${OC_PORT}}"
+
+    DOCKER_NET_MODE="${DOCKER_NET_MODE:-bridge}"
+    DOCKER_NETWORK_NAME="${DOCKER_NETWORK_NAME:-openviking-net}"
 
     OPENVIKING_ROOT_API_KEY="${OPENVIKING_ROOT_API_KEY:-}"
     OPENVIKING_TARGET_URI="${OPENVIKING_TARGET_URI:-viking://user/memories}"
@@ -204,6 +209,20 @@ pull_images() {
     fi
 }
 
+# ======================== Docker 网络 ========================
+
+setup_network() {
+    if [[ "${DOCKER_NET_MODE}" == "host" ]]; then
+        return
+    fi
+    if ! docker network inspect "${DOCKER_NETWORK_NAME}" &>/dev/null; then
+        docker network create "${DOCKER_NETWORK_NAME}" >/dev/null
+        log_info "创建 Docker 网络: ${DOCKER_NETWORK_NAME}"
+    else
+        log_info "Docker 网络已存在: ${DOCKER_NETWORK_NAME}"
+    fi
+}
+
 # ======================== 容器管理辅助 ========================
 
 ensure_container() {
@@ -237,6 +256,10 @@ deploy_opengauss() {
         -p "${OG_HOST_PORT}:${OG_PORT}"
     )
 
+    if [[ "${DOCKER_NET_MODE}" != "host" ]]; then
+        args+=(--network "${DOCKER_NETWORK_NAME}")
+    fi
+
     [[ "${OG_USER}" != "gaussdb" ]]     && args+=(-e "GS_USERNAME=${OG_USER}")
     [[ "${OG_NODE_NAME}" != "gaussdb" ]] && args+=(-e "GS_NODENAME=${OG_NODE_NAME}")
     [[ "${OG_PORT}" != "5432" ]]         && args+=(-e "GS_PORT=${OG_PORT}")
@@ -254,9 +277,10 @@ wait_opengauss_ready() {
     local interval=3
 
     while (( elapsed < OG_WAIT_TIMEOUT )); do
-        # 尝试两种方式检测（兼容 opengauss-server 和 opengauss-distributed 镜像）
+        # 兼容 opengauss-server / opengauss-distributed / kunpeng 镜像
         if docker exec "${OG_CONTAINER_NAME}" su - omm -c "gsql -d postgres -p ${OG_PORT} -c 'SELECT 1;'" &>/dev/null 2>&1 \
-        || docker exec "${OG_CONTAINER_NAME}" su - omm -c "gsql -d omm -p ${OG_PORT} -c 'SELECT 1;'" &>/dev/null 2>&1; then
+        || docker exec "${OG_CONTAINER_NAME}" su - omm -c "gsql -d omm -p ${OG_PORT} -c 'SELECT 1;'" &>/dev/null 2>&1 \
+        || docker exec "${OG_CONTAINER_NAME}" bash -c "export LD_LIBRARY_PATH=/usr/local/opengauss/lib:\$LD_LIBRARY_PATH && /usr/local/opengauss/bin/gsql -d omm -p ${OG_PORT} -U ${OG_USER} -W '${OG_PASSWORD}' -c 'SELECT 1;'" &>/dev/null 2>&1; then
             log_info "openGauss 已就绪（耗时 ${elapsed} 秒）"
             init_opengauss_db
             return 0
@@ -313,7 +337,16 @@ generate_ov_conf() {
     local root_key_json="null"
     [[ -n "${OPENVIKING_ROOT_API_KEY}" ]] && root_key_json="\"${OPENVIKING_ROOT_API_KEY}\""
 
-    # storage 部分
+    # storage 部分: bridge 模式用容器名访问 openGauss，host 模式用 127.0.0.1
+    local og_connect_host og_connect_port
+    if [[ "${DOCKER_NET_MODE}" == "host" ]]; then
+        og_connect_host="127.0.0.1"
+        og_connect_port="${OG_HOST_PORT}"
+    else
+        og_connect_host="${OG_CONTAINER_NAME}"
+        og_connect_port="${OG_PORT}"
+    fi
+
     local storage_json=""
     if [[ "${ENABLE_OPENGAUSS}" == "true" ]]; then
         storage_json=$(cat <<EOSTORAGE
@@ -323,8 +356,8 @@ generate_ov_conf() {
             "backend": "opengauss",
             "dimension": ${OPENVIKING_EMBEDDING_DIMENSION:-512},
             "opengauss": {
-                "host": "127.0.0.1",
-                "port": ${OG_HOST_PORT},
+                "host": "${og_connect_host}",
+                "port": ${og_connect_port},
                 "user": "${OG_USER}",
                 "password": "${OG_PASSWORD}",
                 "db_name": "${OG_DB_NAME}",
@@ -415,9 +448,16 @@ deploy_openviking() {
 
     local -a args=(
         --name "${OV_CONTAINER_NAME}" -d
-        --network host
         --restart unless-stopped
+        -e "OPENVIKING_SERVER_PORT=${OV_PORT}"
+        -e "OPENVIKING_REGENERATE_CONFIG=0"
     )
+
+    if [[ "${DOCKER_NET_MODE}" == "host" ]]; then
+        args+=(--network host)
+    else
+        args+=(--network "${DOCKER_NETWORK_NAME}" -p "${OV_HOST_PORT}:${OV_PORT}")
+    fi
 
     # 持久化
     if [[ -n "${OPENVIKING_DATA_DIR}" ]]; then
@@ -452,7 +492,7 @@ deploy_openviking() {
         log_info "OpenViking 已重启（应用新配置）"
     fi
 
-    log_info "OpenViking 容器已启动（host 网络，端口 ${OV_PORT}）"
+    log_info "OpenViking 容器已启动（${DOCKER_NET_MODE} 网络，端口 ${OV_PORT}）"
     if [[ "${ENABLE_OPENGAUSS}" == "true" ]]; then
         log_info "VectorDB: opengauss @ ${HOST_IP}:${OG_HOST_PORT}/${OG_DB_NAME}"
     else
@@ -466,8 +506,10 @@ wait_openviking_ready() {
     local max_wait=60
     local interval=3
 
+    local health_url="http://${HOST_IP}:${OV_HOST_PORT}/health"
+
     while (( elapsed < max_wait )); do
-        if curl -sf "http://127.0.0.1:${OV_PORT}/health" &>/dev/null; then
+        if curl --noproxy '*' -sf "${health_url}" &>/dev/null; then
             log_info "OpenViking 服务已就绪（耗时 ${elapsed} 秒）"
             return 0
         fi
@@ -488,19 +530,30 @@ wait_openviking_ready() {
 deploy_openclaw() {
     log_step "部署 OpenClaw 网关"
 
-    # host 网络模式下用 127.0.0.1 连接 OpenViking
-    local ov_url="http://127.0.0.1:${OV_PORT}"
+    local ov_url
+    if [[ "${DOCKER_NET_MODE}" == "host" ]]; then
+        ov_url="http://127.0.0.1:${OV_PORT}"
+    else
+        ov_url="http://${OV_CONTAINER_NAME}:${OV_PORT}"
+    fi
 
     local -a args=(
         --name "${OC_CONTAINER_NAME}" -d
-        --network host
         --restart unless-stopped
         -e "OPENVIKING_BASE_URL=${ov_url}"
         -e "OPENVIKING_API_KEY=${OPENVIKING_ROOT_API_KEY}"
+        -e "OPENVIKING_ACCOUNT_ID=${OV_ACCOUNT_ID:-default}"
+        -e "OPENVIKING_USER_ID=${OV_USER_ID:-default}"
         -e "OPENVIKING_AGENT_ID=${OPENVIKING_AGENT_ID}"
         -e "OPENVIKING_TARGET_URI=${OPENVIKING_TARGET_URI}"
         -e "OPENCLAW_GATEWAY_PORT=${OC_PORT}"
     )
+
+    if [[ "${DOCKER_NET_MODE}" == "host" ]]; then
+        args+=(--network host)
+    else
+        args+=(--network "${DOCKER_NETWORK_NAME}" -p "${OC_HOST_PORT}:${OC_PORT}")
+    fi
 
     # LLM 模型配置（entrypoint 自动处理：模型名 → provider 推断 → openclaw.json + auth-profiles.json）
     [[ -n "${OPENCLAW_DEFAULT_MODEL:-}" ]]  && args+=(-e "OPENCLAW_DEFAULT_MODEL=${OPENCLAW_DEFAULT_MODEL}")
@@ -511,6 +564,12 @@ deploy_openclaw() {
     [[ -n "${OPENAI_API_KEY:-}" ]]          && args+=(-e "OPENAI_API_KEY=${OPENAI_API_KEY}")
     [[ -n "${ANTHROPIC_API_KEY:-}" ]]       && args+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
     [[ -n "${ZAI_API_KEY:-}" ]]             && args+=(-e "ZAI_API_KEY=${ZAI_API_KEY}")
+
+    # 挂载本地 entrypoint（如果存在，支持不重新打镜像即生效）
+    local local_entrypoint="${SCRIPT_DIR}/entrypoint-remote.sh"
+    if [[ -f "${local_entrypoint}" ]]; then
+        args+=(-v "${local_entrypoint}:/usr/local/bin/entrypoint.sh:ro")
+    fi
 
     # 持久化
     if [[ -n "${OPENCLAW_DATA_DIR:-}" ]]; then
@@ -542,7 +601,7 @@ health_check() {
     local interval=3
 
     while (( elapsed < max_wait )); do
-        if curl -sf "http://127.0.0.1:${OV_PORT}/health" &>/dev/null; then
+        if curl --noproxy '*' -sf "http://${HOST_IP}:${OV_HOST_PORT}/health" &>/dev/null; then
             log_info "OpenViking 健康检查通过 ✓"
             break
         fi
@@ -552,14 +611,14 @@ health_check() {
 
     if (( elapsed >= max_wait )); then
         log_warn "OpenViking 健康检查未在 ${max_wait} 秒内通过"
-        log_warn "  curl http://${HOST_IP}:${OV_PORT}/health"
+        log_warn "  curl http://${HOST_IP}:${OV_HOST_PORT}/health"
         log_warn "  docker logs ${OV_CONTAINER_NAME}"
     fi
 
     sleep 3
 
     log_info "检查 OpenClaw 网关..."
-    if curl -sf "http://127.0.0.1:${OC_PORT}" &>/dev/null 2>&1; then
+    if curl --noproxy '*' -sf "http://${HOST_IP}:${OC_HOST_PORT}" &>/dev/null 2>&1; then
         log_info "OpenClaw 网关响应正常 ✓"
     else
         log_warn "OpenClaw 网关暂未响应（可能仍在启动中）"
@@ -617,7 +676,7 @@ show_status() {
     if command -v curl &>/dev/null; then
         echo ""
         log_info "OpenViking 健康检查:"
-        if curl -sf "http://127.0.0.1:${OV_PORT}/health" 2>/dev/null; then
+        if curl --noproxy '*' -sf "http://${HOST_IP}:${OV_HOST_PORT}/health" 2>/dev/null; then
             echo ""
         else
             log_warn "服务未响应"
@@ -650,14 +709,14 @@ print_summary() {
     if [[ "${ENABLE_OPENGAUSS}" == "true" ]]; then
         echo "    openGauss:  ${HOST_IP}:${OG_HOST_PORT} (user=${OG_USER}, db=${OG_DB_NAME})"
     fi
-    echo "    OpenViking: http://${HOST_IP}:${OV_PORT}"
-    echo "    OpenClaw:   http://${HOST_IP}:${OC_PORT}"
+    echo "    OpenViking: http://${HOST_IP}:${OV_HOST_PORT}"
+    echo "    OpenClaw:   http://${HOST_IP}:${OC_HOST_PORT}"
     echo ""
     echo "  常用命令:"
     echo "    查看状态:   bash ${SCRIPT_DIR}/deploy.sh --status"
     echo "    重启服务:   bash ${SCRIPT_DIR}/deploy.sh --restart"
     echo "    清理容器:   bash ${SCRIPT_DIR}/deploy.sh --cleanup"
-    echo "    健康检查:   curl http://${HOST_IP}:${OV_PORT}/health"
+    echo "    健康检查:   curl http://${HOST_IP}:${OV_HOST_PORT}/health"
     echo "    查看日志:"
     if [[ "${ENABLE_OPENGAUSS}" == "true" ]]; then
         echo "      docker logs ${OG_CONTAINER_NAME}"
@@ -711,8 +770,10 @@ main() {
                 fi
                 log_info "密码复杂度校验通过"
                 log_info "部署模式: openGauss + OpenViking + OpenClaw"
+                log_info "网络模式: ${DOCKER_NET_MODE}"
 
                 pull_images
+                setup_network
                 deploy_opengauss
                 wait_opengauss_ready
                 deploy_openviking
@@ -722,8 +783,10 @@ main() {
                 print_summary
             else
                 log_info "部署模式: OpenViking + OpenClaw（无 openGauss）"
+                log_info "网络模式: ${DOCKER_NET_MODE}"
 
                 pull_images
+                setup_network
                 deploy_openviking
                 wait_openviking_ready
                 deploy_openclaw

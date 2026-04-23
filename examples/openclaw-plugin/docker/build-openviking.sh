@@ -7,13 +7,15 @@
 #   ./build-openviking.sh --ov-ref v0.2.9                       # 指定 tag/分支
 #   ./build-openviking.sh --ov-ref main --tag latest --push     # 推送到仓库
 #   ./build-openviking.sh --repo https://github.com/volcengine/openviking.git
+#   ./build-openviking.sh --llama-patch /path/to/llama.patch     # 使用本地补丁
 #
 # 流程:
 #   1. 在临时目录 clone OpenViking 源码 (指定 ref)
 #   2. 将 opengauss-minimal.patch 和 Docker 文件拷入
-#   3. git apply 补丁
-#   4. docker build
-#   5. 清理临时目录
+#   3. 获取 llama.cpp 优化补丁（本地文件 / 自动从 gitcode 下载）
+#   4. git apply 补丁
+#   5. docker build
+#   6. 清理临时目录
 #
 # 环境变量:
 #   HTTP_PROXY / HTTPS_PROXY   构建期代理（需配合 --network=host）
@@ -42,6 +44,9 @@ NO_CACHE="${NO_CACHE:-false}"
 DOCKER_NETWORK="${DOCKER_NETWORK:-host}"
 KEEP_BUILD_DIR="${KEEP_BUILD_DIR:-false}"
 MODEL_PATH="${MODEL_PATH:-${SCRIPT_DIR}/models/bge-small-zh-v1.5-f16.gguf}"
+LLAMA_PATCH="${LLAMA_PATCH:-}"
+LLAMA_PATCH_REPO="${LLAMA_PATCH_REPO:-https://gitcode.com/boostkit/llama-CPP.git}"
+LLAMA_PATCH_FILENAME="${LLAMA_PATCH_FILENAME:-gemm_opt_for_fp16_fp32.patch}"
 
 usage() {
     cat <<EOF
@@ -54,6 +59,10 @@ usage() {
   --patch FILE              补丁文件路径 (默认: repo根/opengauss-minimal.patch)
   --model-path FILE         BGE 模型文件路径 (默认: docker/models/bge-small-zh-v1.5-f16.gguf)
                             指定后跳过在线下载，直接 COPY 到镜像
+  --llama-patch FILE        llama.cpp 优化补丁路径 (可选)
+                            未指定时自动从 gitcode 仓库下载
+  --llama-patch-repo URL    补丁所在 Git 仓库
+                            (默认: ${LLAMA_PATCH_REPO})
   --image-name NAME         镜像名 (默认: openviking)
   --tag TAG                 镜像 tag (默认: ov-ref 值)
   --registry REGISTRY       镜像仓库前缀
@@ -77,6 +86,8 @@ while [[ $# -gt 0 ]]; do
         --push)           PUSH=true; shift ;;
         --no-cache)       NO_CACHE=true; shift ;;
         --model-path)     MODEL_PATH="$2"; shift 2 ;;
+        --llama-patch)    LLAMA_PATCH="$2"; shift 2 ;;
+        --llama-patch-repo) LLAMA_PATCH_REPO="$2"; shift 2 ;;
         --network)        DOCKER_NETWORK="$2"; shift 2 ;;
         --keep-build-dir) KEEP_BUILD_DIR=true; shift ;;
         -h|--help)        usage ;;
@@ -88,6 +99,9 @@ done
 PATCH_FILE="$(cd "$(dirname "${PATCH_FILE}")" && pwd)/$(basename "${PATCH_FILE}")"
 if [[ -n "${MODEL_PATH}" && -f "${MODEL_PATH}" ]]; then
     MODEL_PATH="$(cd "$(dirname "${MODEL_PATH}")" && pwd)/$(basename "${MODEL_PATH}")"
+fi
+if [[ -n "${LLAMA_PATCH}" && -f "${LLAMA_PATCH}" ]]; then
+    LLAMA_PATCH="$(cd "$(dirname "${LLAMA_PATCH}")" && pwd)/$(basename "${LLAMA_PATCH}")"
 fi
 
 # 如果没有指定 tag，使用 ref 名（替换 / 为 -）
@@ -140,6 +154,11 @@ if [[ -n "${MODEL_PATH}" && -f "${MODEL_PATH}" ]]; then
 else
     echo "  本地模型:    (未指定/不存在，将在线下载)"
 fi
+if [[ -n "${LLAMA_PATCH}" && -f "${LLAMA_PATCH}" ]]; then
+    echo "  llama补丁:    ${LLAMA_PATCH} (本地文件)"
+else
+    echo "  llama补丁:    自动从 ${LLAMA_PATCH_REPO} 下载"
+fi
 echo ""
 
 # ── 步骤 1: 创建临时构建目录 ──
@@ -155,7 +174,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ── 步骤 2: Clone OpenViking 源码 ──
-echo -e "${GREEN}[1/4] 克隆 OpenViking 源码 (${OV_REF})...${NC}"
+echo -e "${GREEN}[1/5] 克隆 OpenViking 源码 (${OV_REF})...${NC}"
 
 GIT_CLONE_ARGS=()
 if [[ -n "${HTTP_PROXY:-}" ]]; then
@@ -174,7 +193,7 @@ git "${GIT_CLONE_ARGS[@]}" clone --depth 1 --branch "${OV_REF}" "${OV_REPO}" "${
     }
 
 # ── 步骤 3: 拷入 Docker 文件并应用补丁 ──
-echo -e "${GREEN}[2/4] 拷入 Docker 文件并应用补丁...${NC}"
+echo -e "${GREEN}[2/5] 拷入 Docker 文件、llama 补丁并应用 openGauss 补丁...${NC}"
 
 # 确保目标目录存在
 mkdir -p "${BUILD_DIR}/src/examples/openclaw-plugin/docker"
@@ -193,8 +212,31 @@ else
     echo -e "  ${YELLOW}未找到本地模型文件，构建时将在线下载${NC}"
 fi
 
+# 拷入 patches 目录（llama-cpp-python v0.3.9 含完整子模块 + 性能补丁 + 兼容补丁）
+PATCHES_SRC="${SCRIPT_DIR}/patches"
+PATCHES_DST="${BUILD_DIR}/src/examples/openclaw-plugin/docker/patches"
+mkdir -p "${PATCHES_DST}"
+
+BISHENG_FILE=$(ls "${PATCHES_SRC}"/BiShengCompiler-*-aarch64-linux.tar.gz 2>/dev/null | head -1)
+if [[ -z "${BISHENG_FILE}" ]]; then
+    echo -e "${RED}错误: 未找到 BiSheng 编译器包，请先下载到 ${PATCHES_SRC}/${NC}"
+    exit 1
+fi
+BISHENG_BASENAME=$(basename "${BISHENG_FILE}")
+
+for item in llama-cpp-python gemm_opt_for_fp16_fp32.patch "${BISHENG_BASENAME}"; do
+    SRC="${PATCHES_SRC}/${item}"
+    if [[ -e "${SRC}" ]]; then
+        cp -a "${SRC}" "${PATCHES_DST}/${item}"
+        echo -e "  ${GREEN}${item} 已拷入 build context${NC}"
+    else
+        echo -e "${RED}错误: 未找到必要文件: ${SRC}${NC}"
+        exit 1
+    fi
+done
+
 cd "${BUILD_DIR}/src"
-# 应用补丁（--forward 跳过已应用的部分，避免 Docker 文件补丁冲突）
+# 应用 openGauss 补丁
 if git apply --check "${PATCH_FILE}" 2>/dev/null; then
     git apply "${PATCH_FILE}"
     echo "  补丁应用成功"
@@ -206,18 +248,20 @@ else
 fi
 
 # ── 步骤 4: 构建 Docker 镜像 ──
-echo -e "${GREEN}[3/4] 构建 Docker 镜像...${NC}"
+echo -e "${GREEN}[3/5] 构建 Docker 镜像...${NC}"
 
 BUILD_ARGS=(
     -f "examples/openclaw-plugin/docker/Dockerfile.openviking"
     -t "${FULL_IMAGE}"
 )
 
+# 始终添加 --network 参数（代理需要通过 host 网络访问）
+BUILD_ARGS=(--network "${DOCKER_NETWORK}" "${BUILD_ARGS[@]}")
+
 # 检测是否支持 buildx
 HAS_BUILDX=false
 if docker buildx version &>/dev/null; then
     HAS_BUILDX=true
-    BUILD_ARGS=(--network "${DOCKER_NETWORK}" "${BUILD_ARGS[@]}")
 fi
 
 if [[ -n "${HTTP_PROXY:-}" ]]; then
@@ -243,7 +287,7 @@ fi
 # ── 完成 ──
 echo ""
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  [4/4] 构建完成: ${FULL_IMAGE}${NC}"
+echo -e "${GREEN}  [5/5] 构建完成: ${FULL_IMAGE}${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 echo "运行示例:"

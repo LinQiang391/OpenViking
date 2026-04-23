@@ -121,8 +121,8 @@ BUILD_ARGS=(
 HAS_BUILDX=false
 if docker buildx version &>/dev/null; then
     HAS_BUILDX=true
-    BUILD_ARGS=(--network "${DOCKER_NETWORK}" "${BUILD_ARGS[@]}")
 fi
+BUILD_ARGS=(--network "${DOCKER_NETWORK}" "${BUILD_ARGS[@]}")
 
 if [[ -n "${HTTP_PROXY:-}" ]]; then
     BUILD_ARGS+=(--build-arg "HTTP_PROXY=${HTTP_PROXY}")

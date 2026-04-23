@@ -2,7 +2,8 @@
 # 基于 openEuler 22.03，多阶段构建优化镜像大小
 #
 # 特性:
-#   - 预装 llama-cpp-python，支持 local embedding (bge-small-zh-v1.5-f16)
+#   - 预装 llama-cpp-python (带性能优化补丁)
+#   - 支持 local embedding (bge-small-zh-v1.5-f16)
 #   - 预下载 GGUF 模型文件，容器启动即可用，无需联网
 #   - 支持 openGauss 向量数据库后端 (通过 opengauss-minimal.patch)
 #   - 用户不配置 embedding 时自动使用 local 模式
@@ -26,17 +27,25 @@ FROM ${OPENEULER_IMAGE} AS python-builder
 ARG PYTHON_VERSION
 ARG PYTHON_SOURCE_BASE
 ARG PYTHON_SOURCE_MIRROR_BASE
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
 
-RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    dnf install -y \
-    gcc make findutils tar gzip xz wget \
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV http_proxy=${HTTP_PROXY}
+ENV https_proxy=${HTTPS_PROXY}
+
+RUN dnf install -y \
+    gcc make findutils tar gzip xz curl \
     openssl-devel bzip2-devel libffi-devel zlib-devel \
     readline-devel sqlite-devel xz-devel ncurses-devel gdbm-devel libuuid-devel \
  && dnf clean all && rm -rf /var/cache/dnf
 
 WORKDIR /tmp
-RUN wget -q "${PYTHON_SOURCE_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
- || wget -q "${PYTHON_SOURCE_MIRROR_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+RUN curl -fsSL --connect-timeout 15 --max-time 120 -o "Python-${PYTHON_VERSION}.tgz" \
+        "${PYTHON_SOURCE_MIRROR_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+    || curl -fsSL --connect-timeout 15 --max-time 300 -o "Python-${PYTHON_VERSION}.tgz" \
+        "${PYTHON_SOURCE_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
  && tar -xzf "Python-${PYTHON_VERSION}.tgz" \
  && cd "Python-${PYTHON_VERSION}" \
  && ./configure --prefix=/usr/local --enable-optimizations --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib" \
@@ -70,9 +79,8 @@ ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
 
 # 安装编译依赖
-RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    dnf install -y \
-    ca-certificates curl git tar gzip xz unzip \
+RUN dnf install -y \
+    ca-certificates curl git tar gzip xz unzip patch \
     gcc gcc-c++ make cmake \
     openssl-libs bzip2-libs libffi zlib readline sqlite xz-libs ncurses-libs gdbm libuuid \
  && dnf clean all && rm -rf /var/cache/dnf
@@ -85,27 +93,76 @@ RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/python-local.conf && ldconfig \
  && ln -sf "/usr/local/bin/pip${PYTHON_VERSION%.*}" /usr/local/bin/pip3 \
  && ln -sf "/usr/local/bin/pip${PYTHON_VERSION%.*}" /usr/local/bin/pip
 
-# 安装 Go
+# 安装 Go（依次尝试：代理走官方源 → 代理走阿里云 → 代理走中国官方镜像）
+ARG GO_DIST_CN_BASE=https://golang.google.cn/dl
 RUN set -eux; \
     arch="$(uname -m)"; \
     case "${arch}" in x86_64) go_arch="amd64" ;; aarch64|arm64) go_arch="arm64" ;; *) exit 1 ;; esac; \
     go_pkg="go${GO_VERSION}.linux-${go_arch}.tar.gz"; \
-    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    curl -fsSLO "${GO_DIST_BASE}/${go_pkg}" || curl -fsSLO "${GO_DIST_MIRROR_BASE}/${go_pkg}"; \
+    curl -fsSL --connect-timeout 15 --max-time 180 -o "${go_pkg}" "${GO_DIST_MIRROR_BASE}/${go_pkg}" \
+    || curl -fsSL --connect-timeout 15 --max-time 300 -o "${go_pkg}" "${GO_DIST_BASE}/${go_pkg}" \
+    || curl -fsSL --connect-timeout 15 --max-time 300 -o "${go_pkg}" "${GO_DIST_CN_BASE}/${go_pkg}"; \
     tar -C /usr/local -xzf "${go_pkg}"; rm -f "${go_pkg}"
 
-# 安装 Rust（使用清华 TUNA 镜像加速）
-ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
-ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+# 安装 Rust（代理走官方源优先，USTC 备选）
+ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
+ENV RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "${arch}" in x86_64) rust_arch="x86_64" ;; aarch64|arm64) rust_arch="aarch64" ;; *) exit 1 ;; esac; \
+    INIT_URL_OFFICIAL="https://static.rust-lang.org/rustup/dist/${rust_arch}-unknown-linux-gnu/rustup-init"; \
+    INIT_URL_USTC="https://mirrors.ustc.edu.cn/rust-static/rustup/dist/${rust_arch}-unknown-linux-gnu/rustup-init"; \
+    curl -fsSL --connect-timeout 15 --max-time 120 -o /tmp/rustup-init "${INIT_URL_OFFICIAL}" \
+    || curl -fsSL --connect-timeout 15 --max-time 120 -o /tmp/rustup-init "${INIT_URL_USTC}" \
+ && chmod +x /tmp/rustup-init \
+ && /tmp/rustup-init -y --default-toolchain stable --profile minimal \
+ && rm /tmp/rustup-init \
+ && . /usr/local/cargo/env \
+ && cargo --version && rustc --version
 
-# 编译 OpenViking wheel + local-embed 依赖 + openGauss 依赖
+# 配置 Cargo 代理
+ARG CARGO_PROXY=http://127.0.0.1:17897
+RUN mkdir -p /usr/local/cargo && printf '[http]\nproxy = "%s"\n\n[net]\nretry = 5\ngit-fetch-with-cli = true\n' "${CARGO_PROXY}" > /usr/local/cargo/config.toml \
+ && cat /usr/local/cargo/config.toml
+
+# 编译 OpenViking wheel + openGauss 依赖
 COPY . /tmp/openviking-src
 WORKDIR /tmp/openviking-src
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel build maturin \
- && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels . \
- && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels psycopg2-binary \
- && python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels "llama-cpp-python>=0.3.0"
+
+# 验证 Go 和 Rust 工具链
+RUN go version && cargo --version && rustc --version
+
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools setuptools-scm wheel build maturin pybind11 cmake
+
+RUN python3 -m pip wheel --no-cache-dir --no-build-isolation --wheel-dir=/wheels .
+
+RUN python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels psycopg2-binary
+
+# 安装 BiSheng 编译器（华为鲲鹏专用，支持 hip09 目标）
+COPY examples/openclaw-plugin/docker/patches/BiShengCompiler-*.tar.gz /tmp/bisheng.tar.gz
+RUN set -eux; \
+    mkdir -p /opt/bisheng \
+ && tar -xzf /tmp/bisheng.tar.gz -C /opt/bisheng --strip-components=1 \
+ && rm /tmp/bisheng.tar.gz \
+ && /opt/bisheng/bin/clang --version
+
+# 编译带性能优化补丁的 llama-cpp-python (v0.3.9, 子模块 vendor/llama.cpp 已就绪)
+COPY examples/openclaw-plugin/docker/patches/llama-cpp-python/ /tmp/llama-cpp-python/
+COPY examples/openclaw-plugin/docker/patches/gemm_opt_for_fp16_fp32.patch /tmp/
+
+RUN cd /tmp/llama-cpp-python/vendor/llama.cpp && patch -p1 < /tmp/gemm_opt_for_fp16_fp32.patch \
+ && rm /tmp/gemm_opt_for_fp16_fp32.patch
+
+ARG MCPU=hip09+crypto+fp16+rcpc+sha3+sm4+bf16+nodotprod+noprofile+nopredres+nof32mm+nof64mm+dotprod+noi8mm+sve
+RUN cd /tmp/llama-cpp-python \
+ && echo "llama.cpp version: $(cd vendor/llama.cpp && git -c safe.directory='*' log --oneline -1 2>/dev/null || echo 'pre-patched')" \
+ && CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLAMA_CURL=OFF -DGGML_CCACHE=OFF -DLLAVA_BUILD=OFF -DGGML_NATIVE=OFF \
+    -DCMAKE_C_COMPILER=/opt/bisheng/bin/clang -DCMAKE_CXX_COMPILER=/opt/bisheng/bin/clang++" \
+    CFLAGS="-O3 -funroll-loops -mcpu=${MCPU}" \
+    CXXFLAGS="-O3 -funroll-loops -mcpu=${MCPU}" \
+    python3 -m pip wheel --no-cache-dir --wheel-dir=/wheels . \
+ && cp /opt/bisheng/lib/libomp.so /usr/lib64/libomp.so \
+ && rm -rf /tmp/llama-cpp-python /tmp/openviking-src /opt/bisheng
 
 # ============ Stage 3: Final Runtime Image (精简) ============
 FROM ${OPENEULER_IMAGE}
@@ -123,8 +180,7 @@ ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # 安装运行时依赖 + libstdc++ (llama-cpp-python 运行时需要)
-RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    dnf install -y \
+RUN dnf install -y \
     ca-certificates gettext curl \
     openssl-libs bzip2-libs libffi zlib readline sqlite xz-libs ncurses-libs gdbm libuuid \
     libstdc++ libgomp \
@@ -142,10 +198,13 @@ RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/python-local.conf && ldconfig \
  && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip3 \
  && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip
 
+# 从构建阶段复制 BiSheng libomp.so（llama-cpp-python 运行时需要）
+COPY --from=openviking-builder /usr/lib64/libomp.so /usr/lib64/libomp.so
+RUN ldconfig
+
 # 从构建阶段复制 wheels 并安装（包含 openviking + llama-cpp-python + psycopg2）
 COPY --from=openviking-builder /wheels /tmp/wheels
-RUN unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    python3 -m pip install --no-cache-dir --upgrade pip \
+RUN python3 -m pip install --no-cache-dir --upgrade pip \
  && python3 -m pip install --no-cache-dir /tmp/wheels/*.whl \
  && rm -rf /tmp/wheels
 
