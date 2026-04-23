@@ -48,10 +48,16 @@ class VolcengineKMSEncryptionProviderConfig(BaseModel):
 class CryptoEngineConfig(BaseModel):
     """Configuration for the pluggable crypto engine.
 
-    Controls which low-level crypto backend is used for AES-256-GCM and HKDF
-    operations.  ``"default"`` uses the ``cryptography`` Python library (statically
-    linked OpenSSL).  ``"kae"`` uses ctypes to call the system-installed OpenSSL and
-    loads the KAE hardware accelerator engine (supports OpenSSL 1.1.1 and 3.x).
+    Controls which low-level crypto backend and cipher algorithm are used.
+
+    ``type``:
+      - ``"default"`` — uses the ``cryptography`` Python library (statically linked OpenSSL).
+      - ``"kae"``     — uses ctypes to call the system-installed OpenSSL and loads the KAE
+        hardware accelerator engine (supports OpenSSL 1.1.1 and 3.x).
+
+    ``algorithm``:
+      - ``"AES-256-GCM"`` — AES-256-GCM + HKDF-SHA-256  (default, backward-compatible)
+      - ``"SM4-GCM"``     — SM4-128-GCM + HKDF-SM3       (国密)
     """
 
     type: str = Field(
@@ -62,6 +68,11 @@ class CryptoEngineConfig(BaseModel):
     engine_id: str = Field(
         default="kae",
         description="OpenSSL engine/provider identifier to load (only used when type='kae')",
+    )
+
+    algorithm: str = Field(
+        default="AES-256-GCM",
+        description="Cipher suite: 'AES-256-GCM' (default) or 'SM4-GCM'",
     )
 
 

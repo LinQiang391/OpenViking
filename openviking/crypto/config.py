@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from openviking.crypto.encryptor import FileEncryptor
-from openviking.crypto.engine import create_crypto_engine
+from openviking.crypto.engine import CipherSuite, create_crypto_engine
 from openviking.crypto.exceptions import ConfigError
 from openviking.crypto.providers import create_root_key_provider
 from openviking_cli.utils.logger import get_logger
@@ -158,13 +158,29 @@ async def bootstrap_encryption(config: Dict[str, Any]) -> Optional[FileEncryptor
     engine = create_crypto_engine(engine_type, **engine_kwargs)
     logger.info("Crypto engine created: %s (%s)", engine.name(), engine_type)
 
+    # Resolve cipher suite
+    algorithm = engine_config.get("algorithm", "AES-256-GCM").upper().replace("-", "_")
+    _SUITE_MAP = {
+        "AES_256_GCM": CipherSuite.AES_256_GCM,
+        "SM4_GCM": CipherSuite.SM4_GCM,
+    }
+    suite = _SUITE_MAP.get(algorithm)
+    if suite is None:
+        raise ConfigError(
+            f"Unknown algorithm '{algorithm}'. "
+            f"Supported: {', '.join(sorted(_SUITE_MAP))}"
+        )
+
     # Create Provider (inject engine)
     provider_type = encryption_config.get("provider", "local")
     provider = create_root_key_provider(provider_type, encryption_config, engine=engine)
 
-    # Create FileEncryptor (inject engine)
-    encryptor = FileEncryptor(provider, engine=engine)
-    logger.info("Encryption bootstrapped successfully with provider: %s, engine: %s", provider_type, engine_type)
+    # Create FileEncryptor (inject engine + suite)
+    encryptor = FileEncryptor(provider, engine=engine, suite=suite)
+    logger.info(
+        "Encryption bootstrapped successfully with provider: %s, engine: %s, algorithm: %s",
+        provider_type, engine_type, algorithm,
+    )
 
     return encryptor
 

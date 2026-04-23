@@ -27,6 +27,8 @@ from openviking.crypto.exceptions import (
 )
 from openviking_cli.utils.logger import get_logger
 
+from openviking.crypto.engine import CipherSuite, DEFAULT_SUITE, suite_params
+
 if TYPE_CHECKING:
     from openviking.crypto.engine import CryptoEngine
 
@@ -80,33 +82,38 @@ class RootKeyProvider(ABC):
         pass
 
     @abc.abstractmethod
-    async def derive_account_key(self, account_id: str) -> bytes:
+    async def derive_account_key(self, account_id: str, suite: CipherSuite = DEFAULT_SUITE) -> bytes:
         """Derive Account Key for the specified account."""
         pass
 
     @abc.abstractmethod
-    async def encrypt_file_key(self, plaintext_key: bytes, account_id: str) -> Tuple[bytes, bytes]:
+    async def encrypt_file_key(self, plaintext_key: bytes, account_id: str,
+                               suite: CipherSuite = DEFAULT_SUITE) -> Tuple[bytes, bytes]:
         """Encrypt File Key."""
         pass
 
     @abc.abstractmethod
-    async def decrypt_file_key(self, encrypted_key: bytes, iv: bytes, account_id: str) -> bytes:
+    async def decrypt_file_key(self, encrypted_key: bytes, iv: bytes, account_id: str,
+                               suite: CipherSuite = DEFAULT_SUITE) -> bytes:
         """Decrypt File Key."""
         pass
 
     async def _hkdf_derive(
-        self, root_key: bytes, account_id: str, salt: bytes, info_prefix: bytes
+        self, root_key: bytes, account_id: str, salt: bytes, info_prefix: bytes,
+        suite: CipherSuite = DEFAULT_SUITE,
     ) -> bytes:
         """Derive key using HKDF via the pluggable :class:`CryptoEngine`."""
         start = time.perf_counter()
         status = "ok"
         try:
             engine = self._get_engine()
-            return engine.hkdf_sha256(
+            sp = suite_params(suite)
+            return engine.kdf(
                 ikm=root_key,
                 salt=salt,
                 info=info_prefix + account_id.encode(),
-                length=32,
+                suite=suite,
+                length=sp["kdf_output_len"],
             )
         except Exception:
             status = "error"
@@ -125,44 +132,30 @@ class RootKeyProvider(ABC):
 class BaseProvider(RootKeyProvider):
     """Base provider with common encryption functionality."""
 
-    async def _aes_gcm_encrypt(self, key: bytes, iv: bytes, plaintext: bytes) -> bytes:
-        """AES-GCM encryption via the pluggable :class:`CryptoEngine`."""
-        return self._get_engine().aes_gcm_encrypt(key, iv, plaintext)
+    async def _aead_encrypt(self, key: bytes, iv: bytes, plaintext: bytes,
+                            suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        """AEAD encryption via the pluggable :class:`CryptoEngine`."""
+        return self._get_engine().encrypt(key, iv, plaintext, suite)
 
-    async def _aes_gcm_decrypt(self, key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
-        """AES-GCM decryption via the pluggable :class:`CryptoEngine`."""
-        return self._get_engine().aes_gcm_decrypt(key, iv, ciphertext)
+    async def _aead_decrypt(self, key: bytes, iv: bytes, ciphertext: bytes,
+                            suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        """AEAD decryption via the pluggable :class:`CryptoEngine`."""
+        return self._get_engine().decrypt(key, iv, ciphertext, suite)
 
-    async def encrypt_file_key(self, plaintext_key: bytes, account_id: str) -> Tuple[bytes, bytes]:
-        """
-        Encrypt File Key with Account Key.
-
-        Args:
-            plaintext_key: Plaintext File Key
-            account_id: Account ID
-
-        Returns:
-            (encrypted_key, iv)
-        """
-        account_key = await self.derive_account_key(account_id)
-        iv = secrets.token_bytes(12)
-        encrypted_key = await self._aes_gcm_encrypt(account_key, iv, plaintext_key)
+    async def encrypt_file_key(self, plaintext_key: bytes, account_id: str,
+                               suite: CipherSuite = DEFAULT_SUITE) -> Tuple[bytes, bytes]:
+        """Encrypt File Key with Account Key."""
+        account_key = await self.derive_account_key(account_id, suite)
+        sp = suite_params(suite)
+        iv = secrets.token_bytes(sp["iv_len"])
+        encrypted_key = await self._aead_encrypt(account_key, iv, plaintext_key, suite)
         return encrypted_key, iv
 
-    async def decrypt_file_key(self, encrypted_key: bytes, iv: bytes, account_id: str) -> bytes:
-        """
-        Decrypt File Key with Account Key.
-
-        Args:
-            encrypted_key: Encrypted File Key
-            iv: Initialization vector
-            account_id: Account ID
-
-        Returns:
-            Decrypted File Key
-        """
-        account_key = await self.derive_account_key(account_id)
-        return await self._aes_gcm_decrypt(account_key, iv, encrypted_key)
+    async def decrypt_file_key(self, encrypted_key: bytes, iv: bytes, account_id: str,
+                               suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        """Decrypt File Key with Account Key."""
+        account_key = await self.derive_account_key(account_id, suite)
+        return await self._aead_decrypt(account_key, iv, encrypted_key, suite)
 
 
 class LocalFileProvider(BaseProvider):
@@ -232,10 +225,10 @@ class LocalFileProvider(BaseProvider):
             logger.info("Created new root key at %s", self.key_file)
             return root_key
 
-    async def derive_account_key(self, account_id: str) -> bytes:
+    async def derive_account_key(self, account_id: str, suite: CipherSuite = DEFAULT_SUITE) -> bytes:
         """Derive Account Key from Root Key."""
         root_key = await self.get_root_key()
-        return await self._hkdf_derive(root_key, account_id, HKDF_SALT, HKDF_INFO_PREFIX)
+        return await self._hkdf_derive(root_key, account_id, HKDF_SALT, HKDF_INFO_PREFIX, suite)
 
 
 class VaultProvider(BaseProvider):
@@ -498,18 +491,10 @@ class VaultProvider(BaseProvider):
                 debug_message="Failed to record encryption key metrics for provider=vault",
             )
 
-    async def derive_account_key(self, account_id: str) -> bytes:
-        """
-        Derive Account Key using HKDF.
-
-        Args:
-            account_id: Account ID
-
-        Returns:
-            Derived Account Key
-        """
+    async def derive_account_key(self, account_id: str, suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        """Derive Account Key using HKDF."""
         root_key = await self.get_root_key()
-        return await self._hkdf_derive(root_key, account_id, HKDF_SALT, HKDF_INFO_PREFIX)
+        return await self._hkdf_derive(root_key, account_id, HKDF_SALT, HKDF_INFO_PREFIX, suite)
 
 
 class VolcengineKMSProvider(BaseProvider):
@@ -752,18 +737,10 @@ class VolcengineKMSProvider(BaseProvider):
                 debug_message="Failed to record encryption key metrics for provider=volcengine_kms",
             )
 
-    async def derive_account_key(self, account_id: str) -> bytes:
-        """
-        Derive Account Key using HKDF.
-
-        Args:
-            account_id: Account ID
-
-        Returns:
-            Derived Account Key
-        """
+    async def derive_account_key(self, account_id: str, suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        """Derive Account Key using HKDF."""
         root_key = await self.get_root_key()
-        return await self._hkdf_derive(root_key, account_id, HKDF_SALT, HKDF_INFO_PREFIX)
+        return await self._hkdf_derive(root_key, account_id, HKDF_SALT, HKDF_INFO_PREFIX, suite)
 
 
 def create_root_key_provider(

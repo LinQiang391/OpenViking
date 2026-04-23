@@ -3,13 +3,18 @@
 """
 Pluggable crypto engine abstraction and implementations.
 
-Provides a unified interface for AES-256-GCM encryption/decryption and HKDF key
-derivation, with two concrete backends:
+Provides a unified interface for authenticated encryption and key derivation,
+with support for multiple cipher suites and two concrete backends:
 
 - DefaultCryptoEngine : uses the ``cryptography`` library (statically-linked OpenSSL).
-- KAECryptoEngine     : uses cffi to call the system-installed OpenSSL (libcrypto),
+- KAECryptoEngine     : uses ctypes to call the system-installed OpenSSL (libcrypto),
                         optionally loading the KAE hardware accelerator engine.
                         Supports both OpenSSL 1.1.1 and 3.x.
+
+Cipher suites
+-------------
+- ``AES_256_GCM``  : AES-256-GCM  + HKDF-SHA-256  (default, backward-compatible)
+- ``SM4_GCM``      : SM4-GCM      + HKDF-SM3      (国密)
 """
 
 from __future__ import annotations
@@ -17,18 +22,64 @@ from __future__ import annotations
 import abc
 import ctypes
 import ctypes.util
-import struct
-from typing import Optional, Tuple
+import enum
+from typing import Optional
 
 from openviking.crypto.exceptions import AuthenticationFailedError, ConfigError
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-AES_256_GCM_KEY_LEN = 32
-AES_256_GCM_IV_LEN = 12
-AES_256_GCM_TAG_LEN = 16
-HKDF_OUTPUT_LEN = 32
+
+# ---------------------------------------------------------------------------
+# Cipher suite enum
+# ---------------------------------------------------------------------------
+
+class CipherSuite(enum.Enum):
+    """Supported cipher suites.
+
+    Each suite bundles an AEAD cipher with a matching KDF hash algorithm.
+    The ``value`` is stored in the envelope header to identify the suite used
+    at encryption time so that decryption can pick the right algorithm
+    regardless of the current system default.
+    """
+    AES_256_GCM = 0x01   # AES-256-GCM  + HKDF-SHA-256
+    SM4_GCM     = 0x02   # SM4-128-GCM  + HKDF-SM3
+
+
+# Per-suite constants
+_SUITE_PARAMS: dict[CipherSuite, dict] = {
+    CipherSuite.AES_256_GCM: {
+        "key_len": 32,
+        "iv_len": 12,
+        "tag_len": 16,
+        "kdf_output_len": 32,
+        "label": "AES-256-GCM + HKDF-SHA-256",
+    },
+    CipherSuite.SM4_GCM: {
+        "key_len": 16,
+        "iv_len": 12,
+        "tag_len": 16,
+        "kdf_output_len": 16,
+        "label": "SM4-GCM + HKDF-SM3",
+    },
+}
+
+DEFAULT_SUITE = CipherSuite.AES_256_GCM
+
+GCM_TAG_LEN = 16
+
+
+def suite_from_id(suite_id: int) -> CipherSuite:
+    """Resolve an envelope algorithm byte to a :class:`CipherSuite`."""
+    for s in CipherSuite:
+        if s.value == suite_id:
+            return s
+    raise ConfigError(f"Unknown cipher suite id: 0x{suite_id:02x}")
+
+
+def suite_params(suite: CipherSuite) -> dict:
+    return _SUITE_PARAMS[suite]
 
 
 # ---------------------------------------------------------------------------
@@ -36,19 +87,40 @@ HKDF_OUTPUT_LEN = 32
 # ---------------------------------------------------------------------------
 
 class CryptoEngine(abc.ABC):
-    """Abstract crypto engine that providers and the file encryptor delegate to."""
+    """Abstract crypto engine that providers and the file encryptor delegate to.
+
+    All methods accept an explicit *suite* parameter so callers can select the
+    algorithm at call-time (e.g. when decrypting files written with a different
+    suite than the current default).
+    """
 
     @abc.abstractmethod
+    def encrypt(self, key: bytes, iv: bytes, plaintext: bytes,
+                suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        """AEAD encrypt.  Returns ciphertext || 16-byte auth tag."""
+
+    @abc.abstractmethod
+    def decrypt(self, key: bytes, iv: bytes, ciphertext: bytes,
+                suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        """AEAD decrypt.  *ciphertext* includes the trailing 16-byte auth tag."""
+
+    @abc.abstractmethod
+    def kdf(self, ikm: bytes, salt: bytes, info: bytes,
+            suite: CipherSuite = DEFAULT_SUITE, length: int | None = None) -> bytes:
+        """Key derivation (HKDF with suite-appropriate hash).
+
+        *length* defaults to the suite's ``kdf_output_len`` when ``None``.
+        """
+
+    # Convenience aliases for backward-compatible call sites
     def aes_gcm_encrypt(self, key: bytes, iv: bytes, plaintext: bytes) -> bytes:
-        """AES-256-GCM encrypt. Returns ciphertext || 16-byte auth tag."""
+        return self.encrypt(key, iv, plaintext, CipherSuite.AES_256_GCM)
 
-    @abc.abstractmethod
     def aes_gcm_decrypt(self, key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
-        """AES-256-GCM decrypt. *ciphertext* includes the trailing 16-byte auth tag."""
+        return self.decrypt(key, iv, ciphertext, CipherSuite.AES_256_GCM)
 
-    @abc.abstractmethod
-    def hkdf_sha256(self, ikm: bytes, salt: bytes, info: bytes, length: int = HKDF_OUTPUT_LEN) -> bytes:
-        """HKDF-SHA-256 key derivation."""
+    def hkdf_sha256(self, ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes:
+        return self.kdf(ikm, salt, info, CipherSuite.AES_256_GCM, length)
 
     def name(self) -> str:
         return self.__class__.__name__
@@ -61,31 +133,114 @@ class CryptoEngine(abc.ABC):
 class DefaultCryptoEngine(CryptoEngine):
     """Crypto engine backed by the ``cryptography`` Python library."""
 
-    def aes_gcm_encrypt(self, key: bytes, iv: bytes, plaintext: bytes) -> bytes:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    def encrypt(self, key: bytes, iv: bytes, plaintext: bytes,
+                suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        cipher = self._get_aead(suite, key)
+        return cipher.encrypt(iv, plaintext, associated_data=None)
 
-        aesgcm = AESGCM(key)
-        return aesgcm.encrypt(iv, plaintext, associated_data=None)
-
-    def aes_gcm_decrypt(self, key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-        aesgcm = AESGCM(key)
+    def decrypt(self, key: bytes, iv: bytes, ciphertext: bytes,
+                suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        cipher = self._get_aead(suite, key)
         try:
-            return aesgcm.decrypt(iv, ciphertext, associated_data=None)
+            return cipher.decrypt(iv, ciphertext, associated_data=None)
         except Exception as e:
             raise AuthenticationFailedError(f"Decryption failed: {e}")
 
-    def hkdf_sha256(self, ikm: bytes, salt: bytes, info: bytes, length: int = HKDF_OUTPUT_LEN) -> bytes:
-        from cryptography.hazmat.primitives import hashes
+    def kdf(self, ikm: bytes, salt: bytes, info: bytes,
+            suite: CipherSuite = DEFAULT_SUITE, length: int | None = None) -> bytes:
+        if length is None:
+            length = suite_params(suite)["kdf_output_len"]
+        md = self._get_hash(suite)
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
-        hkdf = HKDF(algorithm=hashes.SHA256(), length=length, salt=salt, info=info)
+        hkdf = HKDF(algorithm=md, length=length, salt=salt, info=info)
         return hkdf.derive(ikm)
+
+    # ---- helpers ---------------------------------------------------------
+
+    @staticmethod
+    def _get_aead(suite: CipherSuite, key: bytes):
+        if suite == CipherSuite.AES_256_GCM:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            return AESGCM(key)
+        elif suite == CipherSuite.SM4_GCM:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            try:
+                from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _  # noqa: F811
+                from cryptography.hazmat.decrepit.ciphers.algorithms import SM4
+            except ImportError:
+                pass
+            # cryptography >= 43 exposes SM4 in various ways. For GCM mode
+            # we need to construct it manually via the low-level Cipher API.
+            from cryptography.hazmat.primitives.ciphers import Cipher, modes
+            try:
+                from cryptography.hazmat.primitives.ciphers.algorithms import SM4 as SM4Algo
+            except ImportError:
+                try:
+                    from cryptography.hazmat.decrepit.ciphers.algorithms import SM4 as SM4Algo
+                except ImportError:
+                    raise ConfigError(
+                        "SM4 algorithm not available in the installed cryptography library. "
+                        "Upgrade to cryptography >= 43 or use the KAE engine."
+                    )
+            return _SM4GCMWrapper(key)
+        else:
+            raise ConfigError(f"Unsupported cipher suite: {suite}")
+
+    @staticmethod
+    def _get_hash(suite: CipherSuite):
+        from cryptography.hazmat.primitives import hashes
+        if suite == CipherSuite.AES_256_GCM:
+            return hashes.SHA256()
+        elif suite == CipherSuite.SM4_GCM:
+            return hashes.SM3()
+        else:
+            raise ConfigError(f"Unsupported KDF hash for suite: {suite}")
+
+
+class _SM4GCMWrapper:
+    """Adapter that gives SM4-GCM the same ``encrypt`` / ``decrypt`` API as
+    ``AESGCM`` from the ``cryptography`` library.
+
+    Uses the low-level ``Cipher`` API because the high-level AEAD classes
+    do not expose SM4-GCM directly.
+    """
+
+    def __init__(self, key: bytes):
+        self._key = key
+
+    def encrypt(self, nonce: bytes, data: bytes, associated_data: bytes | None) -> bytes:
+        from cryptography.hazmat.primitives.ciphers import Cipher, modes
+        try:
+            from cryptography.hazmat.primitives.ciphers.algorithms import SM4
+        except ImportError:
+            from cryptography.hazmat.decrepit.ciphers.algorithms import SM4
+
+        encryptor = Cipher(SM4(self._key), modes.GCM(nonce)).encryptor()
+        if associated_data is not None:
+            encryptor.authenticate_additional_data(associated_data)
+        ct = encryptor.update(data) + encryptor.finalize()
+        return ct + encryptor.tag
+
+    def decrypt(self, nonce: bytes, data: bytes, associated_data: bytes | None) -> bytes:
+        from cryptography.hazmat.primitives.ciphers import Cipher, modes
+        try:
+            from cryptography.hazmat.primitives.ciphers.algorithms import SM4
+        except ImportError:
+            from cryptography.hazmat.decrepit.ciphers.algorithms import SM4
+
+        if len(data) < GCM_TAG_LEN:
+            raise AuthenticationFailedError("Ciphertext too short for GCM tag")
+        ct_body = data[:-GCM_TAG_LEN]
+        tag = data[-GCM_TAG_LEN:]
+
+        decryptor = Cipher(SM4(self._key), modes.GCM(nonce, tag)).decryptor()
+        if associated_data is not None:
+            decryptor.authenticate_additional_data(associated_data)
+        return decryptor.update(ct_body) + decryptor.finalize()
 
 
 # ---------------------------------------------------------------------------
-# KAE engine – cffi / ctypes calls into system libcrypto
+# KAE engine – ctypes calls into system libcrypto
 # ---------------------------------------------------------------------------
 
 def _find_libcrypto() -> str:
@@ -162,6 +317,14 @@ class KAECryptoEngine(CryptoEngine):
         lib.EVP_aes_256_gcm.restype = c_void_p
         lib.EVP_aes_256_gcm.argtypes = []
 
+        # SM4-GCM requires OpenSSL 3.x; function may not exist on 1.1.1
+        try:
+            lib.EVP_sm4_gcm.restype = c_void_p
+            lib.EVP_sm4_gcm.argtypes = []
+            self._has_sm4_gcm = True
+        except AttributeError:
+            self._has_sm4_gcm = False
+
         lib.EVP_EncryptInit_ex.restype = c_int
         lib.EVP_EncryptInit_ex.argtypes = [c_void_p, c_void_p, c_void_p, c_char_p, c_char_p]
 
@@ -196,9 +359,6 @@ class KAECryptoEngine(CryptoEngine):
         lib.EVP_PKEY_CTX_ctrl.restype = c_int
         lib.EVP_PKEY_CTX_ctrl.argtypes = [c_void_p, c_int, c_int, c_int, c_int, c_void_p]
 
-        lib.EVP_PKEY_CTX_set_hkdf_md.restype = c_int
-        lib.EVP_PKEY_CTX_set_hkdf_md.argtypes = [c_void_p, c_void_p]
-
         lib.EVP_PKEY_derive.restype = c_int
         lib.EVP_PKEY_derive.argtypes = [c_void_p, c_char_p, ctypes.POINTER(ctypes.c_size_t)]
 
@@ -208,11 +368,16 @@ class KAECryptoEngine(CryptoEngine):
         lib.EVP_sha256.restype = c_void_p
         lib.EVP_sha256.argtypes = []
 
+        # SM3 may not exist on older builds
+        try:
+            lib.EVP_sm3.restype = c_void_p
+            lib.EVP_sm3.argtypes = []
+            self._has_sm3 = True
+        except AttributeError:
+            self._has_sm3 = False
+
         lib.OpenSSL_version_num.restype = c_ulong
         lib.OpenSSL_version_num.argtypes = []
-
-        # EVP_PKEY_CTX_hkdf_mode / set_hkdf_* helpers (macros → ctrl calls)
-        # We use raw ctrl calls below; signatures defined above.
 
         # OpenSSL 1.1.1 ENGINE API
         if self._openssl_major == 1:
@@ -257,19 +422,50 @@ class KAECryptoEngine(CryptoEngine):
                 )
             logger.info("Loaded KAE via OpenSSL 3.x OSSL_PROVIDER API")
 
-    # ---- AES-256-GCM ----------------------------------------------------
+    # ---- cipher selection -----------------------------------------------
+
+    def _evp_cipher(self, suite: CipherSuite):
+        lib = self._lib
+        if suite == CipherSuite.AES_256_GCM:
+            return lib.EVP_aes_256_gcm()
+        elif suite == CipherSuite.SM4_GCM:
+            if not self._has_sm4_gcm:
+                raise ConfigError(
+                    "SM4-GCM not available in the loaded libcrypto. "
+                    "Requires OpenSSL 3.x with SM4 support."
+                )
+            return lib.EVP_sm4_gcm()
+        else:
+            raise ConfigError(f"Unsupported cipher suite for KAE engine: {suite}")
+
+    def _evp_md(self, suite: CipherSuite):
+        lib = self._lib
+        if suite == CipherSuite.AES_256_GCM:
+            return lib.EVP_sha256()
+        elif suite == CipherSuite.SM4_GCM:
+            if not self._has_sm3:
+                raise ConfigError(
+                    "SM3 hash not available in the loaded libcrypto. "
+                    "Requires OpenSSL with SM3 support."
+                )
+            return lib.EVP_sm3()
+        else:
+            raise ConfigError(f"Unsupported KDF hash for suite: {suite}")
+
+    # ---- AEAD encrypt/decrypt -------------------------------------------
 
     _EVP_CTRL_GCM_SET_IVLEN = 0x9
     _EVP_CTRL_GCM_GET_TAG = 0x10
     _EVP_CTRL_GCM_SET_TAG = 0x11
 
-    def aes_gcm_encrypt(self, key: bytes, iv: bytes, plaintext: bytes) -> bytes:
+    def encrypt(self, key: bytes, iv: bytes, plaintext: bytes,
+                suite: CipherSuite = DEFAULT_SUITE) -> bytes:
         lib = self._lib
         ctx = lib.EVP_CIPHER_CTX_new()
         if not ctx:
             raise AuthenticationFailedError("EVP_CIPHER_CTX_new failed")
         try:
-            cipher = lib.EVP_aes_256_gcm()
+            cipher = self._evp_cipher(suite)
             engine_ptr = self._engine_ptr if self._openssl_major == 1 else None
 
             if not lib.EVP_EncryptInit_ex(ctx, cipher, engine_ptr, None, None):
@@ -280,7 +476,7 @@ class KAECryptoEngine(CryptoEngine):
                 raise AuthenticationFailedError("EVP_EncryptInit_ex (key/iv) failed")
 
             out_len = ctypes.c_int(0)
-            out_buf = ctypes.create_string_buffer(len(plaintext) + AES_256_GCM_TAG_LEN)
+            out_buf = ctypes.create_string_buffer(len(plaintext) + GCM_TAG_LEN)
 
             if not lib.EVP_EncryptUpdate(ctx, out_buf, ctypes.byref(out_len), plaintext, len(plaintext)):
                 raise AuthenticationFailedError("EVP_EncryptUpdate failed")
@@ -292,27 +488,28 @@ class KAECryptoEngine(CryptoEngine):
                 raise AuthenticationFailedError("EVP_EncryptFinal_ex failed")
             ct_len += final_len.value
 
-            tag_buf = ctypes.create_string_buffer(AES_256_GCM_TAG_LEN)
-            if not lib.EVP_CIPHER_CTX_ctrl(ctx, self._EVP_CTRL_GCM_GET_TAG, AES_256_GCM_TAG_LEN, tag_buf):
+            tag_buf = ctypes.create_string_buffer(GCM_TAG_LEN)
+            if not lib.EVP_CIPHER_CTX_ctrl(ctx, self._EVP_CTRL_GCM_GET_TAG, GCM_TAG_LEN, tag_buf):
                 raise AuthenticationFailedError("Get GCM tag failed")
 
             return out_buf.raw[:ct_len] + tag_buf.raw
         finally:
             lib.EVP_CIPHER_CTX_free(ctx)
 
-    def aes_gcm_decrypt(self, key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
-        if len(ciphertext) < AES_256_GCM_TAG_LEN:
+    def decrypt(self, key: bytes, iv: bytes, ciphertext: bytes,
+                suite: CipherSuite = DEFAULT_SUITE) -> bytes:
+        if len(ciphertext) < GCM_TAG_LEN:
             raise AuthenticationFailedError("Ciphertext too short for GCM tag")
 
-        ct_body = ciphertext[:-AES_256_GCM_TAG_LEN]
-        tag = ciphertext[-AES_256_GCM_TAG_LEN:]
+        ct_body = ciphertext[:-GCM_TAG_LEN]
+        tag = ciphertext[-GCM_TAG_LEN:]
 
         lib = self._lib
         ctx = lib.EVP_CIPHER_CTX_new()
         if not ctx:
             raise AuthenticationFailedError("EVP_CIPHER_CTX_new failed")
         try:
-            cipher = lib.EVP_aes_256_gcm()
+            cipher = self._evp_cipher(suite)
             engine_ptr = self._engine_ptr if self._openssl_major == 1 else None
 
             if not lib.EVP_DecryptInit_ex(ctx, cipher, engine_ptr, None, None):
@@ -330,7 +527,7 @@ class KAECryptoEngine(CryptoEngine):
             pt_len = out_len.value
 
             tag_buf = ctypes.create_string_buffer(tag)
-            if not lib.EVP_CIPHER_CTX_ctrl(ctx, self._EVP_CTRL_GCM_SET_TAG, AES_256_GCM_TAG_LEN, tag_buf):
+            if not lib.EVP_CIPHER_CTX_ctrl(ctx, self._EVP_CTRL_GCM_SET_TAG, GCM_TAG_LEN, tag_buf):
                 raise AuthenticationFailedError("Set GCM tag failed")
 
             final_buf = ctypes.create_string_buffer(32)
@@ -344,7 +541,7 @@ class KAECryptoEngine(CryptoEngine):
         finally:
             lib.EVP_CIPHER_CTX_free(ctx)
 
-    # ---- HKDF -----------------------------------------------------------
+    # ---- KDF ------------------------------------------------------------
 
     _EVP_PKEY_HKDF = 1036
     _EVP_PKEY_OP_DERIVE = 1 << 10
@@ -355,7 +552,10 @@ class KAECryptoEngine(CryptoEngine):
     _EVP_PKEY_CTRL_HKDF_MODE = 0x1000 + 5
     _EVP_PKEY_HKDEF_MODE_EXTRACT_AND_EXPAND = 0
 
-    def hkdf_sha256(self, ikm: bytes, salt: bytes, info: bytes, length: int = HKDF_OUTPUT_LEN) -> bytes:
+    def kdf(self, ikm: bytes, salt: bytes, info: bytes,
+            suite: CipherSuite = DEFAULT_SUITE, length: int | None = None) -> bytes:
+        if length is None:
+            length = suite_params(suite)["kdf_output_len"]
         lib = self._lib
         pctx = lib.EVP_PKEY_CTX_new_id(self._EVP_PKEY_HKDF, None)
         if not pctx:
@@ -364,40 +564,35 @@ class KAECryptoEngine(CryptoEngine):
             if not lib.EVP_PKEY_derive_init(pctx):
                 raise ConfigError("EVP_PKEY_derive_init failed")
 
-            # Set mode to extract-and-expand
             lib.EVP_PKEY_CTX_ctrl(
                 pctx, -1, self._EVP_PKEY_OP_DERIVE,
                 self._EVP_PKEY_CTRL_HKDF_MODE, self._EVP_PKEY_HKDEF_MODE_EXTRACT_AND_EXPAND, None,
             )
 
-            md = lib.EVP_sha256()
+            md = self._evp_md(suite)
             lib.EVP_PKEY_CTX_ctrl(
                 pctx, -1, self._EVP_PKEY_OP_DERIVE,
                 self._EVP_PKEY_CTRL_HKDF_MD, 0, md,
             )
 
-            # Salt
             salt_buf = ctypes.create_string_buffer(salt)
             lib.EVP_PKEY_CTX_ctrl(
                 pctx, -1, self._EVP_PKEY_OP_DERIVE,
                 self._EVP_PKEY_CTRL_HKDF_SALT, len(salt), salt_buf,
             )
 
-            # IKM (key material)
             ikm_buf = ctypes.create_string_buffer(ikm)
             lib.EVP_PKEY_CTX_ctrl(
                 pctx, -1, self._EVP_PKEY_OP_DERIVE,
                 self._EVP_PKEY_CTRL_HKDF_KEY, len(ikm), ikm_buf,
             )
 
-            # Info
             info_buf = ctypes.create_string_buffer(info)
             lib.EVP_PKEY_CTX_ctrl(
                 pctx, -1, self._EVP_PKEY_OP_DERIVE,
                 self._EVP_PKEY_CTRL_HKDF_INFO, len(info), info_buf,
             )
 
-            # Derive
             out_len = ctypes.c_size_t(length)
             out_buf = ctypes.create_string_buffer(length)
             if not lib.EVP_PKEY_derive(pctx, out_buf, ctypes.byref(out_len)):

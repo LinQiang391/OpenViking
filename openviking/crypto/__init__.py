@@ -15,6 +15,7 @@ from openviking.crypto.config import (
 )
 from openviking.crypto.encryptor import FileEncryptor
 from openviking.crypto.engine import (
+    CipherSuite,
     CryptoEngine,
     DefaultCryptoEngine,
     KAECryptoEngine,
@@ -36,6 +37,7 @@ from openviking.crypto.providers import (
 )
 
 __all__ = [
+    "CipherSuite",
     "CryptoEngine",
     "DefaultCryptoEngine",
     "KAECryptoEngine",
