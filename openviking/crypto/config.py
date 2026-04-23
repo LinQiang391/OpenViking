@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from openviking.crypto.encryptor import FileEncryptor
+from openviking.crypto.engine import create_crypto_engine
 from openviking.crypto.exceptions import ConfigError
 from openviking.crypto.providers import create_root_key_provider
 from openviking_cli.utils.logger import get_logger
@@ -147,13 +148,23 @@ async def bootstrap_encryption(config: Dict[str, Any]) -> Optional[FileEncryptor
         error_msg = "; ".join(errors)
         raise ConfigError(f"Invalid encryption configuration: {error_msg}")
 
-    # Create Provider
-    provider_type = encryption_config.get("provider", "local")
-    provider = create_root_key_provider(provider_type, encryption_config)
+    # Create CryptoEngine
+    engine_config = encryption_config.get("engine", {})
+    engine_type = engine_config.get("type", "default")
+    engine_kwargs = {}
+    if engine_type == "kae":
+        engine_id = engine_config.get("engine_id", "kae")
+        engine_kwargs["engine_id"] = engine_id
+    engine = create_crypto_engine(engine_type, **engine_kwargs)
+    logger.info("Crypto engine created: %s (%s)", engine.name(), engine_type)
 
-    # Create FileEncryptor
-    encryptor = FileEncryptor(provider)
-    logger.info("Encryption bootstrapped successfully with provider: %s", provider_type)
+    # Create Provider (inject engine)
+    provider_type = encryption_config.get("provider", "local")
+    provider = create_root_key_provider(provider_type, encryption_config, engine=engine)
+
+    # Create FileEncryptor (inject engine)
+    encryptor = FileEncryptor(provider, engine=engine)
+    logger.info("Encryption bootstrapped successfully with provider: %s, engine: %s", provider_type, engine_type)
 
     return encryptor
 

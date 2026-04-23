@@ -45,6 +45,26 @@ class VolcengineKMSEncryptionProviderConfig(BaseModel):
     secret_key: Optional[str] = Field(default=None, description="Volcengine secret access key")
 
 
+class CryptoEngineConfig(BaseModel):
+    """Configuration for the pluggable crypto engine.
+
+    Controls which low-level crypto backend is used for AES-256-GCM and HKDF
+    operations.  ``"default"`` uses the ``cryptography`` Python library (statically
+    linked OpenSSL).  ``"kae"`` uses ctypes to call the system-installed OpenSSL and
+    loads the KAE hardware accelerator engine (supports OpenSSL 1.1.1 and 3.x).
+    """
+
+    type: str = Field(
+        default="default",
+        description="Crypto engine type: 'default' (cryptography lib) or 'kae' (system OpenSSL + KAE)",
+    )
+
+    engine_id: str = Field(
+        default="kae",
+        description="OpenSSL engine/provider identifier to load (only used when type='kae')",
+    )
+
+
 class EncryptionConfig(BaseModel):
     """Configuration for encryption module.
 
@@ -52,9 +72,10 @@ class EncryptionConfig(BaseModel):
     - Envelope encryption with AES-256-GCM
     - Multiple key providers (Local File, Vault, Volcengine KMS)
     - API Key hashing with Argon2id
+    - Pluggable crypto engine (default / KAE hardware accelerator)
 
     Example configurations:
-        # Local file provider
+        # Local file provider with default engine
         {
             "enabled": true,
             "provider": "local",
@@ -63,15 +84,16 @@ class EncryptionConfig(BaseModel):
             }
         }
 
-        # Vault provider
+        # Local file provider with KAE engine
         {
             "enabled": true,
-            "provider": "vault",
-            "vault": {
-                "address": "https://vault.example.com:8200",
-                "token": "vault-token-xxx",
-                "mount_point": "transit",
-                "key_name": "openviking-root"
+            "provider": "local",
+            "engine": {
+                "type": "kae",
+                "engine_id": "kae"
+            },
+            "local": {
+                "key_file": "~/.openviking/master.key"
             }
         }
     """
@@ -81,6 +103,11 @@ class EncryptionConfig(BaseModel):
     provider: str = Field(
         default="local",
         description="Key provider type: 'local', 'vault', 'volcengine_kms'",
+    )
+
+    engine: CryptoEngineConfig = Field(
+        default_factory=CryptoEngineConfig,
+        description="Crypto engine configuration (default or kae)",
     )
 
     local: LocalEncryptionProviderConfig = Field(

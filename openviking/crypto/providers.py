@@ -9,6 +9,8 @@ Provides multiple key management methods:
 - VolcengineKMSProvider: Volcengine KMS
 """
 
+from __future__ import annotations
+
 import abc
 import asyncio
 import importlib
@@ -17,13 +19,16 @@ import secrets
 import time
 from abc import ABC
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from openviking.crypto.exceptions import (
     AuthenticationFailedError,
     ConfigError,
 )
 from openviking_cli.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from openviking.crypto.engine import CryptoEngine
 
 logger = get_logger(__name__)
 
@@ -56,6 +61,19 @@ PROVIDER_VOLCENGINE = 0x03
 class RootKeyProvider(ABC):
     """Root Key Provider abstract base class."""
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+
+    def set_engine(self, engine: "CryptoEngine") -> None:
+        """Attach a :class:`CryptoEngine` used for all symmetric crypto operations."""
+        self._engine: CryptoEngine = engine
+
+    def _get_engine(self) -> "CryptoEngine":
+        if not hasattr(self, "_engine"):
+            from openviking.crypto.engine import DefaultCryptoEngine
+            self._engine = DefaultCryptoEngine()
+        return self._engine
+
     @abc.abstractmethod
     async def get_root_key(self) -> bytes:
         """Get Root Key (only used by Local Provider)."""
@@ -79,34 +97,17 @@ class RootKeyProvider(ABC):
     async def _hkdf_derive(
         self, root_key: bytes, account_id: str, salt: bytes, info_prefix: bytes
     ) -> bytes:
-        """
-        Derive key using HKDF.
-
-        Args:
-            root_key: Root key
-            account_id: Account ID
-            salt: HKDF salt
-            info_prefix: HKDF info prefix
-
-        Returns:
-            Derived key
-        """
+        """Derive key using HKDF via the pluggable :class:`CryptoEngine`."""
         start = time.perf_counter()
         status = "ok"
         try:
-            from cryptography.hazmat.primitives import hashes
-            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
-            hkdf = HKDF(
-                algorithm=hashes.SHA256(),
-                length=32,
+            engine = self._get_engine()
+            return engine.hkdf_sha256(
+                ikm=root_key,
                 salt=salt,
                 info=info_prefix + account_id.encode(),
+                length=32,
             )
-            return hkdf.derive(root_key)
-        except ImportError:
-            status = "error"
-            raise ConfigError("cryptography library is required for encryption")
         except Exception:
             status = "error"
             raise
@@ -125,26 +126,12 @@ class BaseProvider(RootKeyProvider):
     """Base provider with common encryption functionality."""
 
     async def _aes_gcm_encrypt(self, key: bytes, iv: bytes, plaintext: bytes) -> bytes:
-        """AES-GCM encryption."""
-        try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-            aesgcm = AESGCM(key)
-            return aesgcm.encrypt(iv, plaintext, associated_data=None)
-        except ImportError:
-            raise ConfigError("cryptography library is required for encryption")
+        """AES-GCM encryption via the pluggable :class:`CryptoEngine`."""
+        return self._get_engine().aes_gcm_encrypt(key, iv, plaintext)
 
     async def _aes_gcm_decrypt(self, key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
-        """AES-GCM decryption."""
-        try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-            aesgcm = AESGCM(key)
-            return aesgcm.decrypt(iv, ciphertext, associated_data=None)
-        except ImportError:
-            raise ConfigError("cryptography library is required for encryption")
-        except Exception as e:
-            raise AuthenticationFailedError(f"Decryption failed: {e}")
+        """AES-GCM decryption via the pluggable :class:`CryptoEngine`."""
+        return self._get_engine().aes_gcm_decrypt(key, iv, ciphertext)
 
     async def encrypt_file_key(self, plaintext_key: bytes, account_id: str) -> Tuple[bytes, bytes]:
         """
@@ -782,6 +769,7 @@ class VolcengineKMSProvider(BaseProvider):
 def create_root_key_provider(
     provider_type: str,
     config: Dict[str, Any],
+    engine: Optional["CryptoEngine"] = None,
 ) -> RootKeyProvider:
     """
     Create RootKeyProvider instance.
@@ -789,17 +777,20 @@ def create_root_key_provider(
     Args:
         provider_type: Provider type ("local", "vault", "volcengine_kms")
         config: Configuration dictionary
+        engine: Optional CryptoEngine to use; defaults to DefaultCryptoEngine
 
     Returns:
         RootKeyProvider instance
     """
+    provider: RootKeyProvider
+
     if provider_type == "local":
         local_config = config.get("local", {})
         key_file_path = local_config.get("key_file", "~/.openviking/master.key")
 
         if not key_file_path:
             raise ConfigError("encryption.local.key_file is required")
-        return LocalFileProvider(key_file_path)
+        provider = LocalFileProvider(key_file_path)
 
     elif provider_type == "vault":
         vault_config = config.get("vault", {})
@@ -815,7 +806,7 @@ def create_root_key_provider(
 
         if not address or not token:
             raise ConfigError("vault.address and vault.token are required")
-        return VaultProvider(
+        provider = VaultProvider(
             address,
             token,
             mount_point,
@@ -836,9 +827,13 @@ def create_root_key_provider(
 
         if not all([region, access_key, secret_key, key_id]):
             raise ConfigError("volcengine_kms region, access_key, secret_key, key_id are required")
-        return VolcengineKMSProvider(
+        provider = VolcengineKMSProvider(
             region, access_key, secret_key, key_id, endpoint=endpoint, key_file=key_file
         )
 
     else:
         raise ConfigError(f"Unsupported provider type: {provider_type}")
+
+    if engine is not None:
+        provider.set_engine(engine)
+    return provider

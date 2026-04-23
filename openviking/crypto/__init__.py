@@ -14,6 +14,12 @@ from openviking.crypto.config import (
     validate_encryption_config,
 )
 from openviking.crypto.encryptor import FileEncryptor
+from openviking.crypto.engine import (
+    CryptoEngine,
+    DefaultCryptoEngine,
+    KAECryptoEngine,
+    create_crypto_engine,
+)
 from openviking.crypto.exceptions import (
     AuthenticationFailedError,
     CorruptedCiphertextError,
@@ -30,6 +36,10 @@ from openviking.crypto.providers import (
 )
 
 __all__ = [
+    "CryptoEngine",
+    "DefaultCryptoEngine",
+    "KAECryptoEngine",
+    "create_crypto_engine",
     "RootKeyProvider",
     "LocalFileProvider",
     "VaultProvider",

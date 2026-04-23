@@ -9,6 +9,8 @@ Implements Envelope Encryption pattern:
 - Account Key is derived from Root Key
 """
 
+from __future__ import annotations
+
 import importlib
 import secrets
 import struct
@@ -24,6 +26,7 @@ from openviking.crypto.exceptions import (
 from openviking_cli.utils.logger import get_logger
 
 if TYPE_CHECKING:
+    from openviking.crypto.engine import CryptoEngine
     from openviking.crypto.providers import RootKeyProvider
 
 logger = get_logger(__name__)
@@ -57,14 +60,19 @@ def _record_encryption_metrics(
 class FileEncryptor:
     """File encryptor."""
 
-    def __init__(self, provider: "RootKeyProvider"):
+    def __init__(self, provider: "RootKeyProvider", engine: CryptoEngine | None = None):
         """
         Initialize FileEncryptor.
 
         Args:
             provider: RootKeyProvider instance
+            engine: Optional CryptoEngine; defaults to DefaultCryptoEngine
         """
         self.provider = provider
+        if engine is None:
+            from openviking.crypto.engine import DefaultCryptoEngine
+            engine = DefaultCryptoEngine()
+        self._engine = engine
         self._provider_type = self._detect_provider_type(provider)
 
     def _detect_provider_type(self, provider: "RootKeyProvider") -> int:
@@ -297,27 +305,9 @@ class FileEncryptor:
         return provider_type, encrypted_file_key, key_iv, data_iv, encrypted_content
 
     async def _aes_gcm_encrypt(self, key: bytes, iv: bytes, plaintext: bytes) -> bytes:
-        """AES-GCM encryption."""
-        try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-            aesgcm = AESGCM(key)
-            return aesgcm.encrypt(iv, plaintext, associated_data=None)
-        except ImportError:
-            from openviking.crypto.exceptions import ConfigError
-
-            raise ConfigError("cryptography library is required for encryption")
+        """AES-GCM encryption via the pluggable :class:`CryptoEngine`."""
+        return self._engine.aes_gcm_encrypt(key, iv, plaintext)
 
     async def _aes_gcm_decrypt(self, key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
-        """AES-GCM decryption."""
-        try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-            aesgcm = AESGCM(key)
-            return aesgcm.decrypt(iv, ciphertext, associated_data=None)
-        except ImportError:
-            from openviking.crypto.exceptions import ConfigError
-
-            raise ConfigError("cryptography library is required for encryption")
-        except Exception as e:
-            raise AuthenticationFailedError(f"Decryption failed: {e}")
+        """AES-GCM decryption via the pluggable :class:`CryptoEngine`."""
+        return self._engine.aes_gcm_decrypt(key, iv, ciphertext)
