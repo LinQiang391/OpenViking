@@ -1,17 +1,9 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { resolve as resolvePath } from "node:path";
 import { getEnv } from "./runtime-utils.js";
 
 export type MemoryOpenVikingConfig = {
-  /** "local" = plugin starts OpenViking server as child process (like Claude Code); "remote" = use existing HTTP server */
-  mode?: "local" | "remote";
-  /** Path to ov.conf; used when mode is "local". Default ~/.openviking/ov.conf */
-  configPath?: string;
-  /** Port for local server when mode is "local". Ignored when mode is "remote". */
-  port?: number;
+  mode?: "remote";
   baseUrl?: string;
-  agentId?: string;
+  agent_prefix?: string;
   serverAuthMode?: "api_key" | "trusted";
   apiKey?: string;
   /** Advanced option. Only needed when using root key or trusted auth mode. With a user key the server derives identity from the key. */
@@ -54,7 +46,6 @@ export type MemoryOpenVikingConfig = {
 };
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:1933";
-const DEFAULT_PORT = 1933;
 const DEFAULT_TARGET_URI = "viking://user/memories";
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_CAPTURE_MODE = "semantic";
@@ -67,16 +58,14 @@ const DEFAULT_RECALL_TOKEN_BUDGET = 8000;
 const DEFAULT_COMMIT_TOKEN_THRESHOLD = 20000;
 const DEFAULT_BYPASS_SESSION_PATTERNS: string[] = [];
 const DEFAULT_EMIT_STANDARD_DIAGNOSTICS = false;
-const DEFAULT_LOCAL_CONFIG_PATH = join(homedir(), ".openviking", "ov.conf");
-
-const DEFAULT_AGENT_ID = "default";
+const DEFAULT_AGENT_PREFIX = "default";
 const DEFAULT_SERVER_AUTH_MODE = "api_key";
 
-function resolveAgentId(configured: unknown): string {
+function resolveAgentPrefix(configured: unknown): string {
   if (typeof configured === "string" && configured.trim()) {
     return configured.trim();
   }
-  return DEFAULT_AGENT_ID;
+  return DEFAULT_AGENT_PREFIX;
 }
 
 function resolveEnvVars(value: string): string {
@@ -150,13 +139,18 @@ export const memoryOpenVikingConfigSchema = {
       value = {};
     }
     const cfg = value as Record<string, unknown>;
+    if ("agentId" in cfg) {
+      if (!("agent_prefix" in cfg)) {
+        cfg.agent_prefix = cfg.agentId;
+      }
+      delete cfg.agentId;
+    }
     assertAllowedKeys(
       cfg,
       [
         "mode",
-        "configPath",
-        "port",
         "baseUrl",
+        "agent_prefix",
         "agentId",
         "serverAuthMode",
         "apiKey",
@@ -189,21 +183,8 @@ export const memoryOpenVikingConfigSchema = {
       "openviking config",
     );
 
-    const mode = (cfg.mode === "local" || cfg.mode === "remote" ? cfg.mode : "remote") as
-      | "local"
-      | "remote";
-    const port = Math.max(1, Math.min(65535, Math.floor(toNumber(cfg.port, DEFAULT_PORT))));
-    const rawConfigPath =
-      typeof cfg.configPath === "string" && cfg.configPath.trim()
-        ? cfg.configPath.trim()
-        : DEFAULT_LOCAL_CONFIG_PATH;
-    const configPath = resolvePath(
-      resolveEnvVars(rawConfigPath).replace(/^~/, homedir()),
-    );
-
-    const localBaseUrl = `http://127.0.0.1:${port}`;
-    const rawBaseUrl =
-      mode === "local" ? localBaseUrl : (typeof cfg.baseUrl === "string" ? cfg.baseUrl : resolveDefaultBaseUrl());
+    const mode = "remote" as const;
+    const rawBaseUrl = typeof cfg.baseUrl === "string" ? cfg.baseUrl : resolveDefaultBaseUrl();
     const resolvedBaseUrl = resolveEnvVars(rawBaseUrl).replace(/\/+$/, "");
     const rawApiKey = typeof cfg.apiKey === "string" ? cfg.apiKey : process.env.OPENVIKING_API_KEY;
     const rawServerAuthMode =
@@ -262,10 +243,8 @@ export const memoryOpenVikingConfigSchema = {
 
     return {
       mode,
-      configPath,
-      port,
       baseUrl: resolvedBaseUrl,
-      agentId: resolveAgentId(cfg.agentId),
+      agent_prefix: resolveAgentPrefix(cfg.agent_prefix),
       serverAuthMode,
       apiKey: rawApiKey ? resolveEnvVars(rawApiKey) : "",
       accountId,
@@ -319,30 +298,15 @@ export const memoryOpenVikingConfigSchema = {
     };
   },
   uiHints: {
-    mode: {
-      label: "Mode",
-      help: "local = plugin starts OpenViking server (like Claude Code); remote = use existing HTTP server",
-    },
-    configPath: {
-      label: "Config path (local)",
-      placeholder: DEFAULT_LOCAL_CONFIG_PATH,
-      help: "Path to ov.conf when mode is local",
-    },
-    port: {
-      label: "Port (local)",
-      placeholder: String(DEFAULT_PORT),
-      help: "Port for local OpenViking server",
-      advanced: true,
-    },
     baseUrl: {
-      label: "OpenViking Base URL (remote)",
+      label: "OpenViking Base URL",
       placeholder: DEFAULT_BASE_URL,
       help: "HTTP URL when mode is remote (or use ${OPENVIKING_BASE_URL})",
     },
-    agentId: {
-      label: "Agent ID",
+    agent_prefix: {
+      label: "Agent Prefix",
       placeholder: "auto-generated",
-      help: 'OpenViking X-OpenViking-Agent. "default" follows OpenClaw ctx.agentId. Non-default values are prepended as "<config>_<ctx.agentId>" (sanitized to [a-zA-Z0-9_-]).',
+      help: 'OpenViking X-OpenViking-Agent prefix. "default" follows OpenClaw ctx.agentId. Non-default values are prepended as "<prefix>_<ctx.agentId>" (sanitized to [a-zA-Z0-9_-]).',
     },
     serverAuthMode: {
       label: "Server Auth Mode",
@@ -468,15 +432,8 @@ export const memoryOpenVikingConfigSchema = {
       label: "Log find requests",
       help:
         "Log tenant routing: POST /api/v1/search/find (query, target_uri) and session POST .../messages + .../commit (sessionId, X-OpenViking-*). Never logs apiKey. " +
-        "Or set env OPENVIKING_LOG_ROUTING=1 or OPENVIKING_DEBUG=1 (no JSON edit). When on, local-mode OpenViking subprocess stderr is also logged at info.",
+        "Or set env OPENVIKING_LOG_ROUTING=1 or OPENVIKING_DEBUG=1 (no JSON edit).",
       advanced: true,
     },
   },
 };
-
-export const DEFAULT_MEMORY_OPENVIKING_DATA_DIR = join(
-  homedir(),
-  ".openclaw",
-  "memory",
-  "openviking",
-);
