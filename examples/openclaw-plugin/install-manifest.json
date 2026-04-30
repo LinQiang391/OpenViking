@@ -1,6 +1,6 @@
 {
   "manifestVersion": "1.0",
-  "pluginVersion": "2026.4.9",
+  "pluginVersion": "2026.4.33",
   "plugin": {
     "id": "openviking",
     "kind": "context-engine",
@@ -25,7 +25,9 @@
       "commands/setup.ts",
       "tsconfig.json",
       "package-lock.json",
-      ".gitignore"
+      ".gitignore",
+      "skills/install-openviking-memory/SKILL.md",
+      "INSTALL-AGENT.md"
     ]
   },
   "npm": {
@@ -34,6 +36,6 @@
   },
   "compatibility": {
     "minOpenclawVersion": "2026.3.7",
-    "minOpenvikingVersion": "0.2.9"
+    "minOpenvikingVersion": ""
   }
 }

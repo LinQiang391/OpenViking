@@ -15,7 +15,7 @@ export function launchProcess(
 
 export function runSync(
   command: string,
-  options: { encoding: "utf-8"; shell?: string | boolean; env?: NodeJS.ProcessEnv },
+  options: { encoding: "utf-8"; shell?: string; env?: NodeJS.ProcessEnv },
 ): string {
   return _execSync(command, options) as string;
 }

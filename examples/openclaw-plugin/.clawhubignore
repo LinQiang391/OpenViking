@@ -4,8 +4,7 @@ __tests__/
 images/
 health_check_tools/
 upgrade_scripts/
-skills/
 INSTALL*.md
-README*.md
+README_CN.md
 install.sh
 vitest.config.ts

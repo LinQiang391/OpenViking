@@ -532,7 +532,56 @@ const contextEnginePlugin = {
       api.pluginConfig && typeof api.pluginConfig === "object" && !Array.isArray(api.pluginConfig)
         ? (api.pluginConfig as Record<string, unknown>)
         : {};
-    const cfg = memoryOpenVikingConfigSchema.parse(api.pluginConfig);
+
+    if (rawCfg.mode && rawCfg.mode !== "remote") {
+      api.logger.warn(
+        `openviking: legacy local mode detected (mode="${String(rawCfg.mode)}"). ` +
+          "Migrating to remote mode. Please run 'openclaw openviking setup' to configure the remote server.",
+      );
+      rawCfg.mode = "remote";
+      delete rawCfg.localBinaryPath;
+      delete rawCfg.localDataDir;
+      delete rawCfg.localPort;
+      delete rawCfg.autoStart;
+    }
+
+    let cfg: ReturnType<typeof memoryOpenVikingConfigSchema.parse>;
+    try {
+      cfg = memoryOpenVikingConfigSchema.parse(rawCfg);
+    } catch (parseErr) {
+      api.logger.warn(
+        `openviking: config parse failed (${parseErr instanceof Error ? parseErr.message : String(parseErr)}). ` +
+          "Plugin loaded in setup-only mode. Run: openclaw openviking setup",
+      );
+      registerSetupCli(api);
+      return;
+    }
+
+    const hasExplicitConfig =
+      Object.keys(rawCfg).length > 0;
+    const needsSetup =
+      !hasExplicitConfig &&
+      !cfg.apiKey;
+
+    if (needsSetup) {
+      api.logger.warn(
+        "openviking: no configuration detected (no apiKey, no explicit config). " +
+          "Plugin loaded in setup-only mode — tools and context-engine are disabled. " +
+          "Run: openclaw openviking setup",
+      );
+      registerSetupCli(api);
+      api.registerService({
+        id: "openviking",
+        start: () => {
+          api.logger.info(
+            "openviking: running in setup-only mode. " +
+              "Use 'openclaw openviking setup' or 'openclaw openviking status' to configure.",
+          );
+        },
+      });
+      return;
+    }
+
     const bypassSessionPatterns = compileSessionPatterns(cfg.bypassSessionPatterns);
     const rawAgentId = rawCfg.agent_prefix;
     if (cfg.logFindRequests) {
