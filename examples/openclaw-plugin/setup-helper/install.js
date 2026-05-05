@@ -1620,18 +1620,18 @@ async function configureOpenClawPlugin({
     await scrubStaleOpenClawPluginRegistration();
   }
 
-  // Enable plugin: try CLI first (default path), fall back to direct file for --workdir
-  if (!needWorkdirFlag) {
-    try {
-      await oc(["plugins", "enable", pluginId]);
-    } catch (_e) {
-      info(tr("plugins enable via CLI failed, registering directly", "CLI plugins enable 失败，直接注册"));
-      const cfg = await readCfg();
-      await ensurePluginRegistered(cfg);
-      await writeCfg(cfg);
-    }
-  } else {
-    info(tr("Using direct config write for non-default workdir", "非默认目录，使用直接配置写入"));
+  // Always direct-write to register the plugin. We intentionally avoid
+  // `openclaw plugins enable`, because for plugins whose manifest declares
+  // commandAliases / setup / tools (e.g. context-engine plugins), OpenClaw's
+  // enable path also writes a legacy install record under
+  //   plugins.installs.<id> = { "npm": "@openclaw/<id>" }
+  // which conflicts with the current OpenClaw config schema (which expects
+  // { "source": "npm" | "archive" | "path" | "clawhub" | "marketplace", ... }).
+  // The mismatch makes `openclaw config get/set` fail validation and even
+  // `openclaw doctor --fix` cannot repair it. Direct-write here only touches
+  // plugins.entries / plugins.allow, which the runtime treats as sufficient
+  // for the plugin to be loaded from ~/.openclaw/extensions/<id>/.
+  {
     const cfg = await readCfg();
     await ensurePluginRegistered(cfg);
     await writeCfg(cfg);
