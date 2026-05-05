@@ -1,0 +1,133 @@
+name: ClawHub dev release (OpenViking plugin)
+
+# Publishes examples/openclaw-plugin to ClawHub via GitHub Actions OIDC
+# trusted publishing. Required because the @openclaw scope is gated by
+# publishers/publisherMembers on the server side and the package owner
+# token cannot publish manually anymore (Forbidden for "@openclaw"). The
+# trusted publisher config has been registered on ClawHub against this
+# workflow filename and this repository, so OIDC publishes go through
+# the github-actions branch in publishPackageImpl, which skips the
+# publisherMembers check.
+#
+# After running, verify with:
+#   clawhub package inspect "@openclaw/openviking"
+# and confirm the `latest` tag is unchanged.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Plugin version (e.g. 2026.4.35-dev.5). Must match examples/openclaw-plugin/package.json."
+        required: true
+        default: "2026.4.35-dev.5"
+      tags:
+        description: "Comma-separated ClawHub tags. NEVER set to 'latest' for dev releases."
+        required: false
+        default: "dev"
+      changelog:
+        description: "Changelog text published with this release."
+        required: false
+        default: "Dev preview release via OIDC trusted publishing."
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish to ClawHub (OIDC)
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Reject 'latest' tag (safety guard)
+        if: ${{ contains(inputs.tags, 'latest') }}
+        run: |
+          echo "::error title=Refusing to publish::Tag 'latest' is not allowed from this dev workflow."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ClawHub CLI
+        run: npm install -g clawhub@latest
+
+      - name: Show CLI version
+        run: clawhub -V
+
+      - name: Verify package.json version matches input
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          pkg_version="$(node -p "require('./examples/openclaw-plugin/package.json').version")"
+          echo "package.json version: $pkg_version"
+          echo "input version:        $INPUT_VERSION"
+          if [ "$pkg_version" != "$INPUT_VERSION" ]; then
+            echo "::error::examples/openclaw-plugin/package.json version ($pkg_version) does not match input.version ($INPUT_VERSION). Bump the file or fix the input."
+            exit 1
+          fi
+
+      - name: Build clean publish directory
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="examples/openclaw-plugin"
+          dst="${RUNNER_TEMP}/ov-publish-clean"
+          rm -rf "$dst"
+          mkdir -p "$dst/commands"
+
+          # Core .ts files (excluding vitest.config.ts).
+          for f in "$src"/*.ts; do
+            [ "$(basename "$f")" = "vitest.config.ts" ] && continue
+            cp "$f" "$dst/"
+          done
+
+          # Configs and docs that the previous dev=2026.4.35-dev.4 release
+          # already shipped (kept consistent for downstream tooling).
+          for f in package.json openclaw.plugin.json install-manifest.json \
+                   tsconfig.json package-lock.json .gitignore .clawhubignore \
+                   README.md DISCUSSION-ov-import.md \
+                   openclaw-multi-tenant-test-report.md; do
+            if [ -f "$src/$f" ]; then cp "$src/$f" "$dst/"; fi
+          done
+
+          # commands/setup.ts is required for the openclaw setup CLI flow.
+          if [ -f "$src/commands/setup.ts" ]; then
+            cp "$src/commands/setup.ts" "$dst/commands/setup.ts"
+          fi
+
+          echo "Staged files:"
+          find "$dst" -type f -printf "  %P\n" | sort
+          echo "stage_dir=$dst" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to ClawHub via OIDC
+        env:
+          # CLI auto-detects ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN injected by
+          # `permissions: id-token: write` and exchanges them for a short-
+          # lived ClawHub publish token. Unset CLAWHUB_TOKEN so it cannot
+          # silently fall back to a manual user token.
+          CLAWHUB_TOKEN: ""
+        run: |
+          clawhub package publish "${{ steps.stage.outputs.stage_dir }}" \
+            --family code-plugin \
+            --name "@openclaw/openviking" \
+            --version "${{ inputs.version }}" \
+            --tags "${{ inputs.tags }}" \
+            --source-repo "${{ github.repository }}" \
+            --source-commit "${{ github.sha }}" \
+            --source-ref "${{ github.ref_name }}" \
+            --source-path "examples/openclaw-plugin" \
+            --changelog "${{ inputs.changelog }}"
+
+      - name: Inspect resulting tag layout
+        if: ${{ always() }}
+        run: clawhub package inspect "@openclaw/openviking" || true
