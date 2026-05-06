@@ -67,5 +67,9 @@ jobs:
       tags: ${{ inputs.tags }}
       source_repo: ${{ github.repository }}
       source_commit: ${{ github.sha }}
-      source_ref: ${{ github.ref_name }}
+      # source_ref deliberately omitted: package-publish reusable workflow
+      # falls back to GITHUB_REF (e.g. refs/heads/publish), which matches
+      # the OIDC token `ref` claim that ClawHub's resolveTrustedPublishSource
+      # validates. Passing the short ref name (e.g. "publish") trips
+      # "Trusted publish source ref must match the verified GitHub ref".
       source_path: examples/openclaw-plugin
