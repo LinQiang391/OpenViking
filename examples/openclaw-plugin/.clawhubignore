@@ -8,3 +8,12 @@ INSTALL*.md
 README_CN.md
 install.sh
 vitest.config.ts
+# Excluded so ClawHub CLI's hasRealBundleMarker (commands/, skills/) does
+# not misclassify this code-plugin as bundle-plugin and trip
+# "Package already exists as a code-plugin; family changes are not allowed".
+# install.js detects the missing `commands/setup.ts` and falls back to
+# direct-write configuration, so plugin runtime stays functional.
+commands/
+skills/
+*.tgz
+
