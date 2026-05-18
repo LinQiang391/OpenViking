@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
+import asyncio
 import os
 import time
 from dataclasses import asdict
@@ -403,7 +404,8 @@ async def search_by_vector(request: SearchByVectorRequest, req: Request):
                 request=req,
             )
 
-        result = collection.search_by_vector(
+        result = await asyncio.to_thread(
+            collection.search_by_vector,
             index_name=index_name,
             dense_vector=dense_vector,
             limit=limit,
