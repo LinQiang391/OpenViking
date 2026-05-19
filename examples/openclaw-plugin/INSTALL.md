@@ -267,7 +267,7 @@ Useful backup/source flags:
 | Flag | Meaning |
 | --- | --- |
 | `--workdir PATH` | Target OpenClaw state directory |
-| `--version REF` | Git ref, tag, branch, or release version to install |
+| `--plugin-version=REF` | Plugin version: npm version, npm dist-tag, or Git ref to install |
 | `--current-version` | Print the version tracked by the helper |
 | `--base-url URL` | OpenViking server URL (enables non-interactive mode) |
 | `--api-key KEY` | OpenViking API key |

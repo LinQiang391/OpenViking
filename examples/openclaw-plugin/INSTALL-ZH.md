@@ -285,7 +285,7 @@ ov-install
 | 参数 | 含义 |
 | --- | --- |
 | `--workdir PATH` | 指定 OpenClaw state 目录 |
-| `--version REF` | 指定 Git ref、tag、branch 或发布版本 |
+| `--plugin-version=REF` | 指定插件版本：npm 版本、npm dist-tag 或 Git ref |
 | `--current-version` | 查看 helper 记录的当前版本 |
 | `--base-url URL` | OpenViking 服务器地址（启用非交互模式） |
 | `--api-key KEY` | OpenViking API key |
