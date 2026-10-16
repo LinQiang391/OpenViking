@@ -4,11 +4,12 @@
 
 import asyncio
 import math
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 from fastapi import APIRouter, Depends
 from fastapi import Response as FastAPIResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openviking.core.path_variables import resolve_path_variables
 from openviking.core.uri_validation import validate_request_viking_uri
@@ -43,6 +44,7 @@ from openviking.utils.search_filters import (
     merge_search_filter,
 )
 from openviking.utils.tags import build_search_tags_filter
+from openviking.utils.time_decay import validate_event_time_decay_request
 from openviking_cli.exceptions import InvalidArgumentError, NotFoundError
 
 
@@ -117,7 +119,21 @@ def _resolve_image_url(image_url: Optional[str], ctx: RequestContext) -> Optiona
     return resolved
 
 
-class FindRequest(BaseModel):
+class _EventDecayRequest(BaseModel):
+    events_time_decay_protection: Optional[str] = Field(
+        default=None,
+        description="Event decay protection duration: '0' or non-negative integer + m/h/d; "
+        "only openGauss semantic QUICK retrieval in list/find mode",
+    )
+
+    @field_validator("events_time_decay_protection", mode="before")
+    @classmethod
+    def _validate_event_decay(cls, value):
+        validate_event_time_decay_request(value)
+        return value
+
+
+class FindRequest(_EventDecayRequest):
     """Request model for find."""
 
     model_config = ConfigDict(extra="forbid")
@@ -194,7 +210,7 @@ def context_only_fields_error(supplied_fields, as_named_by_caller=None) -> Optio
             "set mode='context' or drop these fields")
 
 
-class SearchRequest(BaseModel):
+class SearchRequest(_EventDecayRequest):
     """Request model for search with session.
 
     ``mode="list"`` is the historical ranked-hit response. ``mode="context"``
@@ -209,6 +225,11 @@ class SearchRequest(BaseModel):
     target_uri: Union[str, List[str]] = ""
     context_type: Optional[Union[str, List[str]]] = None
     session_id: Optional[str] = None
+    search_type: Literal["semantic", "keywords"] = Field(
+        default="semantic",
+        description="semantic returns FindResult; keywords returns independent records with "
+        "engine, ready and candidate_complete metadata (engine-specific scores)",
+    )
     limit: int = DEFAULT_LIMIT
     node_limit: Optional[int] = None
     score_threshold: Optional[float] = None
@@ -239,6 +260,21 @@ class SearchRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mode(self) -> "SearchRequest":
+        if self.search_type == "keywords":
+            if not self.query.strip() or self.image_url:
+                raise ValueError("keywords requires non-empty text query without image_url")
+            if self.mode != "list":
+                raise ValueError("keywords currently requires mode='list' on this branch")
+            if self.events_time_decay_protection is not None:
+                raise ValueError("events_time_decay_protection is not supported for keywords")
+            if self.score_threshold is not None:
+                raise ValueError("score_threshold is not supported for keyword engine scores")
+            if self.session_id:
+                raise ValueError("session_id is not supported for keywords")
+            if self.read_content or self.include_provenance:
+                raise ValueError("keywords returns engine-labelled records, not FindResult hits")
+        if self.mode == "context" and self.events_time_decay_protection is not None:
+            raise ValueError("events_time_decay_protection currently requires mode='list'")
         if self.mode == "list":
             error = context_only_fields_error(self.model_fields_set)
             if error:
@@ -348,6 +384,14 @@ async def find(
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Semantic search without session context."""
+    decay_options = (
+        {
+            "events_time_decay_protection": request.events_time_decay_protection,
+            "request_now": datetime.now(timezone.utc),
+        }
+        if request.events_time_decay_protection is not None
+        else {}
+    )
     service = get_service()
     actual_limit = _resolve_search_limit(request.limit, request.node_limit)
     effective_filter = _resolve_search_filter(
@@ -372,6 +416,7 @@ async def find(
             filter=effective_filter,
             level=_resolve_levels(request.level) or None,
             image_url=resolved_image_url,
+            **decay_options,
         ),
     )
     result = execution.result
@@ -448,7 +493,15 @@ async def search(
     request: SearchRequest,
     _ctx: RequestContext = Depends(get_request_context),
 ):
-    """Semantic search with optional session context."""
+    """Semantic hits, or independent engine-labelled keyword records, in list mode."""
+    decay_options = (
+        {
+            "events_time_decay_protection": request.events_time_decay_protection,
+            "request_now": datetime.now(timezone.utc),
+        }
+        if request.events_time_decay_protection is not None
+        else {}
+    )
     service = get_service()
     actual_limit = _resolve_search_limit(request.limit, request.node_limit)
     effective_filter = _resolve_search_filter(
@@ -471,6 +524,12 @@ async def search(
     resolved_image_url = _resolve_image_url(request.image_url, _ctx)
 
     async def _search():
+        if request.search_type == "keywords":
+            return await service.search.search_keywords(
+                query=request.query, ctx=_ctx, target_uri=resolved_target_uri,
+                limit=actual_limit, filter=effective_filter,
+                level=_resolve_levels(request.level) or None,
+            )
         session = None
         # Intent off: skip session.load — SearchService will not scan session either.
         if request.session_id and service.search.is_intent_enabled():
@@ -486,6 +545,7 @@ async def search(
             filter=effective_filter,
             level=_resolve_levels(request.level) or None,
             image_url=resolved_image_url,
+            **decay_options,
         )
 
     execution = await run_operation(

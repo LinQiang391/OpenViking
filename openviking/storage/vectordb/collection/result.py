@@ -35,6 +35,8 @@ class SearchItemResult:
     id: Any = None
     fields: Optional[Dict[str, Any]] = None
     score: Optional[float] = None
+    origin_score: Optional[float] = None
+    addition_score: Optional[float] = None
 
 
 @dataclass

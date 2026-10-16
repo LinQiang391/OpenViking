@@ -279,6 +279,8 @@ class _SingleAccountBackend:
         return self._adapter.get_collection()
 
     def _get_meta_data(self, coll: Collection) -> Dict[str, Any]:
+        if self._mode == "opengauss":
+            return coll.get_meta_data() or {}
         if not self._meta_data_cache:
             self._meta_data_cache = coll.get_meta_data() or {}
         return self._meta_data_cache
@@ -305,23 +307,28 @@ class _SingleAccountBackend:
             meta = self._get_meta_data(coll)
             for field in meta.get("Fields", []):
                 if field.get("FieldType") == "text" and field.get("FieldName") not in result:
+                    if self._mode == "opengauss" and field.get("FieldName") == "content":
+                        continue
                     result[field["FieldName"]] = ""
         except Exception:
             pass
 
-        # ``content`` (full text) is only meaningful for VikingDB-backed backends,
-        # which use it for server-side full-text grep. Every other backend leaves
-        # ``USE_CONTENT_FIELD=False`` and gets ``content`` dropped here, so its large
-        # payload can't blow past the local engine's per-field byte limit. A new backend
-        # that doesn't need ``content`` requires no extra code.
-        if self._adapter.USE_CONTENT_FIELD:
-            content = result.get("content")
-            if isinstance(content, (str, bytes)):
-                result["content"] = content[:VIKINGDB_CONTENT_MAX_SIZE]
-        else:
-            result.pop("content", None)
-
+        self._prepare_content_payload(result)
         return result
+
+    def _prepare_content_payload(self, payload: Dict[str, Any]) -> None:
+        if self._mode == "opengauss":
+            # Read actual metadata, not configured engine or a stale schema cache.
+            meta = self._get_collection().get_meta_data() or {}
+            capabilities = meta.get("RetrievalCapabilities") or {}
+            if capabilities.get("content") is not True:
+                payload.pop("content", None)
+        elif self._adapter.USE_CONTENT_FIELD:
+            content = payload.get("content")
+            if isinstance(content, (str, bytes)):
+                payload["content"] = content[:VIKINGDB_CONTENT_MAX_SIZE]
+        else:
+            payload.pop("content", None)
 
     def _prepare_upsert_payloads(self, data_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Prepare a batch in one worker-thread handoff."""
@@ -332,12 +339,7 @@ class _SingleAccountBackend:
         payload = self._filter_known_fields(
             {key: value for key, value in data.items() if value is not None}
         )
-        if self._adapter.USE_CONTENT_FIELD:
-            content = payload.get("content")
-            if isinstance(content, (str, bytes)):
-                payload["content"] = content[:VIKINGDB_CONTENT_MAX_SIZE]
-        else:
-            payload.pop("content", None)
+        self._prepare_content_payload(payload)
         return payload
 
     def _bind_upsert_payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -712,6 +714,7 @@ class _SingleAccountBackend:
         output_fields: Optional[List[str]] = None,
         order_by: Optional[str] = None,
         order_desc: bool = False,
+        advance: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         try:
             logger.debug(
@@ -739,9 +742,12 @@ class _SingleAccountBackend:
                 output_fields=output_fields,
                 order_by=order_by,
                 order_desc=order_desc,
+                **({"advance": advance} if advance is not None else {}),
             )
         except Exception as e:
             logger.error("Error querying collection: %s", e, exc_info=True)
+            if advance is not None or sparse_query_vector:
+                raise
             return []
 
     async def search_by_random(
@@ -901,7 +907,33 @@ class _SingleAccountBackend:
         offset: int = 0,
         filter: Optional[Dict[str, Any] | FilterExpr] = None,
         output_fields: Optional[List[str]] = None,
+        *,
+        mode: Optional[str] = None,
+        fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
+        keyword_options: Dict[str, Any] = {}
+        if self._mode == "opengauss":
+            meta = await self.get_collection_meta() or {}
+            capabilities = meta.get("RetrievalCapabilities") or {}
+            if capabilities.get("content") is not True or not any(
+                capabilities.get(engine) is True for engine in ("bm25", "fts")
+            ):
+                raise NotImplementedError("Collection keyword retrieval is not ready")
+            if mode not in (None, "bm25", "fts") or fields not in (None, ["content"]):
+                raise InvalidArgumentError(
+                    "Keyword retrieval requires mode=bm25/fts, fields=['content']"
+                )
+            selected_engine = mode or next(
+                engine for engine in ("bm25", "fts") if capabilities.get(engine) is True
+            )
+            if capabilities.get(selected_engine) is not True:
+                raise NotImplementedError(f"Collection {selected_engine} retrieval is not ready")
+            keyword_options = {"mode": selected_engine, "fields": ["content"]}
+        else:
+            if mode is not None:
+                keyword_options["mode"] = mode
+            if fields is not None:
+                keyword_options["fields"] = fields
         try:
             if self._bound_account_id:
                 account_filter = Eq("account_id", self._bound_account_id)
@@ -920,6 +952,7 @@ class _SingleAccountBackend:
                 offset=offset,
                 filter=filter,
                 output_fields=output_fields,
+                **keyword_options,
             )
         except Exception as e:
             logger.error("Error searching by keywords: %s", e)
@@ -1008,6 +1041,15 @@ class VikingVectorIndexBackend:
     def uses_content_field(self) -> bool:
         return self._shared_adapter.USE_CONTENT_FIELD
 
+    async def get_content_policy(self, *, ctx: RequestContext) -> Dict[str, Any]:
+        """Return the account collection's write policy without changing readiness."""
+        backend = self._get_backend_for_context(ctx)
+        if backend._mode == "opengauss":
+            meta = await backend.get_collection_meta() or {}
+            capabilities = meta.get("RetrievalCapabilities") or {}
+            return {"enabled": capabilities.get("content") is True, "max_size": None}
+        return {"enabled": self.uses_content_field, "max_size": VIKINGDB_CONTENT_MAX_SIZE}
+
     # =========================================================================
     # 内部辅助方法
     # =========================================================================
@@ -1079,6 +1121,27 @@ class VikingVectorIndexBackend:
         else:
             backend = self._get_default_backend()
         return await backend.get_collection_meta()
+
+    async def get_keyword_search_info(self, *, ctx: RequestContext) -> Dict[str, Any]:
+        """Describe lexical readiness from actual collection metadata, never config."""
+        backend = self._get_backend_for_context(ctx)
+        meta = await self.get_collection_meta(ctx=ctx) or {}
+        capabilities = meta.get("RetrievalCapabilities")
+        engine = None
+        if isinstance(capabilities, dict):
+            if capabilities.get("content") is True:
+                engine = next(
+                    (name for name in ("bm25", "fts") if capabilities.get(name) is True), None
+                )
+        elif backend._mode in {"volcengine", "vikingdb"}:
+            # Legacy VikingDB metadata predates RetrievalCapabilities.
+            has_content = any(
+                field.get("FieldName") == "content" and field.get("FieldType") == "text"
+                for field in meta.get("Fields", [])
+            )
+            if has_content and any(ft.get("Field") == "content" for ft in meta.get("FullText") or []):
+                engine = "bm25"
+        return {"ready": engine is not None, "engine": engine, "candidate_complete": False}
 
     async def update_collection_description(self, description: str) -> bool:
         return await self._get_default_backend().update_collection_description(description)
@@ -1179,6 +1242,56 @@ class VikingVectorIndexBackend:
         if not self.acl_manager or not records:
             return records
         return await self.acl_manager.materialize_context_records(records, ctx)
+
+    async def backfill_content_record(
+        self, snapshot: Dict[str, Any], content: str, *, ctx: RequestContext,
+    ) -> bool:
+        """Compare-and-set missing content; never upsert or overwrite a newer record."""
+        backend = self._get_backend_for_context(ctx)
+        if backend._mode != "opengauss":
+            raise NotImplementedError("conditional content backfill requires openGauss")
+        if snapshot.get("account_id") != ctx.account_id:
+            raise PermissionError("Content backfill account mismatch")
+        if snapshot.get("content") is not None:
+            return False
+        if "updated_at" not in snapshot or not snapshot.get("uri"):
+            raise ValueError("Content backfill requires a versioned source snapshot")
+        acl_enabled = await self._acl_enabled(ctx)
+        if self.acl_manager and acl_enabled:
+            from openviking.storage.viking_fs import get_viking_fs
+
+            await get_viking_fs()._ensure_access(snapshot["uri"], ctx, action=AclAction.WRITE)
+        scope = self._merge_filters(Eq("account_id", ctx.account_id), self._tenant_filter(ctx, acl_enabled=acl_enabled))
+
+        def write():
+            from openviking.storage.vectordb_adapters.opengauss.sql import (
+                _build_where_clause,
+                _date_time_to_epoch_ms,
+            )
+
+            collection = backend._adapter.retrieval_collection()
+            predicate, values = _build_where_clause(
+                backend._adapter._compile_filter(scope), collection._array_fields,
+            )
+            cursor = collection._cursor()
+            try:
+                cursor.execute(
+                    f'UPDATE "{collection._name}" SET content=%s WHERE id=%s '
+                    'AND updated_at IS NOT DISTINCT FROM %s AND uri=%s AND content IS NULL '
+                    f'AND ({predicate or "TRUE"})',
+                    [content, snapshot["id"], _date_time_to_epoch_ms(snapshot["updated_at"]),
+                     backend._adapter._encode_uri_field_value(snapshot["uri"]), *values],
+                )
+                changed = cursor.rowcount == 1
+                collection._conn.commit()
+                return changed
+            except Exception:
+                collection._conn.rollback()
+                raise
+            finally:
+                cursor.close()
+
+        return await asyncio.to_thread(write)
 
     async def update(self, data: Dict[str, Any], *, ctx: RequestContext) -> UpdateResult:
         """Strict update path. The target record must already exist."""
@@ -1369,6 +1482,7 @@ class VikingVectorIndexBackend:
         order_desc: bool = False,
         *,
         ctx: RequestContext,
+        advance: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         backend = self._get_backend_for_context(ctx)
         return await backend.query(
@@ -1380,6 +1494,7 @@ class VikingVectorIndexBackend:
             output_fields=output_fields,
             order_by=order_by,
             order_desc=order_desc,
+            **({"advance": advance} if advance is not None else {}),
         )
 
     async def search_by_random(
@@ -1416,6 +1531,7 @@ class VikingVectorIndexBackend:
         output_fields: Optional[List[str]] = None,
         *,
         ctx: RequestContext,
+        advance: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         return await self.query(
             query_vector=query_vector,
@@ -1425,6 +1541,7 @@ class VikingVectorIndexBackend:
             offset=offset,
             output_fields=output_fields,
             ctx=ctx,
+            **({"advance": advance} if advance is not None else {}),
         )
 
     async def filter(
@@ -1576,6 +1693,8 @@ class VikingVectorIndexBackend:
         output_fields: Optional[List[str]] = None,
         *,
         ctx: Optional[RequestContext] = None,
+        mode: Optional[str] = None,
+        fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         if ctx:
             backend = self._get_backend_for_context(ctx)
@@ -1586,6 +1705,11 @@ class VikingVectorIndexBackend:
             )
         else:
             backend = self._get_default_backend()
+        options: Dict[str, Any] = {}
+        if mode is not None:
+            options["mode"] = mode
+        if fields is not None:
+            options["fields"] = fields
         return await backend.search_by_keywords(
             keywords=keywords,
             query=query,
@@ -1593,6 +1717,36 @@ class VikingVectorIndexBackend:
             offset=offset,
             filter=filter,
             output_fields=output_fields,
+            **options,
+        )
+
+    async def search_keywords_in_tenant(
+        self,
+        ctx: RequestContext,
+        query: str,
+        *,
+        target_directories: Optional[List[str]] = None,
+        extra_filter: Optional[FilterExpr | Dict[str, Any]] = None,
+        level: Optional[List[int]] = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        acl_enabled = await self._acl_enabled(ctx)
+        scope_filter = self._build_scope_filter(
+            ctx=ctx,
+            context_type=None,
+            target_directories=target_directories,
+            extra_filter=extra_filter,
+            level=level,
+            acl_enabled=acl_enabled,
+        )
+        return await self.search_by_keywords(
+            query=query,
+            filter=scope_filter,
+            limit=limit,
+            offset=offset,
+            output_fields=RETRIEVAL_OUTPUT_FIELDS,
+            ctx=ctx,
         )
 
     async def clear(self, *, ctx: Optional[RequestContext] = None) -> bool:
@@ -1649,6 +1803,8 @@ class VikingVectorIndexBackend:
         level: Optional[List[int]] = None,
         limit: int = 10,
         offset: int = 0,
+        events_time_decay_protection: Optional[str] = None,
+        request_now=None,
     ) -> List[Dict[str, Any]]:
         acl_enabled = await self._acl_enabled(ctx)
         scope_filter = self._build_scope_filter(
@@ -1659,6 +1815,35 @@ class VikingVectorIndexBackend:
             level=level,
             acl_enabled=acl_enabled,
         )
+        if events_time_decay_protection is not None:
+            from datetime import datetime, timezone
+
+            from openviking.utils.time_decay import parse_duration_ms
+
+            parse_duration_ms(events_time_decay_protection)
+            backend = self._get_backend_for_context(ctx)
+            if backend._mode != "opengauss":
+                raise NotImplementedError("event decay on this branch requires an openGauss backend")
+            event_tag = Eq("search_tags", "memory_type=events")
+            tagged_filter = self._merge_filters(scope_filter, event_tag)
+            event_filter = self._merge_filters(tagged_filter, Eq("context_type", "memory"))
+            remaining_filter = self._merge_filters(
+                scope_filter, Or([
+                    RawDSL({"op": "must_not", "field": "context_type", "conds": ["memory"]}),
+                    RawDSL({"op": "must_not", "field": "search_tags", "conds": ["memory_type=events"]}),
+                ]),
+            )
+            window = limit + offset
+            origin = request_now if request_now is not None else datetime.now(timezone.utc)
+            remaining, events = await asyncio.gather(
+                self.search(query_vector=query_vector, sparse_query_vector=sparse_query_vector,
+                            filter=remaining_filter, limit=window, output_fields=RETRIEVAL_OUTPUT_FIELDS, ctx=ctx),
+                self.search(query_vector=query_vector, sparse_query_vector=sparse_query_vector,
+                            filter=event_filter, limit=window, output_fields=RETRIEVAL_OUTPUT_FIELDS, ctx=ctx,
+                            advance={"time_decay": {"protection": events_time_decay_protection, "origin": origin}}),
+            )
+            combined = sorted(remaining + events, key=lambda row: (-row.get("_score", 0.0), str(row.get("id"))))
+            return combined[offset:offset + limit]
         return await self.search(
             query_vector=query_vector,
             sparse_query_vector=sparse_query_vector,

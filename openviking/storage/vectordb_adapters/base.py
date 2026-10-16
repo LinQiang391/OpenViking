@@ -484,8 +484,12 @@ class CollectionAdapter(ABC):
         output_fields: Optional[list[str]] = None,
         order_by: Optional[str] = None,
         order_desc: bool = False,
+        advance: Optional[Dict[str, Any]] = None,
     ) -> list[Dict[str, Any]]:
         coll = self.get_collection()
+        search_options = {} if advance is None else {"advance": advance}
+        if advance is not None and self.mode == "opengauss":
+            search_options["return_detail_info"] = True
         vectordb_filter = self._compile_filter(filter)
 
         if query_vector or sparse_query_vector:
@@ -497,8 +501,11 @@ class CollectionAdapter(ABC):
                 offset=offset,
                 filters=vectordb_filter,
                 output_fields=output_fields,
+                **search_options,
             )
         elif order_by:
+            if advance is not None:
+                raise ValueError("advanced ranking requires a query vector")
             result = coll.search_by_scalar(
                 index_name=self._index_name,
                 field=order_by,
@@ -509,6 +516,8 @@ class CollectionAdapter(ABC):
                 output_fields=output_fields,
             )
         else:
+            if advance is not None:
+                raise ValueError("advanced ranking requires a query vector")
             # Approximate random sampling with a client-generated random
             # vector so every backend behaves consistently.
             dim = get_openviking_config().embedding.dimension
@@ -527,6 +536,10 @@ class CollectionAdapter(ABC):
             record = dict(item.fields) if item.fields else {}
             record["id"] = item.id
             record["_score"] = _normalize_result_score(item.score)
+            if getattr(item, "origin_score", None) is not None:
+                record["_origin_score"] = _normalize_result_score(item.origin_score)
+            if getattr(item, "addition_score", None) is not None:
+                record["_time_score"] = _normalize_result_score(item.addition_score)
             record = self._normalize_record_for_read(record)
             records.append(record)
         return records
@@ -555,6 +568,10 @@ class CollectionAdapter(ABC):
             record = dict(item.fields) if item.fields else {}
             record["id"] = item.id
             record["_score"] = _normalize_result_score(item.score)
+            if getattr(item, "origin_score", None) is not None:
+                record["_origin_score"] = _normalize_result_score(item.origin_score)
+            if getattr(item, "addition_score", None) is not None:
+                record["_time_score"] = _normalize_result_score(item.addition_score)
             record = self._normalize_record_for_read(record)
             records.append(record)
         return records
@@ -656,8 +673,15 @@ class CollectionAdapter(ABC):
         offset: int = 0,
         filter: Optional[Dict[str, Any] | FilterExpr] = None,
         output_fields: Optional[list[str]] = None,
+        mode: Optional[str] = None,
+        fields: Optional[list[str]] = None,
     ) -> list[Dict[str, Any]]:
         coll = self.get_collection()
+        keyword_options = {}
+        if mode is not None:
+            keyword_options["mode"] = mode
+        if fields is not None:
+            keyword_options["fields"] = fields
         compiled_filter = self._compile_filter(filter)
         logger.debug(
             "search_by_keywords: keywords=%s query=%s limit=%s offset=%s filter=%s output_fields=%s",
@@ -676,6 +700,7 @@ class CollectionAdapter(ABC):
             offset=offset,
             filters=compiled_filter,
             output_fields=output_fields,
+            **keyword_options,
         )
         records: list[Dict[str, Any]] = []
         for item in result.data:

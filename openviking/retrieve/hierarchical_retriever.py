@@ -12,7 +12,7 @@ import heapq
 import logging
 import math
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from openviking.core.context import ContextLevel
@@ -27,6 +27,7 @@ from openviking.storage.expr import FilterExpr
 from openviking.storage.vikingdb_manager import VikingDBManager, VikingDBManagerProxy
 from openviking.telemetry import get_current_telemetry
 from openviking.utils.tags import normalize_search_tags
+from openviking.utils.time_decay import validate_event_time_decay_request
 from openviking.utils.time_utils import parse_iso_datetime
 from openviking.utils.token_estimation import (
     estimate_text_tokens,
@@ -48,6 +49,23 @@ logger = get_logger(__name__)
 class RetrieverMode(str):
     THINKING = "thinking"
     QUICK = "quick"
+
+
+def _resolve_event_decay_options(
+    protection: Optional[str], request_now: Optional[datetime] = None
+) -> Dict[str, Any]:
+    try:
+        validate_event_time_decay_request(protection)
+    except ValueError as exc:
+        raise InvalidArgumentError(str(exc)) from exc
+    if protection is None:
+        return {}
+    if request_now is not None and not isinstance(request_now, datetime):
+        raise InvalidArgumentError("request_now must be a datetime")
+    return {
+        "events_time_decay_protection": protection,
+        "request_now": request_now if request_now is not None else datetime.now(timezone.utc),
+    }
 
 
 class HierarchicalRetriever:
@@ -108,6 +126,8 @@ class HierarchicalRetriever:
         score_gte: bool = False,
         scope_dsl: Optional[FilterExpr | Dict[str, Any]] = None,
         level: Optional[List[int]] = None,
+        events_time_decay_protection: Optional[str] = None,
+        request_now: Optional[datetime] = None,
     ) -> QueryResult:
         """
         Execute hierarchical retrieval.
@@ -119,16 +139,27 @@ class HierarchicalRetriever:
             scope_dsl: Additional scope constraints passed from public find/search filter
             level: Optional result level filter (0=L0, 1=L1, 2=L2)
         """
+        decay_options = _resolve_event_decay_options(events_time_decay_protection, request_now)
         t0 = time.monotonic()
         telemetry = get_current_telemetry()
         effective_threshold = self._resolve_threshold(score_threshold)
         image_query = bool(getattr(query, "image_query", False))
         if mode is None:
             mode = RetrieverMode.QUICK if not self._rerank_client else RetrieverMode.THINKING
+        if decay_options and mode != RetrieverMode.QUICK:
+            raise InvalidArgumentError(
+                "events_time_decay_protection requires QUICK retrieval; "
+                "THINKING/recursive retrieval is not supported on this branch"
+            )
         if image_query:
             mode = RetrieverMode.QUICK
             if level is None:
                 level = [2]
+
+        if decay_options and self.vector_store._backend_type != "opengauss":
+            raise InvalidArgumentError(
+                "events_time_decay_protection requires an openGauss backend"
+            )
 
         # 创建 proxy 包装器，绑定当前 ctx
         vector_proxy = VikingDBManagerProxy(self.vector_store, ctx)
@@ -185,6 +216,7 @@ class HierarchicalRetriever:
                     extra_filter=scope_dsl,
                     level=level,
                     limit=search_limit,
+                    **decay_options,
                 )
             telemetry.count("vector.searches", 1)
             telemetry.count("vector.scored", len(quick_results))

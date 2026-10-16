@@ -6,8 +6,10 @@ Search Service for OpenViking.
 Provides semantic search operations: search, find.
 """
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+from openviking.retrieve.hierarchical_retriever import _resolve_event_decay_options
 from openviking.server.identity import RequestContext
 from openviking.storage.viking_fs import VikingFS
 from openviking.utils.image_search import (
@@ -99,6 +101,8 @@ class SearchService:
         filter: Optional[Dict] = None,
         level: Optional[List[int]] = None,
         image_url: Optional[str] = None,
+        events_time_decay_protection: Optional[str] = None,
+        request_now: Optional[datetime] = None,
     ) -> Any:
         """Complex search with session context.
 
@@ -114,6 +118,7 @@ class SearchService:
         Returns:
             FindResult
         """
+        decay_options = _resolve_event_decay_options(events_time_decay_protection, request_now)
         resolved_image_url = await self._resolve_image_url(image_url, ctx)
         _ensure_non_empty_query(query, resolved_image_url)
         viking_fs = self._ensure_initialized()
@@ -133,6 +138,7 @@ class SearchService:
             filter=filter,
             level=level,
             image_url=resolved_image_url,
+            **decay_options,
         )
         return result
 
@@ -146,6 +152,8 @@ class SearchService:
         filter: Optional[Dict] = None,
         level: Optional[List[int]] = None,
         image_url: Optional[str] = None,
+        events_time_decay_protection: Optional[str] = None,
+        request_now: Optional[datetime] = None,
     ) -> Any:
         """Semantic search without session context.
 
@@ -160,6 +168,7 @@ class SearchService:
         Returns:
             FindResult
         """
+        decay_options = _resolve_event_decay_options(events_time_decay_protection, request_now)
         resolved_image_url = await self._resolve_image_url(image_url, ctx)
         _ensure_non_empty_query(query, resolved_image_url, filter)
         viking_fs = self._ensure_initialized()
@@ -172,8 +181,54 @@ class SearchService:
             filter=filter,
             level=level,
             image_url=resolved_image_url,
+            **decay_options,
         )
         return result
+
+    async def search_keywords(
+        self,
+        query: str,
+        ctx: RequestContext,
+        target_uri: Union[str, List[str]] = "",
+        limit: int = 10,
+        offset: int = 0,
+        filter: Optional[Dict] = None,
+        level: Optional[List[int]] = None,
+        score_threshold: Optional[float] = None,
+        events_time_decay_protection: Optional[str] = None,
+        request_now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Lexical TopK returns engine-labelled records, not semantic FindResult scores."""
+        from openviking.core.retrieval_targets import resolve_retrieval_targets
+
+        _resolve_event_decay_options(events_time_decay_protection, request_now)
+        if events_time_decay_protection is not None:
+            raise InvalidArgumentError("events_time_decay_protection is not supported for keywords")
+        if score_threshold is not None:
+            raise InvalidArgumentError("score_threshold is not supported for keyword engine scores")
+        _ensure_non_empty_query(query)
+        if limit <= 0 or offset < 0:
+            raise InvalidArgumentError("Keyword search requires limit > 0 and offset >= 0")
+        fs = self._ensure_initialized()
+        targets = resolve_retrieval_targets(target_uri, ctx).target_directories
+        for target in targets:
+            await fs._ensure_retrieval_scope(target, ctx)
+        storage = fs._get_vector_store()
+        if not storage:
+            raise NotInitializedError("Vector store")
+        info = await storage.get_keyword_search_info(ctx=ctx)
+        if not info["ready"]:
+            raise NotImplementedError("Collection keyword retrieval is not ready")
+        records = await storage.search_keywords_in_tenant(
+            ctx=ctx,
+            query=query,
+            target_directories=targets,
+            extra_filter=filter,
+            level=level,
+            limit=limit,
+            offset=offset,
+        )
+        return {"records": records, **info}
 
     async def find_skills(
         self,

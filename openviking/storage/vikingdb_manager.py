@@ -445,6 +445,8 @@ class VikingDBManagerProxy:
         level: Optional[List[int]] = None,
         limit: int = 10,
         offset: int = 0,
+        events_time_decay_protection: Optional[str] = None,
+        request_now=None,
     ) -> List[Dict[str, Any]]:
         return await self._manager.search_in_tenant(
             self._ctx,
@@ -456,6 +458,8 @@ class VikingDBManagerProxy:
             level=level,
             limit=limit,
             offset=offset,
+            **({"events_time_decay_protection": events_time_decay_protection, "request_now": request_now}
+               if events_time_decay_protection is not None else {}),
         )
 
     async def filter_in_tenant(

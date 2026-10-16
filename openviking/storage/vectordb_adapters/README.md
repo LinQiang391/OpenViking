@@ -94,7 +94,7 @@
 
 - `USE_CONTENT_FIELD = True`（默认为 `False`）
 
-默认 `False` 时，写入时会自动跳过 `content` 字段（该字段仅 VikingDB 系后端使用），新增后端无需额外代码。
+默认 `False` 时，写入时会自动跳过 `content` 字段。VikingDB 系适配器静态启用；openGauss 在显式正文迁移后根据实际集合状态动态启用，不因配置声明就自动执行迁移。
 
 目的：把后端特性差异收敛在 adapter 内。
 
@@ -245,3 +245,32 @@ class ThirdPartyCollectionAdapter(CollectionAdapter):
 - create 后可完成 upsert/get/query/delete/count 全流程。
 - 不改上层业务调用方式即可参与 `find/search` 检索链路。
 - 后端差异全部封装在 adapter 层。
+
+## 10. openGauss 检索扩展的启用与验收
+
+新能力默认关闭，旧 Dense 配置不要求迁移。`opengauss` 配置新增：
+
+- `fulltext_engine`: `disabled`（默认）、`bm25` 或 `fts`。`fts` 使用 GIN/ts_rank，不是 BM25；显式 BM25 请求不会回退为 FTS。
+- `text_search_config`: 默认 `simple`；中文需要运维预先安装并配置经验证的分词器，不自动安装扩展。
+- `sparse_enabled`: 默认 `false`。开启后仍需显式创建 posting 索引；`sparse_weight > 0` 要求该开关开启。
+- `candidate_limit`: 默认 1000、最大 10000，每路候选预算；Hybrid 与时间衰减属于有界近似排序，最终分页窗口不能超过此预算。
+
+配置不自动启动 DDL、回填或删除。使用已绑定集合的 adapter 显式操作：
+
+1. 在独立只读连接上调用 `probe_fulltext_capabilities(conn)`；该入口不初始化元数据表。已有 adapter 的 `probe_capabilities()` 可用于管理诊断，但 adapter 构造本身仍有原有初始化行为。
+2. `adapter.prepare_retrieval(allow_ddl=True)`：检查所选全文引擎、添加 nullable `content TEXT`，并按配置显式建立 Sparse postings。
+3. `collection = adapter.retrieval_collection()`。循环 `collection.backfill_content_batch(loader, batch_size=100)`，直到 `done=True`；loader 返回既有源存储文本，不调用 LLM/embedding。默认 snapshot 包含 `id`、`uri`、`updated_at`，可通过 `source_fields` 增加层级/类型信息。调用方必须按记录级别选择正文来源，并保证源变更推进 `updated_at`。
+4. `collection.build_fulltext_index(allow_ddl=True)`：验证无 NULL 正文，构建并校验物理索引后标记 ready。索引重建阻塞写入，不使用 CONCURRENTLY；需安排维护窗口。
+5. 按租户验证 `search_by_keywords(..., mode='bm25'/'fts', fields=['content'])` 后，再启用 `/api/v1/search/search` 的 `search_type='keywords'`、`mode='list'`。关键词响应为独立的 `{records, engine, ready, candidate_complete}`，不冒充语义 FindResult；本分支未支持关键词 context、会话规划、read_content/provenance 和 score_threshold 组合，均明确拒绝。
+
+`backfill_content()` 可对显式 ID 批次读取源文本，使用带账户、URI、updated_at、content IS NULL 条件的原子更新，不覆盖已有正文、不创建新记录。集合级回填检查点持久化，冲突不推进检查点；这是独立管理接口，未在旧分支不存在的持久 reindex 队列中注册新任务类型。
+
+Sparse 使用数据库内 posting 表和词项索引；文档与查询权重须有限、非负，最多 4096 个非零项，词项最多 256 UTF-8 字节。纯 Sparse 仅返回正点积重叠记录；Hybrid 独立召回两路并补齐候选分数，再执行 alpha 融合，不是 Dense+原文 BM25。基表写入、更新、删除必须经适配器，直接 SQL 不会自动维护 postings。
+
+事件时间衰减通过公开 find/search(list) 的 `events_time_decay_protection` 启用，使用统一请求时间和固定 7 天半衰期，仅针对 `context_type=memory` 且带 `memory_type=events` 标签的记录。本旧分支仅 openGauss QUICK 路径接入，THINKING/递归和 context 模式明确拒绝，不静默忽略。未来/缺失时间和负分遵循共享评分契约。
+
+限量、简单文本 grep 可优先检查全文候选；只有找到足够真实匹配时提前返回。候选不足、空召回、复杂正则、无限量、投影/标签约束等保持完整 FS 路径；`candidate_complete=false` 不能被当作任意 regex 的无命中证明。
+
+真实数据库验收采用 `OPENVIKING_OPENGAUSS_FEATURE_DSN`，必须指向可创建和删除测试集合的隔离实例。运行 `tests/vectordb/test_opengauss_retrieval_database.py`，包含全文回填/重建、过滤、索引计划、Sparse 更新删除与衰减分页。未配置时明确 skip，不视为验收通过。
+
+上线顺序：隔离实例验证 → 回填/重建演练 → 按租户影子查询 → 小流量 → 放量。检查候选量、回填检查点、错误与 FS 回退原因；测量 Recall@K、P95/P99、QPS、写入放大和索引体积。关闭新全文查询可调用 `configure_fulltext('disabled')`；回滚保留原集合和 Dense 索引，不删除业务数据。主备切换、复制延迟、过滤执行计划和性能门槛必须在目标环境实测；SPQ 新增全文/Sparse 仍明确拒绝，后续单独认证。

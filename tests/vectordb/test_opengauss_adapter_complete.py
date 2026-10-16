@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from openviking.storage.expr import And, Eq, Or
+from openviking.storage.vectordb.collection.collection import Collection
 from openviking.storage.vectordb_adapters.opengauss.catalog import (
     _is_table_already_distributed,
     _load_collection_meta,
@@ -23,7 +24,10 @@ from openviking.storage.vectordb_adapters.opengauss.sql import (
     _validate_identifier,
     _validate_vector,
 )
-from openviking.storage.vectordb_adapters.opengauss_adapter import OpenGaussCollectionAdapter
+from openviking.storage.vectordb_adapters.opengauss_adapter import (
+    OpenGaussCollectionAdapter,
+    _save_collection_meta,
+)
 from openviking_cli.utils.config.vectordb_config import (
     OpenGaussConfig,
     VectorDBBackendConfig,
@@ -556,6 +560,7 @@ def test_select_projects_unstored_content_as_null():
     collection._distributed = False
     collection._distance = "cosine"
     collection._field_names = {"id", "uri", "vector", "content", "account_id"}
+    collection._get_all_columns = Mock(return_value=["id", "uri", "vector", "account_id"])
     sql = collection._select_output_columns(["id", "uri", "content", "vector", "account_id"])
     assert sql == '"id", "uri", NULL AS "content", "vector", "account_id"'
 
@@ -570,14 +575,32 @@ def test_collection_update_uses_canonical_description_key():
     collection._distance = "cosine"
     collection._name = "context"
     collection._meta = {"Description": "old"}
-    collection._execute = Mock()
+    collection._dim = 8
+    collection._lock = threading.RLock()
+    collection._conn = Mock()
+    cursor = collection._conn.cursor.return_value
+    cursor.rowcount = 1
+    stored = {"Description": "fresh", "_retrieval": {"generation": 7}}
+    cursor.fetchone.return_value = (json.dumps(stored),)
 
+    def execute(sql, params=None):
+        if sql.startswith("UPDATE"):
+            stored.clear()
+            stored.update(json.loads(params[0]))
+
+    cursor.execute.side_effect = execute
     collection.update(description="new")
 
     assert collection._meta["Description"] == "new"
     assert "description" not in collection._meta
-    persisted_meta = json.loads(collection._execute.call_args.args[1][0])
+    persisted_meta = json.loads(cursor.execute.call_args.args[1][0])
     assert persisted_meta["Description"] == "new"
+    assert stored == persisted_meta == collection._meta
+    assert persisted_meta["_retrieval"] == {"generation": 7}
+    assert "FOR UPDATE" in cursor.execute.call_args_list[0].args[0]
+    collection._conn.commit.assert_called_once_with()
+    collection._conn.rollback.assert_not_called()
+    cursor.close.assert_called_once_with()
 
 
 def test_row_to_dict_normalizes_psycopg_vector_payloads():
@@ -635,13 +658,27 @@ def test_reconnect_prefers_configured_distance_over_persisted_meta():
     adapter._collection = None
     adapter._conn = Mock()
     adapter._table_exists = Mock(return_value=True)
-    persisted = {"_dim": 8, "_distance": "cosine", "Fields": []}
+    loaded = {"_dim": 8, "_distance": "cosine", "Fields": []}
+    persisted = {**loaded, "_retrieval": {"generation": 7}}
+    cursor = adapter._conn.cursor.return_value
+    cursor.rowcount = 1
+    cursor.fetchone.return_value = (json.dumps(persisted),)
+
+    def execute(sql, params=None):
+        if sql.startswith("UPDATE"):
+            persisted.clear()
+            persisted.update(json.loads(params[0]))
+
+    cursor.execute.side_effect = execute
     og_coll = Mock()
 
     with (
         patch(
             "openviking.storage.vectordb_adapters.opengauss_adapter._load_collection_meta",
-            return_value=persisted,
+            return_value=loaded,
+        ),
+        patch(
+            "openviking.storage.vectordb_adapters.opengauss_adapter._ensure_meta_table",
         ),
         patch(
             "openviking.storage.vectordb_adapters.opengauss_adapter.OpenGaussCollection",
@@ -653,14 +690,24 @@ def test_reconnect_prefers_configured_distance_over_persisted_meta():
         ),
         patch(
             "openviking.storage.vectordb_adapters.opengauss_adapter._save_collection_meta",
+            wraps=_save_collection_meta,
         ) as save_meta,
         patch.object(adapter, "_ensure_vector_index_exists") as ensure_index,
     ):
         adapter._load_existing_collection_if_needed()
 
     assert persisted["_distance"] == "l2"
-    save_meta.assert_called_once()
+    save_meta.assert_called_once_with(
+        adapter._conn, "context", {"_distance": "l2"}, distributed=False
+    )
     assert collection_cls.call_args.args[4] == "l2"
+    assert collection_cls.call_args.args[2] == persisted
+    assert persisted["_retrieval"] == {"generation": 7}
+    assert loaded["_distance"] == "cosine"
+    assert "FOR UPDATE" in cursor.execute.call_args_list[0].args[0]
+    adapter._conn.commit.assert_called_once_with()
+    adapter._conn.rollback.assert_not_called()
+    cursor.close.assert_called_once_with()
     ensure_index.assert_called_once_with(og_coll, "l2")
 
 
@@ -1328,22 +1375,34 @@ def test_pending_index_metadata_survives_reconnect():
 
 def test_filter_delete_executes_direct_sql_without_implicit_limit():
     adapter = _adapter_without_connect()
-    adapter._collection = Mock()
-    adapter._collection.get_meta_data.return_value = {
+    raw = OpenGaussCollection.__new__(OpenGaussCollection)
+    raw._name = "context"
+    raw._distributed = False
+    raw.get_meta_data = Mock(return_value={
         "Fields": [{"FieldName": "account_id", "FieldType": "string"}]
-    }
+    })
+    adapter._collection = Collection(raw)
     adapter._conn = Mock()
-    cursor = Mock()
+    cursor = adapter._conn.cursor.return_value
     cursor.rowcount = 100001
-    adapter._conn.cursor.return_value = cursor
+    deleted_rows = [(f"row-{index}",) for index in range(100001)]
+    cursor.fetchall.return_value = deleted_rows
+    cursor.fetchone.return_value = (False,)
 
     deleted_count = adapter.delete(filter=Eq("account_id", "acct-1"))
 
     assert deleted_count == 100001
-    delete_sql, delete_params = cursor.execute.call_args.args
+    delete_sql, delete_params = cursor.execute.call_args_list[0].args
     assert delete_sql.startswith('DELETE FROM "context" WHERE')
     assert "ORDER BY id LIMIT %s" in delete_sql
     assert delete_params == ["acct-1", None]
+    assert "RETURNING id" in delete_sql
+    cursor.fetchall.assert_called_once_with()
+    assert "information_schema.columns" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[1] == ("context",)
+    adapter._conn.commit.assert_called_once_with()
+    adapter._conn.rollback.assert_not_called()
+    cursor.close.assert_called_once_with()
 
 
 def test_save_index_meta_recovers_cross_process_unique_race():

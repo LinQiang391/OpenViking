@@ -466,6 +466,70 @@ async def init_context_collection(storage) -> bool:
     )
 
 
+async def materialize_content_only(
+    embedding_msg: EmbeddingMsg,
+    ctx: RequestContext,
+    *,
+    max_size: Optional[int] = None,
+) -> str:
+    """Materialize source text without constructing an embedder or invoking an LLM."""
+    return await TextEmbeddingHandler._materialize_content(embedding_msg, ctx, max_size=max_size)
+
+
+async def backfill_content(
+    storage: VikingVectorIndexBackend,
+    record_ids: List[str],
+    *,
+    ctx: RequestContext,
+    max_records: int = 100,
+) -> Dict[str, int]:
+    """Fill missing text using version-checked updates; never mark an index ready."""
+    if not 1 <= max_records <= 1000 or len(record_ids) > max_records:
+        raise ValueError("content backfill requires at most max_records (1..1000) IDs")
+    ids = list(dict.fromkeys(record_ids))
+    if not ids:
+        return {"requested": 0, "updated": 0}
+    policy = await storage.get_content_policy(ctx=ctx)
+    if not policy["enabled"]:
+        raise ValueError("Collection does not support content storage")
+    from openviking.storage.viking_fs import get_viking_fs
+    from openviking.utils.embedding_utils import _coerce_text_file_content
+
+    records = await storage.get_strict(ids, ctx=ctx)
+    by_id = {str(record["id"]): record for record in records}
+    if set(by_id) != set(ids):
+        raise ValueError("Content backfill requires all requested records to exist")
+    if any(record.get("account_id") != ctx.account_id for record in records):
+        raise PermissionError("Content backfill record account does not match request")
+    updated = 0
+    for record_id in ids:
+        record = dict(by_id[record_id])
+        if record.get("content") is not None:
+            continue
+        level = int(record.get("level", 2))
+        uri = record["uri"]
+        if level in (0, 1):
+            filename = ".abstract.md" if level == 0 else ".overview.md"
+            source_uri = uri if uri.endswith(f"/{filename}") else f"{uri.rstrip('/')}/{filename}"
+            content = _coerce_text_file_content(
+                await get_viking_fs().read_file(source_uri, ctx=ctx)
+            )
+        elif record.get("context_type") == ContextType.MEMORY.value:
+            content = _coerce_text_file_content(await get_viking_fs().read_file(uri, ctx=ctx))
+        else:
+            record["is_leaf"] = True
+            content = await materialize_content_only(
+                EmbeddingMsg(message=record.get("abstract", ""), context_data=record), ctx
+            )
+        if policy["max_size"] is not None:
+            content = content[: policy["max_size"]]
+        changed = await storage.backfill_content_record(by_id[record_id], content, ctx=ctx)
+        if not changed:
+            raise RuntimeError(f"Content backfill snapshot changed for record {record_id}; retry")
+        updated += 1
+    return {"requested": len(ids), "updated": updated}
+
+
 class TextEmbeddingHandler(DequeueHandlerBase):
     """
     Text embedding handler that converts text messages to embedding vectors
@@ -594,6 +658,8 @@ class TextEmbeddingHandler(DequeueHandlerBase):
     async def _materialize_content(
         embedding_msg: EmbeddingMsg,
         ctx: RequestContext,
+        *,
+        max_size: Optional[int] = VIKINGDB_CONTENT_MAX_SIZE,
     ) -> str:
         inserted_data = embedding_msg.context_data
         if inserted_data.get("is_leaf") and inserted_data.get("context_type") in (
@@ -622,13 +688,14 @@ class TextEmbeddingHandler(DequeueHandlerBase):
                 source_content = _coerce_text_file_content(
                     await viking_fs.read_file(source_uri, ctx=ctx)
                 )
-                return source_content[:VIKINGDB_CONTENT_MAX_SIZE]
+                return source_content if max_size is None else source_content[:max_size]
 
-        return (
-            embedding_msg.message[:VIKINGDB_CONTENT_MAX_SIZE]
+        content = (
+            embedding_msg.message
             if isinstance(embedding_msg.message, str)
-            else inserted_data["abstract"][:VIKINGDB_CONTENT_MAX_SIZE]
+            else inserted_data["abstract"]
         )
+        return content if max_size is None else content[:max_size]
 
     async def _apply_non_embedding_operation(
         self,
@@ -921,10 +988,19 @@ class TextEmbeddingHandler(DequeueHandlerBase):
                             account_id, uri, inserted_data.get("level", 2)
                         )
 
-                    if self._vikingdb.uses_content_field:
+                    content_policy = (
+                        await self._vikingdb.get_content_policy(ctx=ctx)
+                        if hasattr(self._vikingdb, "get_content_policy")
+                        else {
+                            "enabled": self._vikingdb.uses_content_field,
+                            "max_size": VIKINGDB_CONTENT_MAX_SIZE,
+                        }
+                    )
+                    if content_policy["enabled"]:
                         inserted_data["content"] = await self._materialize_content(
                             embedding_msg,
                             ctx,
+                            max_size=content_policy["max_size"],
                         )
                     if embedding_msg.action is IndexAction.MERGE:
                         field_patch = embedding_msg.field_patch

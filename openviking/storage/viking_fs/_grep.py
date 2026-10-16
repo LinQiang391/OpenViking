@@ -78,6 +78,15 @@ class _GrepMixin:
             if content_transform is not None
             else await self._resolve_grep_engine(engine, uri, ctx, switch_to_remote_threshold)
         )
+        if (resolved_engine == "fs" and engine == "auto" and content_transform is None
+                and tag_filter is None and not include_tags and allowed_uris is None
+                and node_limit is not None and node_limit > 0):
+            prioritized = await self._grep_opengauss_priority(
+                uri, pattern, exclude_uri, case_insensitive, node_limit,
+                level_limit, ctx, switch_to_remote_threshold,
+            )
+            if prioritized is not None:
+                return prioritized
         tags_by_uri: Dict[str, List[str]] = {}
         if tag_filter is not None and resolved_engine == "fs":
             vector_store = self._get_vector_store()
@@ -130,6 +139,43 @@ class _GrepMixin:
             )
         return self._attach_grep_tags(result, tags_by_uri)
 
+    async def _grep_opengauss_priority(
+        self, uri, pattern, exclude_uri, case_insensitive, node_limit,
+        level_limit, ctx, threshold,
+    ):
+        """Use lexical ranking only as a fast path for a satisfied limited grep.
+
+        A partial or empty candidate match always falls back to the complete FS
+        path. Unbounded grep never relies on lexical TopK completeness.
+        """
+        store = self._get_vector_store()
+        if not store or getattr(store, "_backend_type", None) != "opengauss":
+            return None
+        if not pattern or not all(c.isalnum() or c.isspace() for c in pattern):
+            return None
+        try:
+            info = await store.get_keyword_search_info(ctx=ctx)
+            if not info.get("ready"):
+                return None
+            if threshold and await self._get_cached_count(uri, ctx) < threshold:
+                return None
+            candidates = await store.search_keywords_in_tenant(
+                ctx=ctx, query=pattern, target_directories=[uri],
+                extra_filter=PathScope("uri", uri, depth=level_limit),
+                limit=min(node_limit * 5, 1000),
+            )
+            uris = list(dict.fromkeys(
+                record["uri"] for record in candidates if record.get("uri")
+                and not (exclude_uri and (record["uri"] == exclude_uri.rstrip("/")
+                         or record["uri"].startswith(exclude_uri.rstrip("/") + "/")))
+            ))
+            result = await self._grep_in_files(uris, pattern, case_insensitive, node_limit, ctx)
+            if result.get("count", 0) >= node_limit:
+                return result
+        except Exception:
+            logger.debug("openGauss priority grep failed; falling back to complete FS search", exc_info=True)
+        return None
+
     async def _resolve_grep_engine(
         self, engine: GrepEngine, uri: str, ctx, switch_to_remote_threshold: int = 10000
     ) -> str:
@@ -143,8 +189,14 @@ class _GrepMixin:
             return "fs"
 
         backend_type = getattr(vector_store, "_backend_type", "unknown")
-        # Keep this set consistent with ``CollectionAdapter.USE_CONTENT_FIELD``:
-        # only these backends store the ``content`` field required for full-text grep.
+        if backend_type == "opengauss":
+            logger.debug(
+                "grep fallback to fs: backend=opengauss candidate_complete=false; "
+                "lexical TopK cannot provide complete arbitrary-regex candidates"
+            )
+            return "fs"
+        # Preserve VikingDB's existing remote-recall behavior. Content storage
+        # alone does not establish complete regex candidate recall.
         if backend_type not in ("volcengine", "vikingdb"):
             return "fs"
 

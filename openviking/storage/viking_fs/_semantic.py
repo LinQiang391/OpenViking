@@ -3,6 +3,7 @@
 """Semantic retrieval mixin for VikingFS."""
 
 import asyncio
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from openviking.core.context import ContextLevel
@@ -24,7 +25,7 @@ from openviking.storage.viking_fs._base import (
 )
 from openviking.telemetry import get_current_telemetry
 from openviking.utils.image_search import build_multimodal_embedding_input
-from openviking_cli.exceptions import NotFoundError
+from openviking_cli.exceptions import InvalidArgumentError, NotFoundError
 
 
 class _SemanticMixin:
@@ -199,6 +200,8 @@ class _SemanticMixin:
         ctx: Optional[RequestContext] = None,
         level: Optional[List[int]] = None,
         image_url: Optional[str] = None,
+        events_time_decay_protection: Optional[str] = None,
+        request_now: Optional[datetime] = None,
     ):
         """Semantic search.
 
@@ -220,7 +223,14 @@ class _SemanticMixin:
         # is nothing to embed or rank. Callers that look records up by an exact
         # tag (e.g. a legacy id carried on the record) would otherwise be forced
         # to invent a meaningless query string whose similarity score is noise.
+        from openviking.retrieve.hierarchical_retriever import _resolve_event_decay_options
+
+        decay_options = _resolve_event_decay_options(events_time_decay_protection, request_now)
         filter_only = is_filter_only_query(query, image_url)
+        if filter_only and (decay_options or score_threshold is not None):
+            raise InvalidArgumentError(
+                "Filter-only find does not support events_time_decay_protection or score_threshold"
+            )
         if filter_only:
             _ensure_filter_present(filter)
         else:
@@ -291,6 +301,7 @@ class _SemanticMixin:
             score_threshold=score_threshold,
             scope_dsl=filter,
             level=level,
+            **decay_options,
         )
 
         # Convert QueryResult to FindResult
@@ -382,6 +393,8 @@ class _SemanticMixin:
         ctx: Optional[RequestContext] = None,
         level: Optional[List[int]] = None,
         image_url: Optional[str] = None,
+        events_time_decay_protection: Optional[str] = None,
+        request_now: Optional[datetime] = None,
     ):
         """Complex search with session context.
 
@@ -395,6 +408,9 @@ class _SemanticMixin:
         Returns:
             FindResult
         """
+        from openviking.retrieve.hierarchical_retriever import _resolve_event_decay_options
+
+        decay_options = _resolve_event_decay_options(events_time_decay_protection, request_now)
         _ensure_non_empty_search_query(query, image_url)
         telemetry = get_current_telemetry()
         from openviking.retrieve.hierarchical_retriever import HierarchicalRetriever
@@ -493,6 +509,7 @@ class _SemanticMixin:
                 score_threshold=score_threshold,
                 scope_dsl=filter,
                 level=level,
+                **decay_options,
             )
 
         query_results = await asyncio.gather(*[_execute(tq) for tq in typed_queries])
