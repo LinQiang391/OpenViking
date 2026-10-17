@@ -286,7 +286,9 @@ async def test_keywords_tenant_search_reuses_scope_filter_and_sets_bm25_fields(a
     backend = object.__new__(VikingVectorIndexBackend)
     backend.acl_manager = None
     backend._acl_enabled = AsyncMock(return_value=acl_enabled)
-    tenant_backend = SimpleNamespace(search_by_keywords=AsyncMock(return_value=[]))
+    tenant_backend = SimpleNamespace(
+        search_by_keywords=AsyncMock(return_value=[]),
+    )
     backend._get_backend_for_context = AsyncMock(return_value=tenant_backend)
 
     await backend.search_by_keywords_in_tenant(
@@ -301,7 +303,7 @@ async def test_keywords_tenant_search_reuses_scope_filter_and_sets_bm25_fields(a
 
     kwargs = tenant_backend.search_by_keywords.await_args.kwargs
     assert kwargs["query"] == "OAuth token"
-    assert kwargs["mode"] == "bm25"
+    assert "mode" not in kwargs  # The account backend resolves its explicit ready engine.
     assert kwargs["fields"] == ["content"]
     assert kwargs["filter"] == _build(
         ctx,
@@ -603,9 +605,21 @@ async def test_tenant_search_preserves_raw_scope_across_decay_routes():
     other = next(call for call in calls if "advance" not in call)
     events = next(call for call in calls if "advance" in call)
     assert other["filter"] == And(
-        [scope, RawDSL({"op": "must_not", "field": "search_tags", "conds": ["memory_type=events"]})]
+        [
+            scope,
+            Or(
+                [
+                    RawDSL({"op": "must_not", "field": "context_type", "conds": ["memory"]}),
+                    RawDSL(
+                        {"op": "must_not", "field": "search_tags", "conds": ["memory_type=events"]}
+                    ),
+                ]
+            ),
+        ]
     )
-    assert events["filter"] == And([scope, Eq("search_tags", "memory_type=events")])
+    assert events["filter"] == And(
+        [scope, And([Eq("context_type", "memory"), Eq("search_tags", "memory_type=events")])]
+    )
     assert (other["limit"], events["limit"], other["offset"], events["offset"]) == (2, 2, 0, 0)
     assert result == [event]
 

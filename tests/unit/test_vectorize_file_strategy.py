@@ -1,6 +1,7 @@
 import base64
 import io
 import types
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from PIL import Image
@@ -49,16 +50,34 @@ class DummyQueueManager:
 
 
 class DummyFS:
-    def __init__(self, content):
+    def __init__(self, content, *, account_backends=None):
         self.content = content
         self.read_calls = []
         self.read_file_calls = 0
         self.read_file_bytes_calls = 0
         self.vector_store = self
         self._vector_config_resolver = self
+        self.account_backends = (
+            {"default": "local"} if account_backends is None else account_backends
+        )
+        self.resolve_calls = []
+        self._get_vector_store = Mock(side_effect=AssertionError("unexpected vector store lookup"))
+        self.get_content_policy = AsyncMock(
+            side_effect=AssertionError("producer must not query content policy")
+        )
+        self.account_uses_content_field = AsyncMock(
+            side_effect=AssertionError("producer must not query content readiness")
+        )
+        self.get_account_backend = AsyncMock(
+            side_effect=AssertionError("producer must reuse resolved vector settings")
+        )
 
     async def resolve(self, account_id):
-        return types.SimpleNamespace(embedding=embedding_utils.get_openviking_config().embedding)
+        self.resolve_calls.append(account_id)
+        return types.SimpleNamespace(
+            embedding=embedding_utils.get_openviking_config().embedding,
+            vectordb=types.SimpleNamespace(backend=self.account_backends[account_id]),
+        )
 
     async def read(self, _path, offset=0, size=-1, ctx=None):
         self.read_calls.append((offset, size))
@@ -260,6 +279,196 @@ async def test_vectorize_file_uses_supplied_content_without_reading_file(monkeyp
     )
 
     assert queue.items[0].message == "print('local')"
+    assert fs.read_file_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text_source,use_summary", [("summary_first", False), ("content_only", True)]
+)
+@pytest.mark.parametrize("default_backend", ["vikingdb", "opengauss"])
+@pytest.mark.parametrize("account_backend", ["vikingdb", "http", "volcengine", "opengauss"])
+async def test_vectorize_file_preloads_resolved_account_content_without_policy_lookup(
+    monkeypatch, text_source, use_summary, default_backend, account_backend
+):
+    from openviking.storage.viking_vector_index_backend import VIKINGDB_CONTENT_MAX_SIZE
+
+    queue = DummyQueue()
+    fs = DummyFS(
+        "remote content must not be read", account_backends={"default": account_backend}
+    )
+    full_source = account_backend == "opengauss"
+    tail_token = "TAIL_TOKEN_FULL_RESOURCE_20261016"
+    content = "正文 retrieval\n" * (VIKINGDB_CONTENT_MAX_SIZE // 10 + 1) + tail_token
+    summary = "short resource summary"
+    assert content.index(tail_token) > VIKINGDB_CONTENT_MAX_SIZE
+    monkeypatch.setattr(embedding_utils, "get_queue_manager", lambda: DummyQueueManager(queue))
+    monkeypatch.setattr(embedding_utils, "get_viking_fs", lambda: fs)
+    monkeypatch.setattr(
+        embedding_utils,
+        "get_openviking_config",
+        lambda: types.SimpleNamespace(
+            embedding=types.SimpleNamespace(text_source=text_source, max_input_tokens=1000),
+            storage=types.SimpleNamespace(
+                vectordb=types.SimpleNamespace(backend=default_backend)
+            ),
+        ),
+    )
+
+    enqueued = await embedding_utils.vectorize_file(
+        file_path="viking://user/default/resources/long.md",
+        summary_dict={"name": "long.md", "summary": summary},
+        parent_uri="viking://user/default/resources",
+        context_type="resource",
+        ctx=DummyReq(),
+        file_content=content.encode("utf-8"),
+        materialize_content=True,
+        use_summary=use_summary,
+    )
+
+    assert enqueued is True
+    assert len(queue.items) == 1
+    message = queue.items[0]
+    preloaded = message.context_data["_materialized_content"]
+    assert preloaded == (content if full_source else content[:VIKINGDB_CONTENT_MAX_SIZE])
+    assert (tail_token in preloaded) is full_source
+    assert fs.resolve_calls == ["default"]
+    fs._get_vector_store.assert_not_called()
+    fs.get_content_policy.assert_not_called()
+    fs.account_uses_content_field.assert_not_called()
+    fs.get_account_backend.assert_not_called()
+    assert message.message == summary
+    assert "content" not in message.context_data
+    assert fs.read_calls == []
+    assert fs.read_file_calls == 0
+    assert fs.read_file_bytes_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("default_backend", ["vikingdb", "opengauss"])
+@pytest.mark.parametrize("enabled_at_consumption", [False, True])
+async def test_preloaded_body_survives_migration_between_enqueue_and_consumption(
+    monkeypatch, default_backend, enabled_at_consumption
+):
+    from openviking.models.embedder.base import EmbedResult
+    from openviking.server.identity import RequestContext, Role
+    from openviking.storage.collection_schemas import TextEmbeddingHandler
+    from openviking.storage.queuefs.embedding_msg import EmbeddingMsg
+    from openviking.storage.viking_vector_index_backend import VIKINGDB_CONTENT_MAX_SIZE
+    from openviking_cli.session.user_id import UserIdentifier
+
+    tail = "migrationtailkeywordunique"
+    content = "x" * (VIKINGDB_CONTENT_MAX_SIZE + 11) + tail
+    summary = "independent embedding summary"
+    ctx = RequestContext(user=UserIdentifier("dedicated", "alice"), role=Role.USER)
+    config = types.SimpleNamespace(
+        storage=types.SimpleNamespace(
+            vectordb=types.SimpleNamespace(name="context", backend=default_backend)
+        ),
+        embedding=types.SimpleNamespace(
+            text_source="summary_first", max_input_tokens=1000, dimension=2,
+            circuit_breaker=types.SimpleNamespace(
+                failure_threshold=5, reset_timeout=60.0, max_reset_timeout=600.0,
+            ),
+        ),
+    )
+    policy = {"enabled": False, "source": "full_source", "max_size": None}
+    backend = types.SimpleNamespace(
+        _mode="opengauss",
+        get_content_policy=AsyncMock(return_value=policy),
+    )
+    store = types.SimpleNamespace(
+        is_closing=False,
+        get_account_backend=AsyncMock(return_value=backend),
+        get_content_policy=AsyncMock(side_effect=AssertionError("unexpected store policy lookup")),
+        account_uses_content_field=AsyncMock(
+            side_effect=AssertionError("unexpected legacy content readiness lookup")
+        ),
+        upsert=AsyncMock(return_value="record"),
+    )
+    fs = DummyFS(
+        "must not replace the preloaded source", account_backends={"dedicated": "opengauss"}
+    )
+    queue = DummyQueue()
+    monkeypatch.setattr(embedding_utils, "get_viking_fs", lambda: fs)
+    monkeypatch.setattr("openviking.storage.viking_fs.get_viking_fs", lambda: fs)
+    monkeypatch.setattr(embedding_utils, "get_queue_manager", lambda: DummyQueueManager(queue))
+    monkeypatch.setattr(embedding_utils, "get_openviking_config", lambda: config)
+    monkeypatch.setattr("openviking_cli.utils.config.get_openviking_config", lambda: config)
+    assert await embedding_utils.vectorize_file(
+        file_path="viking://user/alice/resources/long.md",
+        summary_dict={"name": "long.md", "summary": summary},
+        parent_uri="viking://user/alice/resources", ctx=ctx,
+        file_content=content, materialize_content=True, use_summary=True, action="upsert",
+    )
+    payload = queue.items[0].to_json()
+    queued = EmbeddingMsg.from_json(payload)
+    assert queued.context_data["_materialized_content"] == content
+    assert queued.context_data["_materialized_content"].endswith(tail)
+    assert queued.message == summary
+    assert fs.resolve_calls == ["dedicated"]
+    fs._get_vector_store.assert_not_called()
+    fs.get_content_policy.assert_not_called()
+    fs.account_uses_content_field.assert_not_called()
+    fs.get_account_backend.assert_not_called()
+    store.get_account_backend.assert_not_called()
+    backend.get_content_policy.assert_not_called()
+    assert policy["enabled"] is False
+    policy["enabled"] = enabled_at_consumption
+    embedder = types.SimpleNamespace(
+        prepare_embedding_input=lambda text: text,
+        embed_async=AsyncMock(return_value=EmbedResult(dense_vector=[0.1, 0.2])),
+    )
+    handler = TextEmbeddingHandler(store, types.SimpleNamespace(bind=lambda account: embedder))
+    outcome = await handler.on_dequeue({"data": payload})
+    assert outcome.outcome.value == "success"
+    written = store.upsert.call_args.args[0]
+    if enabled_at_consumption:
+        assert written["content"] == content
+        assert written["content"].endswith(tail)
+    else:
+        assert "content" not in written
+    assert "_materialized_content" not in written
+    assert written["vector"] == [0.1, 0.2]
+    embedder.embed_async.assert_awaited_once_with(summary, is_query=False)
+    store.get_account_backend.assert_awaited_once_with("dedicated")
+    backend.get_content_policy.assert_awaited_once_with()
+    store.get_content_policy.assert_not_called()
+    store.account_uses_content_field.assert_not_called()
+    assert written["account_id"] == "dedicated"
+    assert not fs.read_calls
+    assert fs.read_file_calls == fs.read_file_bytes_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "materialize,supplied,filename", [(False, True, "a.md"), (True, False, "a.md"), (True, True, "a.mp4")]
+)
+async def test_non_text_or_absent_preload_never_resolves_content_policy(
+    monkeypatch, materialize, supplied, filename
+):
+    queue = DummyQueue()
+    fs = DummyFS("remote source")
+    fs._get_vector_store = Mock(side_effect=AssertionError("unexpected content policy IO"))
+    monkeypatch.setattr(embedding_utils, "get_queue_manager", lambda: DummyQueueManager(queue))
+    monkeypatch.setattr(embedding_utils, "get_viking_fs", lambda: fs)
+    monkeypatch.setattr(
+        embedding_utils,
+        "get_openviking_config",
+        lambda: types.SimpleNamespace(
+            embedding=types.SimpleNamespace(text_source="summary_first", max_input_tokens=1000)
+        ),
+    )
+    assert await embedding_utils.vectorize_file(
+        "viking://resources/" + filename,
+        {"name": filename, "summary": "summary"},
+        "viking://resources",
+        ctx=DummyReq(),
+        file_content=b"source" if supplied else None,
+        materialize_content=materialize,
+    )
+    fs._get_vector_store.assert_not_called()
+    assert "_materialized_content" not in queue.items[0].context_data
     assert fs.read_file_calls == 0
 
 

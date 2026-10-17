@@ -6,6 +6,7 @@ Search Service for OpenViking.
 Provides search operations: search, find.
 """
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from openviking.core.namespace_policy import is_system_uri
@@ -93,7 +94,7 @@ class SearchService:
         if not vector_store or not await viking_fs._collection_has_fulltext(
             vector_store,
             ctx,
-            supported_modes=("volcengine", "vikingdb"),
+            supported_modes=("volcengine", "vikingdb", "opengauss"),
             raise_on_error=True,
         ):
             raise InvalidArgumentError(
@@ -135,6 +136,7 @@ class SearchService:
         events_time_decay_protection: Optional[str] = None,
         search_type: SearchType = "semantic",
         context_types: Optional[List[ContextType]] = None,
+        request_now: Optional[datetime] = None,
     ) -> Any:
         """Search with session context.
 
@@ -177,6 +179,7 @@ class SearchService:
             events_time_decay_protection=events_time_decay_protection,
             search_type=search_type,
             context_types=context_types,
+            **({"request_now": request_now} if request_now is not None else {}),
         )
         return result
 
@@ -193,6 +196,7 @@ class SearchService:
         image_url: str | list[str] | None = None,
         events_time_decay_protection: Optional[str] = None,
         search_type: SearchType = "semantic",
+        request_now: Optional[datetime] = None,
     ) -> Any:
         """Search without session context.
 
@@ -224,6 +228,7 @@ class SearchService:
             image_url=resolved_image_url,
             events_time_decay_protection=events_time_decay_protection,
             search_type=search_type,
+            **({"request_now": request_now} if request_now is not None else {}),
         )
         return result
 

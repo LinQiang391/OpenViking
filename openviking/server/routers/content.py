@@ -104,8 +104,14 @@ class SetTagsRequest(BaseModel):
 
 class ReindexRequest(BaseModel):
     uri: str
-    mode: str = "vectors_only"
-    force: bool = False
+    mode: str = Field(
+        default="vectors_only",
+        description="vectors_only, semantic_and_vectors, or durable content_only (no model calls)",
+    )
+    force: bool = Field(
+        default=False,
+        description="For content_only, explicitly CAS-repair existing non-NULL historical content",
+    )
     wait: bool = True
     recursive: bool = True
     tags: list[str] | None = None

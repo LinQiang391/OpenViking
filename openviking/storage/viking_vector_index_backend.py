@@ -396,22 +396,14 @@ class _SingleAccountBackend:
             coll = self._get_collection()
             meta = self._get_meta_data(coll)
             for field in meta.get("Fields", []):
+                if field.get("FieldName") == "content" and self._mode == "opengauss":
+                    continue
                 if field.get("FieldType") == "text" and field.get("FieldName") not in result:
                     result[field["FieldName"]] = ""
         except Exception:
             pass
 
-        # ``content`` (full text) is only meaningful for VikingDB-backed backends,
-        # which use it for server-side full-text grep. Every other backend leaves
-        # ``USE_CONTENT_FIELD=False`` and gets ``content`` dropped here, so its large
-        # payload can't blow past the local engine's per-field byte limit. A new backend
-        # that doesn't need ``content`` requires no extra code.
-        if self._adapter.USE_CONTENT_FIELD:
-            content = result.get("content")
-            if isinstance(content, (str, bytes)):
-                result["content"] = content[:VIKINGDB_CONTENT_MAX_SIZE]
-        else:
-            result.pop("content", None)
+        self._apply_content_policy(result)
 
         return result
 
@@ -429,13 +421,59 @@ class _SingleAccountBackend:
             payload["search_tags"] = normalize_search_tags(
                 payload["search_tags"], discard_invalid=True
             )
-        if self._adapter.USE_CONTENT_FIELD:
-            content = payload.get("content")
-            if isinstance(content, (str, bytes)):
-                payload["content"] = content[:VIKINGDB_CONTENT_MAX_SIZE]
-        else:
-            payload.pop("content", None)
+        self._apply_content_policy(payload)
         return payload
+
+    def _content_policy(self) -> Dict[str, Any]:
+        enabled = bool(self._adapter.USE_CONTENT_FIELD)
+        return {
+            "enabled": enabled,
+            "max_size": None if self._mode == "opengauss" else VIKINGDB_CONTENT_MAX_SIZE,
+            "source": "full_source" if self._mode == "opengauss" else "legacy",
+            "atomic_backfill": (
+                enabled
+                and self._mode == "opengauss"
+                and callable(getattr(self._adapter, "backfill_content_record", None))
+            ),
+        }
+
+    def _apply_content_policy(self, payload: Dict[str, Any]) -> None:
+        policy = self._content_policy()
+        if not policy["enabled"]:
+            payload.pop("content", None)
+        elif policy["max_size"] is not None and isinstance(payload.get("content"), (str, bytes)):
+            payload["content"] = payload["content"][: policy["max_size"]]
+
+    @_backend_operation
+    async def get_content_policy(self) -> Dict[str, Any]:
+        return await self._async_adapter.run(self._content_policy)
+
+    @_backend_operation
+    async def get_keyword_search_info(self) -> Dict[str, Any]:
+        # openGauss metadata probes persisted ready state and the physical catalog;
+        # never cache a positive result across a rebuild or an administrative drop.
+        meta = await self.get_collection_meta(raise_on_error=True)
+        if meta is None:
+            return {"ready": False, "engine": None, "candidate_complete": False}
+        if not isinstance(meta, dict) or not isinstance(meta.get("Fields"), list):
+            raise RuntimeError("Vector backend returned invalid collection metadata")
+        capabilities = meta.get("RetrievalCapabilities")
+        if self._mode == "opengauss":
+            capabilities = capabilities or {}
+            engine = "bm25" if capabilities.get("bm25") is True else None
+            return {
+                "ready": capabilities.get("content") is True and engine is not None,
+                "engine": engine,
+                "candidate_complete": capabilities.get("grep_complete") is True,
+            }
+        has_content = any(
+            field.get("FieldName") == "content" and field.get("FieldType") == "text"
+            for field in meta.get("Fields", [])
+        )
+        ready = has_content and any(
+            item.get("Field") == "content" for item in meta.get("FullText") or []
+        )
+        return {"ready": ready, "engine": "bm25" if ready else None, "candidate_complete": True}
 
     def _validate_vector_dimension(self, vector) -> None:
         if vector is not None and self.vector_dim and len(vector) != self.vector_dim:
@@ -1072,6 +1110,18 @@ class _SingleAccountBackend:
         mode: Optional[str] = None,
         fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
+        if self._mode == "opengauss":
+            if mode not in (None, "bm25"):
+                raise InvalidArgumentError("Keyword search mode must be bm25")
+            if fields is not None and fields != ["content"]:
+                raise InvalidArgumentError("Keyword search supports the content field only")
+            info = await self.get_keyword_search_info()
+            if not info["ready"] or (mode is not None and mode != info["engine"]):
+                raise NotImplementedError(
+                    f"Keyword search {mode or info['engine'] or 'index'} is not ready"
+                )
+            mode = mode or info["engine"]
+            fields = ["content"]
         try:
             if self._bound_account_id:
                 account_filter = Eq("account_id", self._bound_account_id)
@@ -1258,7 +1308,51 @@ class VikingVectorIndexBackend:
         return backend
 
     async def account_uses_content_field(self, account_id: str) -> bool:
-        return (await self.get_account_backend(account_id))._adapter.USE_CONTENT_FIELD
+        backend = await self.get_account_backend(account_id)
+        if backend._mode != "opengauss":
+            return backend._adapter.USE_CONTENT_FIELD
+        return (await backend.get_content_policy())["enabled"]
+
+    async def get_content_policy(self, *, ctx: RequestContext) -> Dict[str, Any]:
+        return await (await self._get_backend_for_context(ctx)).get_content_policy()
+
+    async def get_keyword_search_info(self, *, ctx: RequestContext) -> Dict[str, Any]:
+        return await (await self._get_backend_for_context(ctx)).get_keyword_search_info()
+
+    async def supports_atomic_content_backfill(self, *, ctx: RequestContext) -> bool:
+        backend = await self._get_backend_for_context(ctx)
+        policy = await backend.get_content_policy()
+        return policy.get("enabled") is True and policy.get("atomic_backfill") is True
+
+    async def backfill_content_record(
+        self,
+        snapshot: Mapping[str, Any],
+        content: str,
+        *,
+        ctx: RequestContext,
+        repair: bool = False,
+    ) -> bool:
+        """Update only the exact source version, never recreate a deleted record."""
+        if snapshot.get("account_id") != ctx.account_id:
+            raise PermissionError("Content snapshot belongs to another account")
+        if not isinstance(content, str) or type(repair) is not bool:
+            raise InvalidArgumentError("Content must be text and repair must be a boolean")
+        if not snapshot.get("id") or not snapshot.get("uri") or "updated_at" not in snapshot:
+            raise InvalidArgumentError("Content snapshot requires id, uri and updated_at")
+        if snapshot.get("content") is not None and not repair:
+            return False
+        backend = await self._get_backend_for_context(ctx)
+        if not callable(getattr(backend._adapter, "backfill_content_record", None)):
+            raise NotImplementedError("Vector backend does not support atomic content backfill")
+        acl_enabled = await self._acl_enabled(ctx)
+        scope = self._merge_filters(
+            Eq("account_id", ctx.account_id),
+            self._tenant_filter(ctx, acl_enabled=acl_enabled, action=AclAction.WRITE),
+        )
+        async with backend.operation():
+            return await backend._async_adapter.call(
+                "backfill_content_record", dict(snapshot), content, filter=scope, repair=repair
+            )
 
     async def release_account(self, account_id: str) -> None:
         """Release derived resources after account data cleanup; never drop a collection."""
@@ -2087,11 +2181,21 @@ class VikingVectorIndexBackend:
     ) -> List[Dict[str, Any]]:
         request_now = request_now or datetime.now(timezone.utc)
         final_window = limit + offset
-        event_filter = self._merge_filters(scope_filter, Eq("search_tags", "memory_type=events"))
-        non_event_filter = self._merge_filters(
-            scope_filter,
-            RawDSL({"op": "must_not", "field": "search_tags", "conds": ["memory_type=events"]}),
+        backend = await self._get_backend_for_context(ctx)
+        event_scope = Eq("search_tags", "memory_type=events")
+        non_event_scope = RawDSL(
+            {"op": "must_not", "field": "search_tags", "conds": ["memory_type=events"]}
         )
+        if backend._mode == "opengauss":
+            event_scope = And([Eq("context_type", "memory"), event_scope])
+            non_event_scope = Or(
+                [
+                    RawDSL({"op": "must_not", "field": "context_type", "conds": ["memory"]}),
+                    non_event_scope,
+                ]
+            )
+        event_filter = self._merge_filters(scope_filter, event_scope)
+        non_event_filter = self._merge_filters(scope_filter, non_event_scope)
         # The adapter owns backend parameters and the engine owns amplification.
         advance = {
             "time_decay": {
@@ -3119,6 +3223,7 @@ class VikingVectorIndexBackend:
         ctx: RequestContext,
         *,
         acl_enabled: bool,
+        action: AclAction = AclAction.READ,
     ) -> Optional[FilterExpr]:
         if ctx.bypass_acl:
             return Eq("account_id", ctx.account_id)
@@ -3141,7 +3246,7 @@ class VikingVectorIndexBackend:
         default_shared_filter = RawDSL(
             {"op": "must_not", "field": ACL_MODE_FIELD, "conds": controlled_modes}
         )
-        read_grants = acl_grant_tokens(acl_principals(ctx), AclAction.READ)
+        read_grants = acl_grant_tokens(acl_principals(ctx), action)
         shared_acl_filter = And(
             [
                 PathScope("uri", "viking://resources", depth=-1),

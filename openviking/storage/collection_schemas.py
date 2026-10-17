@@ -471,6 +471,152 @@ async def init_context_collection(storage) -> bool:
     )
 
 
+class ContentBackfillConflictError(RuntimeError):
+    """An existing row rejected content CAS and must be retried from a fresh snapshot."""
+
+    def __init__(self, record_id: str):
+        self.record_id = record_id
+        super().__init__(f"Content CAS conflict for record {record_id}; fresh snapshot required")
+
+
+def _source_text(raw: Any) -> str:
+    from openviking.utils.embedding_utils import _coerce_text_file_content
+
+    if not isinstance(raw, (str, bytes)):
+        raise TypeError(f"Content source must be str or bytes, got {type(raw).__name__}")
+    return _coerce_text_file_content(raw)
+
+
+async def materialize_content_only(
+    embedding_msg: EmbeddingMsg,
+    ctx: RequestContext,
+    *,
+    max_size: int | None = None,
+) -> str:
+    """Resolve stored text without changing the independent embedding input."""
+    from openviking.session.memory.utils.content_visibility import visible_content
+
+    data = embedding_msg.context_data
+    materialized = data.pop("_materialized_content", None)
+    if isinstance(materialized, str):
+        content = materialized
+    else:
+        from openviking.storage.abstract_overview import body_for_preview
+        from openviking.storage.viking_fs import get_viking_fs
+        from openviking.utils.embedding_utils import _resolve_resource_content_type
+
+        uri = data.get("uri", "")
+        level = int(data.get("level", 2))
+        if uri and level in (0, 1):
+            filename = ".abstract.md" if level == 0 else ".overview.md"
+            source_uri = uri if uri.endswith("/" + filename) else uri.rstrip("/") + "/" + filename
+            content = body_for_preview(await get_viking_fs().read_file(source_uri, ctx=ctx))
+        elif uri and level == 2 and data.get("context_type") == ContextType.MEMORY.value:
+            content = _source_text(await get_viking_fs().read_file(uri, ctx=ctx))
+        elif (
+            uri
+            and (data.get("is_leaf") or ("level" in data and level == 2))
+            and data.get("context_type") in (ContextType.RESOURCE.value, ContextType.SKILL.value)
+        ):
+            from openviking.parse.parsers.upload_utils import is_text_file
+
+            fs = get_viking_fs()
+            name = uri.rsplit("/", 1)[-1]
+            source_type = await _resolve_resource_content_type(uri, name, fs, ctx)
+            if source_type == ResourceContentType.TEXT or (
+                source_type is None and is_text_file(name)
+            ):
+                content = _source_text(await fs.read_file(uri, ctx=ctx))
+            else:
+                content = (
+                    embedding_msg.message
+                    if isinstance(embedding_msg.message, str)
+                    else data.get("abstract", "")
+                )
+        else:
+            content = (
+                embedding_msg.message
+                if isinstance(embedding_msg.message, str)
+                else data.get("abstract", "")
+            )
+    if not isinstance(content, str):
+        raise TypeError("Materialized content must be text")
+    # Project before truncating: a byte/character cap may split the reserved
+    # trailer, making a subsequently applied visibility filter unable to hide it.
+    if data.get("uri"):
+        content = visible_content(content, uri=data["uri"])
+    return content if max_size is None else content[:max_size]
+
+
+async def backfill_content(
+    vikingdb: VikingVectorIndexBackend,
+    record_ids: List[str],
+    *,
+    ctx: RequestContext,
+    max_records: int = 100,
+    repair: bool = False,
+    snapshots: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Update existing content with snapshot CAS; never upsert missing records.
+
+    Non-NULL historical content is eligible only with explicit ``repair=True``.
+    Missing records and default non-NULL snapshots are intentional skips. A CAS
+    miss is refreshed strictly: only confirmed deletion is a skip; every still
+    existing row raises a conflict, even if another writer populated its content.
+    Callers supplying inventory snapshots retain that inventory's CAS revision.
+    """
+    if type(repair) is not bool:
+        raise ValueError("repair must be an explicit boolean")
+    if max_records < 1 or len(record_ids) > max_records:
+        raise ValueError(f"content backfill accepts at most {max_records} records")
+    policy = await vikingdb.get_content_policy(ctx=ctx)
+    if not isinstance(policy, dict) or policy.get("enabled") is not True:
+        raise NotImplementedError("Collection content storage is not enabled")
+    if policy.get("source") != "full_source" or policy.get("atomic_backfill") is not True:
+        raise NotImplementedError("content_only requires openGauss atomic content backfill")
+    if snapshots is not None and len(snapshots) > max_records:
+        raise ValueError(f"content backfill accepts at most {max_records} snapshots")
+    records = snapshots if snapshots is not None else await vikingdb.get_strict(record_ids, ctx=ctx)
+    requested = set(record_ids)
+    seen = set()
+    for record in records:
+        if record.get("account_id") != ctx.account_id:
+            raise PermissionError("Content backfill snapshot is outside the account")
+        if record.get("id") not in requested or record.get("id") in seen:
+            raise ValueError("Unexpected or duplicate content backfill snapshot")
+        seen.add(record["id"])
+    updated = 0
+    for record in records:
+        if not repair and record.get("content") is not None:
+            continue
+        if not isinstance(record.get("uri"), str) or not record["uri"].startswith("viking://"):
+            raise ValueError("Content backfill snapshot requires a Viking URI")
+        if record.get("level") not in (0, 1, 2):
+            raise ValueError("Content backfill snapshot requires a valid level")
+        msg = EmbeddingMsg(
+            message=record.get("abstract") or "",
+            context_data=dict(record),
+        )
+        content = await materialize_content_only(msg, ctx, max_size=policy.get("max_size"))
+        kwargs = {"ctx": ctx}
+        if repair:
+            kwargs["repair"] = True
+        changed = await run_to_completion(
+            lambda record=record, content=content, kwargs=kwargs: vikingdb.backfill_content_record(
+                record, content, **kwargs
+            )
+        )
+        if changed:
+            updated += 1
+        else:
+            current = await vikingdb.get_strict([record["id"]], ctx=ctx)
+            if any(row.get("account_id") != ctx.account_id for row in current):
+                raise PermissionError("Refreshed content snapshot is outside the account")
+            if current:
+                raise ContentBackfillConflictError(record["id"])
+    return {"requested": len(record_ids), "updated": updated}
+
+
 class TextEmbeddingHandler(DequeueHandlerBase):
     """
     Text embedding handler that converts text messages to embedding vectors
@@ -863,10 +1009,21 @@ class TextEmbeddingHandler(DequeueHandlerBase):
                             account_id, uri, inserted_data.get("level", 2)
                         )
 
-                    if await self._vikingdb.account_uses_content_field(account_id):
+                    backend_getter = getattr(self._vikingdb, "get_account_backend", None)
+                    backend = await backend_getter(account_id) if callable(backend_getter) else None
+                    if backend is not None and backend._mode == "opengauss":
+                        content_policy = await backend.get_content_policy()
+                        if content_policy.get("enabled") is True:
+                            inserted_data["content"] = await materialize_content_only(
+                                embedding_msg, ctx, max_size=content_policy.get("max_size")
+                            )
+                    elif (
+                        backend._adapter.USE_CONTENT_FIELD
+                        if backend is not None
+                        else await self._vikingdb.account_uses_content_field(account_id)
+                    ):
                         inserted_data["content"] = await self._materialize_content(
-                            embedding_msg,
-                            ctx,
+                            embedding_msg, ctx
                         )
                     inserted_data.pop("_materialized_content", None)
                     if embedding_msg.action is IndexAction.MERGE:

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -33,10 +34,13 @@ from openviking.service.task_tracker import TaskStatus, get_task_tracker
 from openviking.service.task_work_index import bind_task_context, get_task_context
 from openviking.session.memory.utils.memory_file_utils import MemoryFileUtils
 from openviking.storage.abstract_overview import body_for_preview, embedding_text_for_body
+from openviking.storage.collection_schemas import backfill_content
+from openviking.storage.expr import And, Eq, Or, PathScope, Range
 from openviking.storage.pathlock_transfer import PathLockGuard
 from openviking.storage.queuefs.embedding_msg_converter import EmbeddingMsgConverter
 from openviking.storage.queuefs.semantic_msg import SemanticMsg
 from openviking.storage.queuefs.semantic_processor import SemanticProcessor
+from openviking.storage.vector_ids import is_vector_record_id
 from openviking.storage.viking_fs import get_viking_fs
 from openviking.telemetry import get_current_telemetry
 from openviking.utils.embedding_input import truncate_embedding_input
@@ -100,6 +104,9 @@ class _ReindexCounters:
     deleted_records: int = 0
     unsupported_records: int = 0
     failed_records: int = 0
+    content_updated_records: int = 0
+    content_skipped_records: int = 0
+    content_error: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
 
     def merge_from(self, other: "_ReindexCounters") -> None:
@@ -135,12 +142,12 @@ class ReindexExecutor:
     """Non-destructive reindex orchestration for admin maintenance flows."""
 
     SUPPORTED_MODES_BY_TYPE = {
-        "global_namespace": {"vectors_only", "semantic_and_vectors"},
-        "user_namespace": {"vectors_only", "semantic_and_vectors"},
-        "skill_namespace": {"vectors_only", "semantic_and_vectors"},
-        "resource": {"vectors_only", "semantic_and_vectors"},
-        "skill": {"vectors_only", "semantic_and_vectors"},
-        "memory": {"vectors_only", "semantic_and_vectors"},
+        "global_namespace": {"vectors_only", "semantic_and_vectors", "content_only"},
+        "user_namespace": {"vectors_only", "semantic_and_vectors", "content_only"},
+        "skill_namespace": {"vectors_only", "semantic_and_vectors", "content_only"},
+        "resource": {"vectors_only", "semantic_and_vectors", "content_only"},
+        "skill": {"vectors_only", "semantic_and_vectors", "content_only"},
+        "memory": {"vectors_only", "semantic_and_vectors", "content_only"},
     }
 
     def __init__(
@@ -193,6 +200,31 @@ class ReindexExecutor:
         """
         return content_owner_context_for_uri(uri, ctx)
 
+    @staticmethod
+    async def _require_content_backfill_support(ctx: RequestContext) -> None:
+        store = get_service().vikingdb_manager
+        policy = None
+        policy_getter = getattr(store, "get_content_policy", None)
+        if callable(policy_getter):
+            policy = policy_getter(ctx=ctx)
+            if inspect.isawaitable(policy):
+                policy = await policy
+        if not isinstance(policy, dict) or policy.get("enabled") is not True:
+            raise InvalidArgumentError(
+                "content_only requires content storage enabled for the resolved account backend"
+            )
+        supports = getattr(store, "supports_atomic_content_backfill", None)
+        supported = False
+        if callable(supports):
+            supported = supports(ctx=ctx)
+            if inspect.isawaitable(supported):
+                supported = await supported
+        if supported is not True:
+            raise InvalidArgumentError(
+                "content_only requires an openGauss adapter supporting atomic content backfill; "
+                "the resolved account backend does not support this operation"
+            )
+
     async def execute(
         self,
         *,
@@ -217,6 +249,8 @@ class ReindexExecutor:
             raise InvalidArgumentError("task_id requires asynchronous reindex")
         object_type = self._infer_target_type(uri)
         self._validate_mode(object_type, mode)
+        if mode == "content_only":
+            await self._require_content_backfill_support(ctx)
         if not recursive and object_type in {
             "global_namespace",
             "user_namespace",
@@ -370,6 +404,8 @@ class ReindexExecutor:
         reindex requests must use execute(), which owns admin task creation and
         URI-level duplicate detection.
         """
+        if mode == "content_only":
+            await self._require_content_backfill_support(ctx)
         if get_task_context() is None:
             raise RuntimeError("TaskContext is required for nested reindex execution")
         object_type = self._infer_target_type(uri)
@@ -393,6 +429,10 @@ class ReindexExecutor:
         tags: list[str] | None,
         tag_mode: str,
     ) -> IngestOptions | None:
+        if mode == "content_only":
+            if tags is not None or tag_mode != "replace":
+                raise InvalidArgumentError("content_only does not change tags")
+            return None
         if tags is None and tag_mode != "clear":
             return None
         if tag_mode not in {"replace", "append", "clear"}:
@@ -628,28 +668,36 @@ class ReindexExecutor:
         existing_lease: dict | None = None,
     ) -> dict[str, Any]:
         service = get_service()
-        if service.viking_fs is None or service.vikingdb_manager is None:
-            raise RuntimeError("OpenVikingService not initialized")
-        if not service.vikingdb_manager.has_queue_manager:
-            raise OpenVikingError(
-                "Reindex requires embedding queue",
-                code="FAILED_PRECONDITION",
-                details={"uri": uri},
-            )
-
-        path = service.viking_fs._uri_to_path(uri, ctx=ctx)
-        started_at = time.perf_counter()
-        counters = _ReindexCounters()
-        telemetry_id = get_current_telemetry().telemetry_id
-        acquire_lock = service.viking_fs._async_agfs.pathlock_acquire_tree
-        stat = await service.viking_fs.stat(uri, ctx=ctx, skip_count=True)
-        root_is_dir = bool(stat.get("isDir", stat.get("is_dir")))
-        if not root_is_dir:
-            acquire_lock = service.viking_fs._async_agfs.pathlock_acquire_exact
-        lease = existing_lease or await acquire_lock(path)
-        lease_guard = PathLockGuard(service.viking_fs._async_agfs, lease)
+        # The consumer has detached this lease; protect it before any awaited preflight.
+        lease_guard = PathLockGuard(
+            service.viking_fs._async_agfs if service.viking_fs is not None else None,
+            existing_lease,
+        )
         run: _ReindexRunContext | None = None
         try:
+            if mode == "content_only":
+                await self._require_content_backfill_support(ctx)
+            if service.viking_fs is None or service.vikingdb_manager is None:
+                raise RuntimeError("OpenVikingService not initialized")
+            if not service.vikingdb_manager.has_queue_manager:
+                raise OpenVikingError(
+                    "Reindex requires embedding queue",
+                    code="FAILED_PRECONDITION",
+                    details={"uri": uri},
+                )
+
+            path = service.viking_fs._uri_to_path(uri, ctx=ctx)
+            started_at = time.perf_counter()
+            counters = _ReindexCounters()
+            telemetry_id = get_current_telemetry().telemetry_id
+            acquire_lock = service.viking_fs._async_agfs.pathlock_acquire_tree
+            stat = await service.viking_fs.stat(uri, ctx=ctx, skip_count=True)
+            root_is_dir = bool(stat.get("isDir", stat.get("is_dir")))
+            if not root_is_dir:
+                acquire_lock = service.viking_fs._async_agfs.pathlock_acquire_exact
+            lease = existing_lease
+            if lease is None:
+                lease = await lease_guard.acquire(lambda: acquire_lock(path))
             borrowed = (
                 await service.viking_fs._async_agfs.pathlock_as_borrowed(lease)
                 if lease is not None
@@ -666,7 +714,9 @@ class ReindexExecutor:
                 root_is_dir=root_is_dir,
                 lock_root_uri=uri.rstrip("/"),
             )
-            if object_type == "global_namespace":
+            if mode == "content_only":
+                await self._reindex_content_only(uri=uri, recursive=recursive, run=run)
+            elif object_type == "global_namespace":
                 namespace_kwargs = {"uri": uri, "mode": mode, "run": run}
                 if not recursive:
                     namespace_kwargs["recursive"] = False
@@ -720,10 +770,21 @@ class ReindexExecutor:
             await lease_guard.close()
 
         return {
-            "status": "completed",
+            "status": "retry_pending"
+            if mode == "content_only" and counters.content_error is not None
+            else "completed",
             "uri": uri,
             "object_type": object_type,
             "mode": mode,
+            **(
+                {
+                    "content_updated_records": counters.content_updated_records,
+                    "content_skipped_records": counters.content_skipped_records,
+                    "content_error": counters.content_error,
+                }
+                if mode == "content_only"
+                else {}
+            ),
             "scanned_records": counters.scanned_records,
             "rebuilt_records": counters.rebuilt_records,
             "deleted_records": counters.deleted_records,
@@ -732,6 +793,204 @@ class ReindexExecutor:
             "duration_ms": int((time.perf_counter() - started_at) * 1000),
             "warnings": counters.warnings,
         }
+
+    async def _reindex_content_only(
+        self, *, uri: str, recursive: bool, run: _ReindexRunContext
+    ) -> None:
+        """Checkpoint keyset progress in the existing durable, owner-scoped Task."""
+        store = get_service().vikingdb_manager
+        await self._require_content_backfill_support(run.ctx)
+        task_ctx = get_task_context()
+        if task_ctx is None or (
+            task_ctx.account_id != run.ctx.account_id or task_ctx.user_id != run.ctx.user.user_id
+        ):
+            raise RuntimeError("content_only requires an owner-bound durable Task")
+        tracker = get_task_tracker()
+        owner = {"account_id": run.ctx.account_id, "user_id": run.ctx.user.user_id}
+        task = await tracker.get(task_ctx.task_id, **owner)
+        if task is None:
+            raise RuntimeError("Content reindex Task is missing")
+        scope = {
+            "version": 2,
+            "task_id": task_ctx.task_id,
+            **owner,
+            "uri": uri,
+            "recursive": recursive,
+            "force": run.force,
+        }
+        saved = task.meta.get("content_only_checkpoint")
+        counters = run.counters
+        counter_names = (
+            "scanned_records",
+            "content_updated_records",
+            "content_skipped_records",
+            "failed_records",
+            "unsupported_records",
+        )
+        after_id = ""
+        if saved is not None:
+            if not isinstance(saved, dict) or saved.get("scope") != scope:
+                raise RuntimeError("Content checkpoint scope mismatch")
+            after_id = saved.get("after_id", "")
+            if not isinstance(after_id, str) or (
+                after_id and (not is_vector_record_id(after_id) or after_id != after_id.strip())
+            ):
+                raise RuntimeError("Invalid content checkpoint cursor")
+            for name in counter_names:
+                value = saved.get(name, 0)
+                if not isinstance(value, int) or value < 0:
+                    raise RuntimeError("Invalid content checkpoint counters")
+                setattr(counters, name, value)
+            counters.warnings = list(saved.get("warnings", []))
+            counters.content_error = saved.get("error")
+            if counters.content_error is not None and (
+                not isinstance(counters.content_error, dict)
+                or not isinstance(counters.content_error.get("record_id"), str)
+                or not is_vector_record_id(counters.content_error["record_id"])
+                or counters.content_error["record_id"]
+                != counters.content_error["record_id"].strip()
+                or counters.content_error["record_id"] <= after_id
+            ):
+                raise RuntimeError("Invalid content checkpoint pending record")
+            if saved.get("complete"):
+                if counters.content_error is not None:
+                    raise RuntimeError("Completed content checkpoint contains unresolved errors")
+                return
+
+        async def checkpoint(*, complete: bool = False) -> None:
+            await tracker.patch_task(
+                task_ctx.task_id,
+                TaskPatch(
+                    stage="content_only",
+                    meta={
+                        "content_only_checkpoint": {
+                            "scope": scope,
+                            "after_id": after_id,
+                            "complete": complete,
+                            **{name: getattr(counters, name) for name in counter_names},
+                            "warnings": counters.warnings[-100:],
+                            "error": counters.content_error,
+                        }
+                    },
+                ),
+                **owner,
+            )
+
+        await checkpoint()
+        root = uri.rstrip("/") if uri != "viking://" else uri
+        prefix = self._child_prefix(root)
+        uri_scope = (
+            Or([Eq("uri", root), PathScope("uri", root)])
+            if recursive and run.root_is_dir
+            else Eq("uri", root)
+        )
+        # Restrict cursors to canonical fixed-width lowercase hex. Arbitrary IDs
+        # can sort differently under database locale collation and Python; fail
+        # closed instead of silently advancing over a differently ordered page.
+        pending_id = (
+            counters.content_error["record_id"] if counters.content_error is not None else None
+        )
+        while True:
+            if await tracker.is_cancellation_requested(task_ctx.task_id, **owner):
+                raise asyncio.CancelledError()
+            if pending_id is not None:
+                page = await store.get_strict([pending_id], ctx=run.ctx)
+                if not page:
+                    counters.scanned_records += 1
+                    counters.content_skipped_records += 1
+                    after_id = pending_id
+                    pending_id = None
+                    counters.content_error = None
+                    await checkpoint()
+                    continue
+                if len(page) != 1 or page[0].get("id") != pending_id:
+                    raise RuntimeError("Pending content refresh returned an unexpected record")
+            else:
+                page = await self._content_inventory_page(store, run.ctx, uri_scope, after_id)
+            if not page:
+                await checkpoint(complete=True)
+                return
+            if len(page) > 100:
+                raise RuntimeError("Content inventory exceeded requested page size")
+            previous_id = after_id
+            for record in page:
+                record_id, record_uri = record.get("id"), record.get("uri")
+                if (
+                    not isinstance(record_id, str)
+                    or not is_vector_record_id(record_id)
+                    or record_id != record_id.strip()
+                ):
+                    raise RuntimeError(
+                        "Content keyset requires canonical 32-character lowercase hex IDs"
+                    )
+                if record_id <= previous_id:
+                    raise RuntimeError("Content inventory is not strictly keyset ordered")
+                if record.get("account_id") != run.ctx.account_id:
+                    raise PermissionError("Content inventory returned another account")
+                if not isinstance(record_uri, str) or not (
+                    record_uri == root
+                    or (recursive and run.root_is_dir and record_uri.startswith(prefix))
+                ):
+                    raise PermissionError("Content inventory returned an out-of-scope URI")
+                previous_id = record_id
+            for record in page:
+                if await tracker.is_cancellation_requested(task_ctx.task_id, **owner):
+                    raise asyncio.CancelledError()
+                try:
+                    result = await backfill_content(
+                        store,
+                        [record["id"]],
+                        ctx=run.ctx,
+                        repair=run.force,
+                        snapshots=[record],
+                    )
+                    counters.content_updated_records += result["updated"]
+                    counters.content_skipped_records += 1 - result["updated"]
+                except Exception as exc:
+                    counters.failed_records += 1
+                    counters.warnings.append(f"Content backfill failed for {record['uri']}: {exc}")
+                    counters.warnings = counters.warnings[-100:]
+                    counters.content_error = {
+                        "record_id": record["id"],
+                        "uri": record["uri"],
+                        "type": type(exc).__name__,
+                        "message": str(exc)[:2000],
+                        "attempts": int((counters.content_error or {}).get("attempts", 0)) + 1,
+                    }
+                    await checkpoint()
+                    return
+                counters.scanned_records += 1
+                counters.content_error = None
+                pending_id = None
+                # Only settled success/intentional skip advances the durable cursor.
+                after_id = record["id"]
+                await checkpoint()
+
+    @staticmethod
+    async def _content_inventory_page(store, ctx, uri_scope, after_id):
+        filters = [Eq("account_id", ctx.account_id), uri_scope]
+        if after_id:
+            filters.append(Range("id", gt=after_id))
+        return await store.filter(
+            filter=And(filters),
+            limit=100,
+            offset=0,
+            order_by="id",
+            order_desc=False,
+            output_fields=[
+                "id",
+                "uri",
+                "level",
+                "context_type",
+                "abstract",
+                "content",
+                "account_id",
+                "owner_user_id",
+                "updated_at",
+                "md5",
+            ],
+            ctx=ctx,
+        )
 
     async def _reindex_resource(
         self,

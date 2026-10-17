@@ -40,6 +40,34 @@ def test_opengauss_index_type_defaults_and_variants():
     )
 
 
+@pytest.mark.parametrize("engine", ["disabled", "bm25"])
+def test_opengauss_fulltext_config_is_bm25_only(engine):
+    config = OpenGaussConfig(fulltext_engine=engine)
+    assert config.fulltext_engine == engine
+    assert OpenGaussConfig().fulltext_engine == "disabled"
+    assert "text_search_config" not in OpenGaussConfig.model_fields
+    assert "text_search_config" not in config.model_dump()
+
+
+@pytest.mark.parametrize("engine", ["fts", "auto", "gin"])
+def test_opengauss_config_rejects_removed_fulltext_engines(engine):
+    with pytest.raises(ValidationError, match="fulltext_engine"):
+        OpenGaussConfig(fulltext_engine=engine)
+
+
+def test_adapter_and_collection_reject_fts_mode_before_database_access():
+    with patch.object(OpenGaussCollectionAdapter, "_connect"):
+        adapter = OpenGaussCollectionAdapter("context", OpenGaussConfig())
+    collection = OpenGaussCollection.__new__(OpenGaussCollection)
+    collection._execute = Mock()
+    adapter.get_collection = Mock(return_value=collection)
+    with pytest.raises(ValueError, match="mode|bm25"):
+        adapter.search_by_keywords(query="retrieval", mode="fts")
+    with pytest.raises(ValueError, match="mode|bm25"):
+        collection.search_by_keywords("default", query="retrieval", mode="fts")
+    collection._execute.assert_not_called()
+
+
 def test_database_specific_ranges_are_deferred_but_types_are_checked():
     for kind, params in [
         ("hnsw", {"m": 32, "ef_construction": 40}),

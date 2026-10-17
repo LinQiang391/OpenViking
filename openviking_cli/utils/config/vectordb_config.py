@@ -239,6 +239,9 @@ class OpenGaussConfig(OpenGaussIndexConfig):
     )
     connection_pool_min_size: int = Field(default=1, ge=1, le=64)
     connection_pool_max_size: int = Field(default=8, ge=1, le=128)
+    fulltext_engine: Literal["disabled", "bm25"] = "disabled"
+    sparse_enabled: bool = False
+    candidate_limit: int = Field(default=1000, ge=1, le=10000)
 
     model_config = {"extra": "forbid"}
 
@@ -249,6 +252,8 @@ class OpenGaussConfig(OpenGaussIndexConfig):
     @model_validator(mode="after")
     def validate_opengauss(self):
         self.validate_capabilities(distributed=self.is_distributed)
+        if self.is_distributed and (self.fulltext_engine != "disabled" or self.sparse_enabled):
+            raise ValueError("openGauss fulltext/sparse require standalone mode until SPQ is certified")
         if self.connection_pool_min_size > self.connection_pool_max_size:
             raise ValueError(
                 "openGauss connection_pool_min_size cannot exceed connection_pool_max_size"
@@ -538,8 +543,8 @@ class VectorDBBackendConfig(BaseModel):
                 raise ValueError("VectorDB opengauss backend requires 'opengauss' config")
             if not self.opengauss.host:
                 raise ValueError("VectorDB opengauss backend requires 'opengauss.host' to be set")
-            if self.sparse_weight > 0.0:
-                raise ValueError("VectorDB opengauss backend does not support sparse_weight > 0")
+            if self.sparse_weight > 0.0 and not self.opengauss.sparse_enabled:
+                raise ValueError("openGauss sparse_weight > 0 requires sparse_enabled=True")
             distance = (self.distance_metric or "cosine").lower()
             if distance not in _OPENGAUSS_DISTANCE_METRICS:
                 raise ValueError(

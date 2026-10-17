@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from openviking.storage.expr import And, Eq, Or
+from openviking.storage.vectordb.collection.collection import Collection
 from openviking.storage.vectordb_adapters.opengauss.catalog import (
     _is_table_already_distributed,
     _load_collection_meta,
@@ -23,7 +24,10 @@ from openviking.storage.vectordb_adapters.opengauss.sql import (
     _validate_identifier,
     _validate_vector,
 )
-from openviking.storage.vectordb_adapters.opengauss_adapter import OpenGaussCollectionAdapter
+from openviking.storage.vectordb_adapters.opengauss_adapter import (
+    OpenGaussCollectionAdapter,
+    _save_collection_meta,
+)
 from openviking_cli.utils.config.vectordb_config import (
     OpenGaussConfig,
     VectorDBBackendConfig,
@@ -556,6 +560,7 @@ def test_select_projects_unstored_content_as_null():
     collection._distributed = False
     collection._distance = "cosine"
     collection._field_names = {"id", "uri", "vector", "content", "account_id"}
+    collection._get_all_columns = Mock(return_value=["id", "uri", "vector", "account_id"])
     sql = collection._select_output_columns(["id", "uri", "content", "vector", "account_id"])
     assert sql == '"id", "uri", NULL AS "content", "vector", "account_id"'
 
@@ -570,14 +575,32 @@ def test_collection_update_uses_canonical_description_key():
     collection._distance = "cosine"
     collection._name = "context"
     collection._meta = {"Description": "old"}
-    collection._execute = Mock()
+    collection._dim = 8
+    collection._lock = threading.RLock()
+    collection._conn = Mock()
+    cursor = collection._conn.cursor.return_value
+    cursor.rowcount = 1
+    stored = {"Description": "fresh", "_retrieval": {"generation": 7}}
+    cursor.fetchone.return_value = (json.dumps(stored),)
 
+    def execute(sql, params=None):
+        if sql.startswith("UPDATE"):
+            stored.clear()
+            stored.update(json.loads(params[0]))
+
+    cursor.execute.side_effect = execute
     collection.update(description="new")
 
     assert collection._meta["Description"] == "new"
     assert "description" not in collection._meta
-    persisted_meta = json.loads(collection._execute.call_args.args[1][0])
+    persisted_meta = json.loads(cursor.execute.call_args.args[1][0])
     assert persisted_meta["Description"] == "new"
+    assert stored == persisted_meta == collection._meta
+    assert persisted_meta["_retrieval"] == {"generation": 7}
+    assert "FOR UPDATE" in cursor.execute.call_args_list[0].args[0]
+    collection._conn.commit.assert_called_once_with()
+    collection._conn.rollback.assert_not_called()
+    cursor.close.assert_called_once_with()
 
 
 def test_row_to_dict_normalizes_psycopg_vector_payloads():
@@ -635,13 +658,27 @@ def test_reconnect_prefers_configured_distance_over_persisted_meta():
     adapter._collection = None
     adapter._conn = Mock()
     adapter._table_exists = Mock(return_value=True)
-    persisted = {"_dim": 8, "_distance": "cosine", "Fields": []}
+    loaded = {"_dim": 8, "_distance": "cosine", "Fields": []}
+    persisted = {**loaded, "_retrieval": {"generation": 7}}
+    cursor = adapter._conn.cursor.return_value
+    cursor.rowcount = 1
+    cursor.fetchone.return_value = (json.dumps(persisted),)
+
+    def execute(sql, params=None):
+        if sql.startswith("UPDATE"):
+            persisted.clear()
+            persisted.update(json.loads(params[0]))
+
+    cursor.execute.side_effect = execute
     og_coll = Mock()
 
     with (
         patch(
             "openviking.storage.vectordb_adapters.opengauss_adapter._load_collection_meta",
-            return_value=persisted,
+            return_value=loaded,
+        ),
+        patch(
+            "openviking.storage.vectordb_adapters.opengauss_adapter._ensure_meta_table",
         ),
         patch(
             "openviking.storage.vectordb_adapters.opengauss_adapter.OpenGaussCollection",
@@ -653,14 +690,24 @@ def test_reconnect_prefers_configured_distance_over_persisted_meta():
         ),
         patch(
             "openviking.storage.vectordb_adapters.opengauss_adapter._save_collection_meta",
+            wraps=_save_collection_meta,
         ) as save_meta,
         patch.object(adapter, "_ensure_vector_index_exists") as ensure_index,
     ):
         adapter._load_existing_collection_if_needed()
 
     assert persisted["_distance"] == "l2"
-    save_meta.assert_called_once()
+    save_meta.assert_called_once_with(
+        adapter._conn, "context", {"_distance": "l2"}, distributed=False
+    )
     assert collection_cls.call_args.args[4] == "l2"
+    assert collection_cls.call_args.args[2] == persisted
+    assert persisted["_retrieval"] == {"generation": 7}
+    assert loaded["_distance"] == "cosine"
+    assert "FOR UPDATE" in cursor.execute.call_args_list[0].args[0]
+    adapter._conn.commit.assert_called_once_with()
+    adapter._conn.rollback.assert_not_called()
+    cursor.close.assert_called_once_with()
     ensure_index.assert_called_once_with(og_coll, "l2")
 
 
@@ -917,6 +964,7 @@ def test_update_index_accepts_scalar_field_list_and_removes_stale_indexes():
     collection._conn = Mock()
     collection._ensure_index_meta_table = Mock()
     cursor = Mock()
+    cursor.fetchone.return_value = (json.dumps({}),)
     cursor.rowcount = 1
     cursor.fetchone.return_value = None
     collection._conn.cursor.return_value = cursor
@@ -947,6 +995,7 @@ def test_update_index_empty_scalar_list_clears_indexes():
     collection._conn = Mock()
     collection._ensure_index_meta_table = Mock()
     cursor = Mock()
+    cursor.fetchone.return_value = (json.dumps({}),)
     cursor.rowcount = 1
     cursor.fetchone.return_value = None
     collection._conn.cursor.return_value = cursor
@@ -1063,6 +1112,7 @@ def test_update_data_rejects_missing_records_and_requires_primary_key():
     collection._get_all_columns = Mock(return_value=["id", "uri"])
     collection._get_column_types = Mock(return_value={"id": "character varying", "uri": "text"})
     cursor = Mock()
+    cursor.fetchone.return_value = (json.dumps({}),)
     cursor.rowcount = 0
     collection._conn.cursor.return_value = cursor
     with pytest.raises(ValueError, match="record not found"):
@@ -1084,6 +1134,7 @@ def test_update_data_preserves_unspecified_fields():
         return_value={"id": "character varying", "uri": "text", "level": "bigint"}
     )
     cursor = Mock()
+    cursor.fetchone.return_value = (json.dumps({}),)
     cursor.rowcount = 1
     collection._conn.cursor.return_value = cursor
 
@@ -1328,22 +1379,34 @@ def test_pending_index_metadata_survives_reconnect():
 
 def test_filter_delete_executes_direct_sql_without_implicit_limit():
     adapter = _adapter_without_connect()
-    adapter._collection = Mock()
-    adapter._collection.get_meta_data.return_value = {
+    raw = OpenGaussCollection.__new__(OpenGaussCollection)
+    raw._name = "context"
+    raw._distributed = False
+    raw.get_meta_data = Mock(return_value={
         "Fields": [{"FieldName": "account_id", "FieldType": "string"}]
-    }
+    })
+    adapter._collection = Collection(raw)
     adapter._conn = Mock()
-    cursor = Mock()
+    cursor = adapter._conn.cursor.return_value
     cursor.rowcount = 100001
-    adapter._conn.cursor.return_value = cursor
+    deleted_rows = [(f"row-{index}",) for index in range(100001)]
+    cursor.fetchall.return_value = deleted_rows
+    cursor.fetchone.return_value = (False,)
 
     deleted_count = adapter.delete(filter=Eq("account_id", "acct-1"))
 
     assert deleted_count == 100001
-    delete_sql, delete_params = cursor.execute.call_args.args
+    delete_sql, delete_params = cursor.execute.call_args_list[0].args
     assert delete_sql.startswith('DELETE FROM "context" WHERE')
     assert "ORDER BY id LIMIT %s" in delete_sql
     assert delete_params == ["acct-1", None]
+    assert "RETURNING id" in delete_sql
+    cursor.fetchall.assert_called_once_with()
+    assert "information_schema.columns" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[1] == ("context",)
+    adapter._conn.commit.assert_called_once_with()
+    adapter._conn.rollback.assert_not_called()
+    cursor.close.assert_called_once_with()
 
 
 def test_save_index_meta_recovers_cross_process_unique_race():
@@ -1438,19 +1501,6 @@ def test_search_sql_uses_stable_id_tiebreaker():
     collection.search_by_vector("default", dense_vector=[1.0, 0.0])
     assert "ORDER BY _distance, id" in cursor.execute.call_args.args[0]
 
-    # Shared decay options pass through without changing openGauss scoring or pagination.
-    cursor.fetchall.return_value = [("event", [1.0, 0.0], 0.2)]
-    adapter = _adapter_without_connect()
-    adapter.get_collection = Mock(return_value=collection)
-    advance = {"time_decay": {"protection": "0", "origin": "2026-01-08T00:00:00Z"}}
-    with patch.object(collection, "search_by_vector", wraps=collection.search_by_vector) as search:
-        result = adapter.query(query_vector=[1.0, 0.0], limit=10, offset=2, advance=advance)
-    assert search.call_args.kwargs["advance"] is advance
-    sql, params = cursor.execute.call_args.args
-    assert "ORDER BY _distance, id" in sql
-    assert params[-2:] == [10, 2]
-    assert result == [{"id": "event", "vector": [1.0, 0.0], "_score": pytest.approx(0.8)}]
-
     cursor.description = [("id",), ("level",), ("_scalar_val",)]
     cursor.fetchall.return_value = []
     collection.search_by_scalar("default", field="level", order="desc")
@@ -1516,6 +1566,7 @@ def test_upsert_does_not_report_committed_rows_as_failed_when_index_build_fails(
     collection._lock = threading.RLock()
     collection._conn = Mock()
     cursor = Mock()
+    cursor.fetchone.return_value = (json.dumps({}),)
     cursor.rowcount = 0
     collection._conn.cursor.return_value = cursor
     collection._get_all_columns = Mock(return_value=["id", "vector"])
@@ -1543,6 +1594,7 @@ def test_upsert_recovers_concurrent_insert_unique_race():
     collection._lock = threading.RLock()
     collection._conn = Mock()
     cursor = Mock()
+    cursor.fetchone.return_value = (json.dumps({}),)
     unique_error = RuntimeError("duplicate key")
     unique_error.pgcode = "23505"
     rowcounts = iter([0, 1])
@@ -1565,6 +1617,8 @@ def test_upsert_recovers_concurrent_insert_unique_race():
 
     executed_sql = [call.args[0] for call in cursor.execute.call_args_list]
     assert executed_sql == [
+        'LOCK TABLE "context" IN ROW EXCLUSIVE MODE',
+        'SELECT meta_json FROM "_ov_collection_meta" WHERE table_name = %s FOR SHARE',
         'UPDATE "context" SET "vector" = %s::vector WHERE "id" = %s',
         "SAVEPOINT ov_upsert_insert",
         'INSERT INTO "context" ("id", "vector") VALUES (%s, %s::vector)',

@@ -486,6 +486,11 @@ class CollectionAdapter(ABC):
         order_desc: bool = False,
         advance: Optional[Dict[str, Any]] = None,
     ) -> list[Dict[str, Any]]:
+        if self.mode == "opengauss" and advance is not None:
+            if not isinstance(advance, dict):
+                raise ValueError("openGauss advance must be an object")
+            if not (query_vector or sparse_query_vector):
+                raise ValueError("openGauss advanced ranking requires a vector query")
         decay_request = (advance or {}).get("time_decay")
         if decay_request is not None and self.mode != "opengauss":
             from openviking.utils.time_decay import (

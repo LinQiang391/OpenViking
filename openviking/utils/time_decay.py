@@ -36,7 +36,10 @@ def parse_duration_ms(value: Any, *, parameter_name: str = "duration") -> int:
         )
     if value == "0":
         return 0
-    duration_ms = int(value[:-1]) * _DURATION_MULTIPLIERS_MS[value[-1]]
+    digits = value[:-1].lstrip("0") or "0"
+    if len(digits) > len(str(MAX_DURATION_MS)):
+        raise ValueError(f"{parameter_name} exceeds the maximum duration of 1095000d")
+    duration_ms = int(digits) * _DURATION_MULTIPLIERS_MS[value[-1]]
     if duration_ms > MAX_DURATION_MS:
         raise ValueError(f"{parameter_name} exceeds the maximum duration of 1095000d")
     return duration_ms
@@ -99,6 +102,16 @@ def build_time_decay_fusion_spec(
         scale_ms=parse_duration_ms(EVENT_TIME_DECAY_SCALE, parameter_name="time-decay scale"),
         decay=EVENT_TIME_DECAY_DECAY,
     )
+
+
+def time_decay_factor(value: Any, spec: TimeDecayFusionSpec) -> float:
+    """Evaluate the shared curve; missing or invalid record times preserve the score."""
+    try:
+        timestamp = _datetime_to_epoch_ms(value)
+    except (ValueError, TypeError, OverflowError):
+        return 1.0
+    elapsed = max(0.0, abs(spec.origin_ms - timestamp) - spec.offset_ms)
+    return math.exp(math.log(spec.decay) * elapsed / spec.scale_ms)
 
 
 def build_time_decay_post_process_ops(

@@ -1094,6 +1094,10 @@ async def test_embedding_handler_materialize_content_uses_preloaded_source(monke
             raise AssertionError(f"must not reread {uri}")
 
     monkeypatch.setattr("openviking.storage.viking_fs.get_viking_fs", lambda: _BrokenFS())
+    monkeypatch.setattr(
+        "openviking_cli.utils.config.get_openviking_config",
+        lambda: _DummyConfig(_DummyEmbedder()),
+    )
     handler = TextEmbeddingHandler(_DummyVikingDB())
     msg = EmbeddingMsg(
         "embedding text",

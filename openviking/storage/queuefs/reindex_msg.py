@@ -11,6 +11,8 @@ class ReindexMsg:
     task_id: str
     uri: str
     object_type: str
+    # content_only uses the same durable root; its cursor lives in the Task meta,
+    # not in this immutable request descriptor or a process-local inventory.
     mode: str
     account_id: str
     user_id: str
@@ -26,6 +28,7 @@ class ReindexMsg:
     telemetry_id: Optional[str] = None
     lock_handoff: Optional[Dict[str, Any]] = None
     lock_handoff_retry: int = 0
+    content_retry_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -40,6 +43,10 @@ class ReindexMsg:
             lock_handoff_retry = max(0, int(data.get("lock_handoff_retry", 0) or 0))
         except (TypeError, ValueError):
             lock_handoff_retry = 0
+        try:
+            content_retry_count = max(0, int(data.get("content_retry_count", 0) or 0))
+        except (TypeError, ValueError):
+            content_retry_count = 0
         return cls(
             task_id=str(data["task_id"]),
             _task_work_id=str(data.get("_task_work_id") or ""),
@@ -65,4 +72,5 @@ class ReindexMsg:
             if isinstance(data.get("lock_handoff"), dict)
             else None,
             lock_handoff_retry=lock_handoff_retry,
+            content_retry_count=content_retry_count,
         )

@@ -206,6 +206,7 @@ class _SemanticMixin:
         image_url: str | list[str] | None = None,
         events_time_decay_protection: Optional[str] = None,
         search_type: SearchType = "semantic",
+        request_now: Optional[datetime] = None,
     ):
         """Semantic search.
 
@@ -241,7 +242,9 @@ class _SemanticMixin:
                 events_time_decay_protection, parameter_name="events_time_decay_protection"
             )
         request_now = (
-            datetime.now(timezone.utc) if events_time_decay_protection is not None else None
+            (request_now or datetime.now(timezone.utc))
+            if events_time_decay_protection is not None
+            else None
         )
 
         telemetry = get_current_telemetry()
@@ -406,6 +409,7 @@ class _SemanticMixin:
         events_time_decay_protection: Optional[str] = None,
         search_type: SearchType = "semantic",
         context_types: Optional[List[ContextType]] = None,
+        request_now: Optional[datetime] = None,
     ):
         """Complex search with session context.
 
@@ -425,7 +429,9 @@ class _SemanticMixin:
                 events_time_decay_protection, parameter_name="events_time_decay_protection"
             )
         request_now = (
-            datetime.now(timezone.utc) if events_time_decay_protection is not None else None
+            (request_now or datetime.now(timezone.utc))
+            if events_time_decay_protection is not None
+            else None
         )
         telemetry = get_current_telemetry()
         from openviking.retrieve.hierarchical_retriever import HierarchicalRetriever

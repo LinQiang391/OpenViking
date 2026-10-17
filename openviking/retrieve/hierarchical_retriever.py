@@ -145,6 +145,12 @@ class HierarchicalRetriever:
         )
         decay_kwargs = {}
         if events_time_decay_protection is not None:
+            if search_type == "keywords":
+                backend = await self.vector_store.get_account_backend(ctx.account_id)
+                if backend._mode == "opengauss":
+                    raise InvalidArgumentError(
+                        "events_time_decay_protection is not supported when search_type='keywords'"
+                    )
             parse_duration_ms(
                 events_time_decay_protection, parameter_name="events_time_decay_protection"
             )

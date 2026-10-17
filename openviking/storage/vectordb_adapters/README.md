@@ -245,3 +245,47 @@ class ThirdPartyCollectionAdapter(CollectionAdapter):
 - create 后可完成 upsert/get/query/delete/count 全流程。
 - 不改上层业务调用方式即可参与 `find/search` 检索链路。
 - 后端差异全部封装在 adapter 层。
+
+## 10. openGauss 检索扩展与正文迁移
+
+本轮基于 `origin/main` 的 `6006fc3403b52f52ef8c01f128691b5a10a01e99` 适配，保留主线 `search_type="keywords"` 的 find/search/context 和 FindResult 协议，不新增独立的 records HTTP 协议。新能力默认关闭，原 Dense-only 配置不要求迁移。
+
+新增行为按当前账户实际解析的后端隔离：只有 openGauss 每次校验物理 BM25 就绪状态、限制关键词参数、物化完整可见正文并对预载正文取消提前截断。VikingDB/Volcengine 保留原全文缓存、关键词参数透传、正文来源/失败语义、预载长度和 grep 路由；memory 限定的事件衰减及关键词加衰减的显式拒绝也只用于 openGauss。`content_only` 在创建任务或入队前独立校验原子正文回填能力，不支持的后端立即拒绝；原 `vectors_only`、`semantic_and_vectors` 流程不增加该检查。
+
+### 显式启用
+
+`storage.vectordb.opengauss` 提供 `fulltext_engine`（仅 `disabled`、`bm25`）、`sparse_enabled`（默认 false）和 `candidate_limit`（默认 1000，最大 10000）。全文检索只使用原生 BM25；模型 Sparse 的融合权重仍使用现有 `sparse_weight`，不等于 Dense+BM25 融合。
+
+1. 在空闲连接调用只读 `probe_fulltext_capabilities()`，确认原生 BM25 能力；目录存在不代表实际索引计划或特定表存储已认证。探测不会安装扩展，不提供其他全文引擎降级。
+2. 通过适配器 `retrieval_collection()` 管理句柄显式执行 `configure_fulltext("bm25")` 和 `migrate_content_schema(allow_ddl=True)`。也可按配置使用 `prepare_retrieval(allow_ddl=True)`；它不自动回填正文或把全文索引标记为就绪。
+3. 使用现有 `/api/v1/content/reindex`，设置 `mode="content_only"` 回填正文。默认只填缺失正文；设置 `force=true` 才会按账户、URI、updated_at、原正文条件修复历史非 NULL 摘要。正文迁移不调用 Embedding/LLM、不新建记录、不执行隐式 DDL、不重写向量。
+4. 明确确认正文覆盖后，调用 `build_fulltext_index(allow_ddl=True)`。物理索引校验通过才发布 ready；重建使用 `rebuild_fulltext_index(allow_ddl=True)`。
+5. Sparse 需显式 `create_sparse_index(candidate_limit=..., sparse_weight=...)`，或使用上述配置管理入口。日常基表写删必须经过适配器，直接 SQL 不维护 postings 或覆盖状态。
+
+schema v2 使用内部 `_ov_content_empty` 标记区分合法空源与缺失正文，兼容 A 模式空字符串折叠为 NULL；内部标记不属于公共记录字段。升级 schema v1 必须重新执行显式迁移。全文 ready 时，适配器在同一写事务校验受影响记录，拒绝缺正文的新记录和清空为未知正文的更新，整批回滚；部分更新不修改正文时保留原值。源读取返回 None/非法类型或抛错不视为成功空源。在线正文与回填采用同一解析策略，Embedding 文本仍可独立使用摘要。记忆命名空间的正文在后端限长之前统一经过 `visible_content()`，去除末尾保留的 `MEMORY_FIELDS` 元数据尾注；预载 `_materialized_content` 也遵循同一规则，资源和技能的同形注释不删除。历史已索引隐藏尾注的非 NULL 正文不会被缺失回填自动修复，应在正确账户和 URI 范围显式执行 `mode="content_only", force=true`；这会通过 CAS 更新正文并由数据库维护现有全文索引，不改向量。
+
+### 恢复与查询边界
+
+- content-only 复用主线持久 QueueFS 根消息、Task、锁租约、身份及去重；`wait=true` 同样持久入队。检查点存于持久 Task 元数据并绑定账户、用户、URI、模式与解析版本；CAS 冲突和源错误不推进游标，重新投递刷新失败记录。正文失败最多自动重投三次，耗尽后任务失败并保留检查点，可修复源后重新提交安全扫描。提交正文后、检查点落盘前崩溃可能使计数少记一次，但重放不覆盖新版本或复活删除记录。
+- 持久正文扫描仅接受 OV 标准的 32 位小写十六进制记录 ID，其他 ID 明确拒绝，避免数据库排序规则与 Python 顺序不一致造成跳项；原始集合级回填仍使用 C-collation 检查点。并发新增的早于游标的记录由后续独立扫描覆盖，单次迁移不是全库静止快照。
+- BM25 保留原生单排序有序索引扫描，在单次 REPEATABLE READ 快照中扩展候选前缀，取得完整分页边界同分组后按分数、ID 截页。最多 100000 个候选，无法证明边界完整时明确报错，不返回不稳定页。不同分页请求不共享快照；原生 BM25 语料统计也不保证在并发写入时不变。
+- 公共 `keywords` 查询仅在 BM25 正文与物理索引就绪时执行。不支持的实例、旧引擎配置或非 BM25 索引明确拒绝，不隐式降级。旧配置应删除 `text_search_config`，将 `fulltext_engine` 改为 `bm25`；旧 FTS 索引须由管理员确认后显式处理，适配器不自动转换或删除它。
+- 模型 Sparse 使用数据库 posting 表与词项点积，不是 Sparse ANN。权重须有限且非负，最多 4096 个非零项、每词项最多 256 UTF-8 字节。Hybrid 两路分别过滤召回、补齐候选实际分数再融合，每路最多 candidate_limit，非全表 Python 扫描，但不保证全库精确融合 Top-K。
+- 事件衰减沿用主线固定 7 天半衰期和请求时钟，只针对 memory 且含 `memory_type=events` 的记录。接通主线 QUICK、THINKING 与 context 实际检索链，保留已有 rerank 语义；本主线已经没有旧式递归检索实现，不另造递归链。
+- 限量简单文本 grep 可优先验证全文候选，只有满足真实匹配数量才提前返回；不足、错误、复杂正则或投影等回退 FS。`candidate_complete=false` 不能作为任意 regex 无匹配的证明。
+- 新全文/Sparse/高级排序的 SPQ 路径明确拒绝；主备切换和生产性能 SLA 尚未认证。
+
+### 可复现验证
+
+本机实库用例仅允许专用容器 `ov-retrieval-acceptance-20261016` 的 `127.0.0.1:35436/postgres`，每次使用随机隔离 schema/集合，结束清理本次对象，不修改业务实例或全局配置。凭据从该容器内存读取，不出现在命令参数或代码中：
+
+- `.venv-opengauss-validation/bin/python tests/vectordb/test_opengauss_acceptance_helper.py tests/vectordb/test_opengauss_retrieval_database.py -q --no-cov -p no:cacheprovider`
+- 同一入口运行 `test_opengauss_content_reindex_database.py`、`test_opengauss_acceptance_text.py` 或 `test_opengauss_acceptance_scale.py`。
+- 覆盖 A/PG 空串与就绪不变量：设置 `OPENVIKING_CONTENT_COVERAGE_DOCKER=1` 运行 `test_opengauss_content_coverage.py`。
+- 稳定分页及原生执行计划：设置 `OPENVIKING_OPENGAUSS_PAGINATION_CONTAINER=1` 运行 `test_opengauss_fulltext_pagination.py`。
+
+验收区分结果正确、原生 BM25 索引路径可执行、代表性数据下优化器实际选择。缺少 DSN 的 skip、不支持的 RaBitQ，以及测试收集环境问题不能算通过。中文测试使用实际 BM25 索引与原生查询结果对照，不认证已经移除的其他全文引擎或 parser。
+
+代表性规模测试使用 10000 行、8 维、七条路线（BM25、Dense、三种 Sparse 分布、Hybrid、Hybrid+衰减），每路 30 次串行及并发 4 的 32 次查询。断言选择性 BM25 查询使用索引、候选与独立基准一致、隔离对象清理无残留；Hybrid 精确对照仅限候选预算可覆盖的受控子集，不代表全库精确 Top-K，也不是生产 SLA。历史双引擎测试数字不能作为 BM25 单引擎版本的通过证明；真实 HTTP 服务也必须以 BM25 配置重新执行。全量测试及生产高可用尚未宣称通过。
+
+关闭新增全文查询可用 `configure_fulltext("disabled")`；保留正文、原 Dense 索引和业务记录。重新放量前验证覆盖、错误率、FS 回退原因、候选量及代表性执行计划；主备/SPQ 需要单独的隔离认证环境。

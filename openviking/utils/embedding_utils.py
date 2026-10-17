@@ -623,7 +623,8 @@ async def vectorize_file(
         resolver = getattr(viking_fs, "_vector_config_resolver", None)
         if resolver is None:
             raise RuntimeError("Vectorization requires a vector config resolver")
-        embedding_cfg = (await resolver.resolve(ctx.account_id)).embedding
+        vector_settings = await resolver.resolve(ctx.account_id)
+        embedding_cfg = vector_settings.embedding
         configured_text_source = embedding_cfg.text_source
         effective_text_source = TEXT_SOURCE_SUMMARY_FIRST if use_summary else configured_text_source
         embed_summary = bool(summary and effective_text_source in SUMMARY_TEXT_SOURCES)
@@ -733,13 +734,14 @@ async def vectorize_file(
                 or (content_type is None and is_text_file(file_name))
             )
         ):
-            from openviking.storage.viking_vector_index_backend import (
-                VIKINGDB_CONTENT_MAX_SIZE,
-            )
+            from openviking.storage.viking_vector_index_backend import VIKINGDB_CONTENT_MAX_SIZE
 
-            embedding_msg.context_data["_materialized_content"] = _coerce_text_file_content(
-                file_content
-            )[:VIKINGDB_CONTENT_MAX_SIZE]
+            # Source length is account configuration, not schema readiness at enqueue time.
+            full_source = vector_settings.vectordb.backend == "opengauss"
+            content = _coerce_text_file_content(file_content)
+            embedding_msg.context_data["_materialized_content"] = (
+                content if full_source else content[:VIKINGDB_CONTENT_MAX_SIZE]
+            )
         _apply_planned_field_patch(embedding_msg, field_patch)
         enqueued = await _enqueue_embedding_message(
             embedding_queue,

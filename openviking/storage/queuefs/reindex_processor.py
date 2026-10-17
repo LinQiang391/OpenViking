@@ -9,6 +9,7 @@ import json
 from typing import Any, Dict, Optional
 
 from openviking.server.identity import RequestContext, Role
+from openviking.service.task_domain import TaskPatch
 from openviking.service.task_tracker import TaskStatus, get_task_tracker
 from openviking.service.task_work_index import bind_task_context_from_message, extract_task_metadata
 from openviking.storage.pathlock_transfer import PathLockGuard
@@ -156,6 +157,28 @@ class ReindexProcessor(DequeueHandlerBase):
                     ctx=ctx,
                     existing_lease=executor_lease,
                 )
+            if msg.mode == "content_only" and result.get("status") == "retry_pending":
+                if msg.content_retry_count >= 3:
+                    await tracker.fail(
+                        msg.task_id,
+                        "Content backfill retry limit reached; checkpoint retained: "
+                        + str(result.get("content_error", {})),
+                        account_id=ctx.account_id, user_id=ctx.user.user_id,
+                    )
+                    return ProcessResult.failed("Content backfill retry limit reached")
+                from openviking.storage.queuefs import get_queue_manager
+
+                # Retain the same logical Work. ACK is permitted only after a
+                # replacement delivery exists; enqueue failure leaves this one
+                # unacknowledged for QueueFS recovery instead of failing the Task.
+                await asyncio.sleep(min(2 ** min(msg.content_retry_count, 5), 30))
+                replacement = msg.to_dict()
+                replacement["content_retry_count"] = msg.content_retry_count + 1
+                replacement["lock_handoff"] = None
+                replacement["lock_handoff_retry"] = 0
+                queue_manager = get_queue_manager()
+                await queue_manager.enqueue(queue_manager.REINDEX, replacement)
+                return ProcessResult.requeued()
             metadata = extract_task_metadata(data)
             await tracker.wait_for_task_work(
                 msg.task_id,
@@ -166,6 +189,19 @@ class ReindexProcessor(DequeueHandlerBase):
             )
             return ProcessResult.success()
         except Exception as exc:
+            if msg.mode == "content_only":
+                # Includes refresh/checkpoint/enqueue errors: do not ACK or seal
+                # a recoverable checkpoint behind a terminal FAILED Task.
+                await tracker.patch_task(
+                    msg.task_id,
+                    TaskPatch(
+                        stage="content_only_retry",
+                        meta={"content_only_delivery_error": str(exc)[:2000]},
+                    ),
+                    account_id=ctx.account_id,
+                    user_id=ctx.user.user_id,
+                )
+                raise
             await tracker.fail(
                 msg.task_id,
                 str(exc),

@@ -27,6 +27,13 @@ def _pkg():
 class _GrepMixin:
     """Grep and search-backend methods."""
 
+    @staticmethod
+    async def _get_backend_mode(vector_store, ctx) -> str:
+        account_id = getattr(ctx, "account_id", None) if ctx is not None else None
+        if account_id and hasattr(vector_store, "get_account_backend"):
+            return (await vector_store.get_account_backend(account_id))._mode
+        return getattr(vector_store, "_backend_type", getattr(vector_store, "_mode", "unknown"))
+
     async def grep(
         self,
         uri: str,
@@ -81,13 +88,17 @@ class _GrepMixin:
             self.grep_config.switch_to_remote_threshold if self.grep_config else 10000
         )
 
-        # A projection must run before matching. The remote BM25 index contains
-        # persisted raw content, so it cannot safely recall projected results.
+        # Projected content and session files are not safely recalled by the raw index.
+        force_fs = force_fs or content_transform is not None or is_session_uri(uri)
+        decision: Dict[str, Any] = {}
         resolved_engine = (
             "fs"
-            if force_fs or content_transform is not None or is_session_uri(uri)
-            else await self._resolve_grep_engine(engine, uri, ctx, switch_to_remote_threshold)
+            if force_fs
+            else await self._resolve_grep_engine(
+                engine, uri, ctx, switch_to_remote_threshold, pattern=pattern, decision=decision
+            )
         )
+        is_opengauss = decision.get("backend_mode") == "opengauss"
         tags_by_uri: Dict[str, List[str]] = {}
         if tag_filter is not None and resolved_engine == "fs":
             vector_store = self._get_vector_store()
@@ -114,6 +125,33 @@ class _GrepMixin:
             }
 
         try:
+            if (
+                resolved_engine == "fs"
+                and is_opengauss
+                and engine == "auto"
+                and content_transform is None
+                and not is_session_uri(uri)
+                and tag_filter is None
+                and not include_tags
+                and allowed_uris is None
+                and node_limit is not None
+                and node_limit > 0
+            ):
+                prioritized = await self._grep_keyword_priority(
+                    uri,
+                    pattern,
+                    exclude_uri,
+                    case_insensitive,
+                    node_limit,
+                    level_limit,
+                    ctx,
+                    switch_to_remote_threshold,
+                    before_context,
+                    after_context,
+                    backend_mode=decision["backend_mode"],
+                )
+                if prioritized is not None:
+                    return prioritized
             if resolved_engine == "fs":
                 result = await self._grep_fs(
                     uri=uri,
@@ -147,30 +185,128 @@ class _GrepMixin:
             raise InvalidArgumentError(f"Invalid grep pattern: {exc}") from exc
         return self._attach_grep_tags(result, tags_by_uri)
 
+    async def _grep_keyword_priority(
+        self,
+        uri,
+        pattern,
+        exclude_uri,
+        case_insensitive,
+        node_limit,
+        level_limit,
+        ctx,
+        threshold,
+        before_context=0,
+        after_context=0,
+        *,
+        backend_mode: Optional[str] = None,
+    ):
+        """Treat incomplete lexical recall only as a satisfied-limit fast path."""
+        if (
+            not node_limit
+            or node_limit < 0
+            or not pattern.strip()
+            or not all(char.isalnum() or char.isspace() for char in pattern)
+            or is_session_uri(uri)
+        ):
+            return None
+        store = self._get_vector_store()
+        if store is None:
+            return None
+        if backend_mode is None:
+            backend_mode = await self._get_backend_mode(store, ctx)
+        if backend_mode != "opengauss":
+            return None
+        excluded_prefix = exclude_uri.rstrip("/") if exclude_uri else None
+        if excluded_prefix:
+            await self._ensure_access(excluded_prefix, ctx)
+        try:
+            info = await store.get_keyword_search_info(ctx=ctx)
+            if info.get("ready") is not True or info.get("candidate_complete") is not False:
+                return None
+            if threshold and await self._get_cached_count(uri, ctx) < threshold:
+                return None
+            candidates = await store.search_by_keywords(
+                query=pattern,
+                mode=info["engine"],
+                fields=["content"],
+                filter=PathScope("uri", uri, depth=level_limit),
+                limit=min(node_limit * 5, 1000),
+                output_fields=["uri"],
+                ctx=ctx,
+            )
+            root = uri.rstrip("/")
+            candidate_uris = list(
+                dict.fromkeys(
+                    record["uri"]
+                    for record in candidates
+                    if record.get("uri")
+                    and (record["uri"] == root or record["uri"].startswith(root + "/"))
+                    and not (
+                        excluded_prefix
+                        and (
+                            record["uri"] == excluded_prefix
+                            or record["uri"].startswith(excluded_prefix + "/")
+                        )
+                    )
+                )
+            )
+            if not candidate_uris:
+                return None
+            result = await self._grep_in_files(
+                candidate_uris,
+                pattern,
+                case_insensitive,
+                node_limit,
+                ctx,
+                before_context,
+                after_context,
+            )
+            if result["count"] >= node_limit:
+                return result
+        except Exception:
+            logger.debug("grep keyword priority failed; falling back to complete fs", exc_info=True)
+        return None
+
     async def _resolve_grep_engine(
-        self, engine: GrepEngine, uri: str, ctx, switch_to_remote_threshold: int = 10000
+        self,
+        engine: GrepEngine,
+        uri: str,
+        ctx,
+        switch_to_remote_threshold: int = 10000,
+        *,
+        pattern: Optional[str] = None,
+        decision: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Resolve the actual grep engine to use."""
+        """Resolve the engine, optionally exposing request-local backend selection."""
         if engine == "fs":
             return "fs"
 
-        # auto mode: check vikingdb availability
         vector_store = self._get_vector_store()
         if not vector_store:
             return "fs"
 
-        account_id = getattr(ctx, "account_id", None) if ctx is not None else None
-        if account_id and hasattr(vector_store, "get_account_backend"):
-            backend_type = (await vector_store.get_account_backend(account_id))._mode
-        else:
-            backend_type = getattr(vector_store, "_backend_type", "unknown")
-        # Keep this set consistent with ``CollectionAdapter.USE_CONTENT_FIELD``:
-        # only these backends store the ``content`` field required for full-text grep.
-        if backend_type not in ("volcengine", "vikingdb"):
+        backend_mode = await self._get_backend_mode(vector_store, ctx)
+        if decision is not None:
+            decision["backend_mode"] = backend_mode
+        if backend_mode == "opengauss":
+            if pattern is not None and (
+                not pattern.strip()
+                or not all(char.isalnum() or char.isspace() for char in pattern)
+            ):
+                return "fs"
+            try:
+                # openGauss readiness reflects the physical index, not cached metadata.
+                info = await vector_store.get_keyword_search_info(ctx=ctx)
+                if info.get("ready") is not True or info.get("candidate_complete") is not True:
+                    return "fs"
+            except Exception:
+                logger.debug(
+                    "grep keyword capability check failed; falling back to fs", exc_info=True
+                )
+                return "fs"
+        elif backend_mode not in ("volcengine", "vikingdb"):
             return "fs"
-
-        # Check collection has content field and FullText config
-        if not await self._collection_has_fulltext(vector_store, ctx):
+        elif not await self._collection_has_fulltext(vector_store, ctx):
             return "fs"
 
         # switch_to_remote_threshold=0 means always use vikingdb
@@ -212,6 +348,14 @@ class _GrepMixin:
         )
         if supported_modes is not None and getattr(backend, "_mode", None) not in supported_modes:
             return False
+        if getattr(backend, "_mode", None) == "opengauss":
+            try:
+                return (await vector_store.get_keyword_search_info(ctx=ctx)).get("ready") is True
+            except Exception:
+                if raise_on_error:
+                    raise
+                logger.debug("Failed to check keyword readiness", exc_info=True)
+                return False
         cached = self._fulltext_available.get(cache_key)
         if cached is not None:
             supported, expires_at = cached
