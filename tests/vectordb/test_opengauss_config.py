@@ -19,6 +19,7 @@ from openviking.storage.vectordb_adapters.opengauss.sql import (
     _resolve_build_params,
 )
 from openviking.storage.vectordb_adapters.opengauss_adapter import OpenGaussCollectionAdapter
+from openviking_cli.exceptions import UnimplementedError
 from openviking_cli.utils.config.vectordb_config import (
     OpenGaussConfig,
     VectorDBBackendConfig,
@@ -38,6 +39,25 @@ def test_opengauss_index_type_defaults_and_variants():
         ).index_type
         == "diskann"
     )
+
+
+@pytest.mark.parametrize("field", ["fulltext_engine", "sparse_enabled", "text_search_config"])
+def test_retrieval_is_declared_by_schema_not_connection_config(field):
+    assert field not in OpenGaussConfig.model_fields
+    assert field not in OpenGaussConfig().model_dump()
+
+
+def test_adapter_and_collection_reject_fts_mode_before_database_access():
+    with patch.object(OpenGaussCollectionAdapter, "_connect"):
+        adapter = OpenGaussCollectionAdapter("context", OpenGaussConfig())
+    collection = OpenGaussCollection.__new__(OpenGaussCollection)
+    collection._execute = Mock()
+    adapter.get_collection = Mock(return_value=collection)
+    with pytest.raises(ValueError, match="mode|bm25"):
+        adapter.search_by_keywords(query="retrieval", mode="fts")
+    with pytest.raises(ValueError, match="mode|bm25"):
+        collection.search_by_keywords("default", query="retrieval", mode="fts")
+    collection._execute.assert_not_called()
 
 
 def test_database_specific_ranges_are_deferred_but_types_are_checked():
@@ -461,18 +481,17 @@ def test_from_config_ignores_unvalidated_custom_params():
     assert adapter._search_params.get("ef_search") == 40
 
 
-def test_opengauss_rejects_sparse_weight_configuration():
-    with pytest.raises(ValidationError, match="sparse_weight"):
-        VectorDBBackendConfig(backend="opengauss", sparse_weight=0.5)
+def test_opengauss_accepts_sparse_weight_for_standard_index_declaration():
+    assert VectorDBBackendConfig(backend="opengauss", sparse_weight=0.5).sparse_weight == 0.5
 
 
 def test_opengauss_collection_rejects_unsupported_search_modes():
     collection = OpenGaussCollection.__new__(OpenGaussCollection)
     collection._distributed = False
     collection._distance = "cosine"
-    with pytest.raises(NotImplementedError, match="keyword"):
-        collection.search_by_keywords("default", query="hello")
-    with pytest.raises(NotImplementedError, match="multimodal"):
+    with pytest.raises(ValueError, match="mode|bm25"):
+        collection.search_by_keywords("default", query="hello", mode="fts")
+    with pytest.raises(UnimplementedError, match="multimodal"):
         collection.search_by_multimodal("default", text="hello", image=None, video=None)
 
 
