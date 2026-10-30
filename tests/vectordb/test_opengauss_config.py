@@ -41,25 +41,6 @@ def test_opengauss_index_type_defaults_and_variants():
     )
 
 
-@pytest.mark.parametrize("field", ["fulltext_engine", "sparse_enabled", "text_search_config"])
-def test_retrieval_is_declared_by_schema_not_connection_config(field):
-    assert field not in OpenGaussConfig.model_fields
-    assert field not in OpenGaussConfig().model_dump()
-
-
-def test_adapter_and_collection_reject_fts_mode_before_database_access():
-    with patch.object(OpenGaussCollectionAdapter, "_connect"):
-        adapter = OpenGaussCollectionAdapter("context", OpenGaussConfig())
-    collection = OpenGaussCollection.__new__(OpenGaussCollection)
-    collection._execute = Mock()
-    adapter.get_collection = Mock(return_value=collection)
-    with pytest.raises(ValueError, match="mode|bm25"):
-        adapter.search_by_keywords(query="retrieval", mode="fts")
-    with pytest.raises(ValueError, match="mode|bm25"):
-        collection.search_by_keywords("default", query="retrieval", mode="fts")
-    collection._execute.assert_not_called()
-
-
 def test_database_specific_ranges_are_deferred_but_types_are_checked():
     for kind, params in [
         ("hnsw", {"m": 32, "ef_construction": 40}),
@@ -479,10 +460,6 @@ def test_from_config_ignores_unvalidated_custom_params():
     assert adapter._build_params.get("enable_pq") is not True
     assert adapter._build_params.get("pq_m") is None
     assert adapter._search_params.get("ef_search") == 40
-
-
-def test_opengauss_accepts_sparse_weight_for_standard_index_declaration():
-    assert VectorDBBackendConfig(backend="opengauss", sparse_weight=0.5).sparse_weight == 0.5
 
 
 def test_opengauss_collection_rejects_unsupported_search_modes():

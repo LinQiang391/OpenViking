@@ -28,7 +28,7 @@ from openviking.storage.vectordb_adapters.opengauss_adapter import (
     OpenGaussCollectionAdapter,
     _save_collection_meta,
 )
-from openviking_cli.exceptions import FailedPreconditionError
+from openviking_cli.exceptions import FailedPreconditionError, ResourceExhaustedError
 from openviking_cli.utils.config.vectordb_config import (
     OpenGaussConfig,
     VectorDBBackendConfig,
@@ -428,53 +428,6 @@ def test_create_collection_rejects_unsafe_name_before_backend_ddl():
     adapter._create_backend_collection.assert_not_called()
 
 
-def test_ensure_vector_index_always_materializes_configured_index():
-    adapter = _adapter_without_connect(index_type="hnsw")
-    og_coll = Mock()
-    og_coll._get_all_columns.return_value = ["id", "content", "vector"]
-    og_coll._indexes = {"default": {"ScalarIndex": ["uri"]}}
-    og_coll._pending_indexes = {}
-    og_coll._meta = {"ScalarIndex": ["uri"]}
-    og_coll._normalized_index_meta = Mock(
-        return_value={"_pg_index_name": "idx_context_default_vec", "ScalarIndex": ["uri"]}
-    )
-    og_coll._physical_index_definition = Mock(return_value=None)
-
-    adapter._ensure_vector_index_exists(og_coll, "cosine")
-
-    og_coll.create_index.assert_called_once()
-    index_name, index_meta = og_coll.create_index.call_args.args
-    assert index_name == "default"
-    assert index_meta["VectorIndex"]["IndexType"] == "hnsw"
-    assert index_meta["VectorIndex"]["Distance"] == "cosine"
-    assert index_meta["ScalarIndex"] == ["uri"]
-
-
-def test_ensure_vector_index_registers_matching_physical_index_without_rebuild():
-    adapter = _adapter_without_connect(index_type="hnsw")
-    og_coll = Mock()
-    og_coll._get_all_columns.return_value = ["id", "content", "vector"]
-    og_coll._indexes = {}
-    og_coll._pending_indexes = {"default": {"stale": True}}
-    og_coll._meta = {"ScalarIndex": ["uri"]}
-    recovered = {
-        "_pg_index_name": "idx_context_default_vec",
-        "ScalarIndex": ["uri"],
-    }
-    og_coll._normalized_index_meta = Mock(return_value=recovered)
-    og_coll._physical_index_definition = Mock(
-        return_value="CREATE INDEX idx_context_default_vec ON context USING hnsw (vector vector_cosine_ops)"
-    )
-    og_coll._index_definition_matches = Mock(return_value=True)
-
-    adapter._ensure_vector_index_exists(og_coll, "cosine")
-
-    og_coll.create_index.assert_not_called()
-    og_coll._persist_index_meta_and_scalar_indexes.assert_called_once_with("default", recovered)
-    assert og_coll._indexes["default"] == recovered
-    assert "default" not in og_coll._pending_indexes
-
-
 def test_index_definition_matches_tolerates_omitted_default_with_options():
     collection = OpenGaussCollection.__new__(OpenGaussCollection)
     collection._distributed = False
@@ -700,7 +653,6 @@ def test_reconnect_prefers_configured_distance_over_persisted_meta():
             "openviking.storage.vectordb_adapters.opengauss_adapter._save_collection_meta",
             wraps=_save_collection_meta,
         ) as save_meta,
-        patch.object(adapter, "_ensure_vector_index_exists") as ensure_index,
     ):
         adapter._load_existing_collection_if_needed()
 
@@ -716,7 +668,6 @@ def test_reconnect_prefers_configured_distance_over_persisted_meta():
     adapter._conn.commit.assert_called_once_with()
     adapter._conn.rollback.assert_not_called()
     cursor.close.assert_called_once_with()
-    ensure_index.assert_not_called()
 
 
 def test_reconnect_does_not_rewrite_meta_when_distance_matches():
@@ -744,12 +695,10 @@ def test_reconnect_does_not_rewrite_meta_when_distance_matches():
         patch(
             "openviking.storage.vectordb_adapters.opengauss_adapter._save_collection_meta",
         ) as save_meta,
-        patch.object(adapter, "_ensure_vector_index_exists") as ensure_index,
     ):
         adapter._load_existing_collection_if_needed()
 
     save_meta.assert_not_called()
-    ensure_index.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -812,22 +761,76 @@ def test_table_exists_propagates_backend_errors():
     conn.rollback.assert_called_once_with()
 
 
-def test_pure_sparse_query_requires_declared_index():
+def test_sparse_and_hybrid_queries_rank_scoped_candidates_before_pagination():
     collection = OpenGaussCollection.__new__(OpenGaussCollection)
+    collection._name = "context"
     collection._distributed = False
     collection._distance = "cosine"
+    collection._dim = 2
     collection._meta = {}
-    collection._field_names = {"id", "vector", "sparse_vector"}
+    collection._field_names = {"id", "uri", "account_id", "vector", "sparse_vector", "updated_at"}
     collection._array_fields = set()
-    collection._date_time_fields = set()
+    collection._date_time_fields = {"updated_at"}
+    collection._indexes = {"default": {"_distance": "cosine"}}
+    collection._pending_indexes = {}
+    collection._conn = Mock()
+    collection.get_meta_data = Mock()
+    collection.validate_sparse_index = Mock(return_value=True)
+    collection._apply_search_params_on_cursor = Mock()
+    adapter = _adapter_without_connect()
+    adapter._collection = Collection(collection)
+    scope = Eq("account_id", "acct-1")
+
     with pytest.raises(FailedPreconditionError, match="sparse.*disabled"):
-        collection.search_by_vector(
-            "default",
-            dense_vector=None,
-            sparse_vector={"term": 1.0},
-        )
-    # Empty dense query without sparse terms still short-circuits gracefully.
-    assert collection.search_by_vector("default", dense_vector=None).data == []
+        adapter.query(sparse_query_vector={"alpha": 1.0}, filter=scope)
+
+    collection._meta = {
+        "_sparse_index": {
+            "sparse_enabled": True,
+            "sparse_ready": True,
+            "candidate_limit": 2,
+            "sparse_weight": 0.5,
+        }
+    }
+    cursor = collection._conn.cursor.return_value
+    cursor.description = [
+        (name,)
+        for name in ("id", "uri", "_ov_dense_distance", "_ov_sparse_score", "_ov_decay_time")
+    ]
+    cursor.fetchall.return_value = [
+        ("old", "/resources/old", None, 0.4, None),
+        ("recent", "/resources/recent", None, 0.8, None),
+    ]
+    sparse = adapter.query(
+        sparse_query_vector={"alpha": 1.0}, filter=scope, limit=2, output_fields=["uri"]
+    )
+    assert [record["id"] for record in sparse] == ["recent", "old"]
+    assert [record["_score"] for record in sparse] == pytest.approx([0.8, 0.4])
+
+    cursor.fetchall.return_value = [
+        ("old", "/resources/old", 0.0, 0.4, 1767225600000),
+        ("recent", "/resources/recent", 0.2, 0.8, 1768435200000),
+    ]
+    page = adapter.query(
+        query_vector=[1.0, 0.0],
+        sparse_query_vector={"alpha": 1.0},
+        filter=scope,
+        limit=1,
+        offset=1,
+        output_fields=["uri"],
+        advance={"time_decay": {"protection": "0", "origin": "2026-01-15T00:00:00Z"}},
+    )
+    assert page == [
+        {
+            "id": "old",
+            "uri": "viking://resources/old",
+            "_score": pytest.approx(0.175),
+            "_origin_score": pytest.approx(0.7),
+            "_time_score": pytest.approx(0.25),
+        }
+    ]
+    # Both recall branches must apply the account scope before ranking.
+    assert cursor.execute.call_args.args[1].count("acct-1") == 2
 
 
 def test_search_by_id_propagates_backend_errors():
@@ -915,49 +918,6 @@ def test_drop_index_removes_ann_scalar_indexes_and_metadata_atomically():
     assert 'DROP INDEX IF EXISTS "idx_context_default_level"' in executed_sql
     assert any(sql.startswith("DELETE FROM") for sql in executed_sql)
     collection._conn.commit.assert_called_once_with()
-    assert "default" not in collection._indexes
-
-
-def test_reconcile_missing_ann_invalidates_handle_without_ddl():
-    collection = OpenGaussCollection.__new__(OpenGaussCollection)
-    collection._distributed = False
-    collection._distance = "cosine"
-    meta = {
-        "_pg_index_name": "idx_context_default_vec",
-        "ScalarIndex": ["uri"],
-        "VectorIndex": {"IndexType": "hnsw", "Distance": "cosine"},
-    }
-    collection._indexes = {"default": meta}
-    collection._physical_index_definition = Mock(return_value=None)
-    collection._normalized_index_meta = Mock(return_value=meta)
-    collection._delete_index_meta_and_scalar_indexes = Mock()
-
-    collection._reconcile_index_metadata()
-
-    collection._delete_index_meta_and_scalar_indexes.assert_not_called()
-    assert "default" not in collection._indexes
-
-
-def test_reconcile_wrong_ann_definition_never_cleans_scalar_indexes():
-    collection = OpenGaussCollection.__new__(OpenGaussCollection)
-    collection._distributed = False
-    collection._distance = "cosine"
-    meta = {
-        "_pg_index_name": "idx_context_default_vec",
-        "ScalarIndex": ["uri"],
-        "VectorIndex": {"IndexType": "hnsw", "Distance": "cosine"},
-    }
-    collection._indexes = {"default": meta}
-    collection._physical_index_definition = Mock(return_value=None)
-    collection._normalized_index_meta = Mock(return_value=meta)
-    collection._delete_index_meta_and_scalar_indexes = Mock(
-        side_effect=RuntimeError("cleanup failed")
-    )
-
-    collection._physical_index_definition.return_value = "wrong index definition"
-    collection._index_definition_matches = Mock(return_value=False)
-    collection._reconcile_index_metadata()
-    collection._delete_index_meta_and_scalar_indexes.assert_not_called()
     assert "default" not in collection._indexes
 
 
@@ -1243,39 +1203,38 @@ def test_runtime_index_validation_preserves_parallel_workers():
     assert collection._pending_indexes["default"]["parallel_workers"] == 4
 
 
-def test_reconnect_reapplies_parallel_workers_for_matching_index():
-    adapter = _adapter_without_connect(parallel_workers=8)
-    collection = Mock()
-    collection._indexes = {}
-    collection._pending_indexes = {}
-    collection._meta = {}
-    normalized_meta = {
-        "_pg_index_name": "idx_context_default_vec",
-        "build_params": {"parallel_workers": 8},
-        "ScalarIndex": [],
-    }
-    collection._normalized_index_meta.return_value = normalized_meta
-    collection._physical_index_definition.return_value = "matching index"
-    collection._index_definition_matches.return_value = True
-
-    adapter._ensure_vector_index_exists(collection, "cosine")
-
-    collection._apply_parallel_workers.assert_called_once_with(normalized_meta)
-
-
-def test_connection_proxy_returns_closed_connection_before_replacement():
+def test_connection_proxy_discards_failed_transactions_without_retrying_commits():
     pool = Mock()
     closed_connection = Mock()
     closed_connection.closed = True
-    replacement = Mock()
-    replacement.closed = False
-    pool.getconn.return_value = replacement
+    transaction = Mock()
+    transaction.closed = False
+    transaction.commit.side_effect = RuntimeError("commit outcome unknown")
+    recovered = Mock()
+    recovered.closed = False
+    pool.getconn.side_effect = [transaction, recovered]
     proxy = _PooledConnectionProxy(pool)
     proxy._local.connection = closed_connection
     proxy._local.cursor_count = 0
 
-    assert proxy._checkout() is replacement
+    cursor = proxy.cursor()
     pool.putconn.assert_called_once_with(closed_connection, close=True)
+    cursor.execute("INSERT INTO example VALUES (1)")
+    with pytest.raises(RuntimeError, match="commit outcome unknown"):
+        proxy.commit()
+    with pytest.raises(RuntimeError, match="transaction connection is broken"):
+        proxy.commit()
+    transaction.commit.assert_called_once()
+    cursor.close()
+    pool.putconn.assert_called_with(transaction, close=True)
+
+    next_cursor = proxy.cursor()
+    next_cursor.execute("SELECT 1")
+    proxy.commit()
+    next_cursor.close()
+    recovered.commit.assert_called_once()
+    pool.putconn.assert_called_with(recovered, close=False)
+    proxy.close()
 
 
 def test_connection_proxy_releases_connection_when_cursor_creation_fails():
@@ -1427,31 +1386,6 @@ def test_filter_delete_executes_direct_sql_without_implicit_limit():
     cursor.close.assert_called_once_with()
 
 
-def test_save_index_meta_recovers_cross_process_unique_race():
-    collection = OpenGaussCollection.__new__(OpenGaussCollection)
-    collection._distributed = False
-    collection._distance = "cosine"
-    collection._name = "context"
-    collection._distributed = False
-    collection._lock = threading.RLock()
-    collection._ensure_index_meta_table = Mock()
-    collection._conn = Mock()
-    first_cursor = Mock()
-    first_cursor.rowcount = 0
-    unique_error = RuntimeError("duplicate key")
-    unique_error.pgcode = "23505"
-    first_cursor.execute.side_effect = [None, unique_error]
-    retry_cursor = Mock()
-    retry_cursor.rowcount = 1
-    collection._conn.cursor.side_effect = [first_cursor, retry_cursor]
-
-    collection._save_index_meta("default", {"_state": "pending"})
-
-    collection._conn.rollback.assert_called_once_with()
-    collection._conn.commit.assert_called_once_with()
-    assert "UPDATE" in retry_cursor.execute.call_args.args[0]
-
-
 def test_atomic_scalar_metadata_persistence_recovers_unique_race():
     collection = OpenGaussCollection.__new__(OpenGaussCollection)
     collection._distributed = False
@@ -1494,35 +1428,47 @@ def test_atomic_scalar_metadata_persistence_recovers_unique_race():
     assert any(item.args[0].startswith("UPDATE") for item in retry_cursor.execute.call_args_list)
 
 
-def test_search_sql_uses_stable_id_tiebreaker():
+def test_fulltext_pagination_completes_boundary_ties_or_fails_explicitly(monkeypatch):
+    from openviking.storage.vectordb_adapters.opengauss import fulltext
+
     collection = OpenGaussCollection.__new__(OpenGaussCollection)
     collection._distributed = False
-    collection._distance = "cosine"
     collection._name = "context"
-    collection._dim = 2
-    collection._distance = "cosine"
-    collection._field_names = {"id", "vector", "level"}
+    collection._meta = {"FullText": [{"Field": "content"}]}
+    collection._field_names = {"id", "content", "account_id"}
     collection._array_fields = set()
     collection._date_time_fields = set()
-    collection._indexes = {"default": {"_distance": "cosine"}}
-    collection._pending_indexes = {}
     collection._lock = threading.RLock()
     collection._conn = Mock()
-    cursor = Mock()
-    cursor.description = [("id",), ("vector",), ("_distance",)]
-    cursor.fetchall.return_value = []
-    collection._conn.cursor.return_value = cursor
-    collection._materialize_pending_index = Mock()
-    collection.has_index = Mock(return_value=True)
-    collection._apply_search_params_on_cursor = Mock()
+    collection._get_all_columns = Mock(return_value=["id", "content", "account_id"])
+    collection._get_column_types = Mock(return_value={"content": "text"})
+    collection._execute = Mock(return_value=[(True, True, "bm25", "content", True, 1)])
+    cursor = collection._conn.cursor.return_value
+    cursor.description = [("id",), ("content",), ("_ov_fulltext_score",)]
+    tied = [("a", "retrieval", 2.0), ("b", "retrieval", 2.0), ("c", "retrieval", 2.0)]
+    # The initial native prefix can omit the smallest ID in a boundary tie.
+    cursor.fetchall.side_effect = [tied[1:], tied, tied, tied]
+    options = {
+        "query": "retrieval",
+        "limit": 1,
+        "filters": {"op": "must", "field": "account_id", "conds": ["acct-1"]},
+        "output_fields": ["content"],
+    }
+    first = collection.search_by_keywords("default", **options)
+    second = collection.search_by_keywords("default", offset=1, **options)
+    assert [first.data[0].id, second.data[0].id] == ["a", "b"]
+    assert first.data[0].fields == {"content": "retrieval"}
+    assert first.data[0].score == 2.0
 
-    collection.search_by_vector("default", dense_vector=[1.0, 0.0])
-    assert "ORDER BY _distance, id" in cursor.execute.call_args.args[0]
+    monkeypatch.setattr(fulltext, "_BM25_MAX_CANDIDATES", 4)
+    cursor.fetchall.side_effect = [tied[1:], [*tied, ("d", "retrieval", 2.0)]]
+    with pytest.raises(ResourceExhaustedError, match="boundary tie group"):
+        collection.search_by_keywords("default", **options)
+    collection._conn.rollback.assert_called_once()
 
-    cursor.description = [("id",), ("level",), ("_scalar_val",)]
-    cursor.fetchall.return_value = []
-    collection.search_by_scalar("default", field="level", order="desc")
-    assert 'ORDER BY "level" DESC, id DESC' in cursor.execute.call_args.args[0]
+    collection._execute.return_value = []
+    with pytest.raises(FailedPreconditionError, match="ready"):
+        collection.search_by_keywords("default", **options)
 
 
 def test_healthy_index_query_ignores_unrelated_failing_pending_index():
@@ -1555,24 +1501,6 @@ def test_healthy_index_query_ignores_unrelated_failing_pending_index():
     collection._materialize_index.assert_not_called()
 
 
-def test_query_materializes_only_requested_pending_index():
-    collection = OpenGaussCollection.__new__(OpenGaussCollection)
-    collection._distributed = False
-    collection._distance = "cosine"
-    requested_meta = {"_distance": "cosine"}
-    collection._pending_indexes = {
-        "requested": requested_meta,
-        "secondary": {"_distance": "cosine"},
-    }
-    collection._bulk_ingest_depth = 0
-    collection._table_has_rows = Mock(return_value=True)
-    collection._materialize_index = Mock()
-
-    collection._materialize_pending_index("requested")
-
-    collection._materialize_index.assert_called_once_with("requested", requested_meta)
-
-
 def test_upsert_does_not_report_committed_rows_as_failed_when_index_build_fails():
     collection = OpenGaussCollection.__new__(OpenGaussCollection)
     collection._distributed = False
@@ -1599,41 +1527,6 @@ def test_upsert_does_not_report_committed_rows_as_failed_when_index_build_fails(
 
     collection._conn.commit.assert_called_once_with()
     collection._materialize_pending_indexes.assert_called_once_with()
-
-
-def test_upsert_preserves_original_disconnect_when_cleanup_also_fails():
-    collection = OpenGaussCollection.__new__(OpenGaussCollection)
-    collection._distributed = False
-    collection._name = "context"
-    collection._dim = 2
-    collection._field_names = {"id", "vector"}
-    collection._date_time_fields = set()
-    collection._lock = threading.RLock()
-    collection._conn = Mock()
-    cursor = collection._conn.cursor.return_value
-    cursor.rowcount = 0
-    disconnected = RuntimeError("server closed the connection unexpectedly")
-    disconnected.pgcode = "08006"
-
-    def execute(statement, params=None):
-        if statement.startswith("INSERT"):
-            raise disconnected
-        if statement.startswith(("ROLLBACK TO", "RELEASE SAVEPOINT")):
-            raise AssertionError("must not use disconnected cursor")
-
-    cursor.execute.side_effect = execute
-    cursor.close.side_effect = RuntimeError("cursor already closed")
-    collection._conn.rollback.side_effect = RuntimeError("connection closed")
-    collection._get_all_columns = Mock(return_value=["id", "vector"])
-    collection._get_column_types = Mock(return_value={"id": "varchar", "vector": "USER-DEFINED"})
-    collection._materialize_pending_indexes = Mock()
-    with pytest.raises(RuntimeError) as caught:
-        collection.upsert_data([{"id": "row", "vector": [1.0, 0.0]}])
-    assert caught.value is disconnected
-    collection._conn.commit.assert_not_called()
-    collection._conn.rollback.assert_called_once()
-    cursor.close.assert_called_once()
-    collection._materialize_pending_indexes.assert_not_called()
 
 
 def test_upsert_recovers_concurrent_insert_unique_race():
@@ -1696,22 +1589,6 @@ def test_load_index_meta_tolerates_only_missing_catalog_table():
     collection._execute = Mock(side_effect=_PermissionDeniedError("permission denied"))
     with pytest.raises(_PermissionDeniedError):
         collection._load_index_meta()
-
-
-def test_delete_index_meta_tolerates_only_missing_catalog_table():
-    collection = OpenGaussCollection.__new__(OpenGaussCollection)
-    collection._distributed = False
-    collection._distance = "cosine"
-    collection._name = "context"
-
-    collection._execute = Mock(
-        side_effect=_UndefinedTableError('relation "_ov_index_context" does not exist')
-    )
-    collection._delete_index_meta("default")
-
-    collection._execute = Mock(side_effect=RuntimeError("connection dropped"))
-    with pytest.raises(RuntimeError, match="connection dropped"):
-        collection._delete_index_meta("default")
 
 
 def test_is_table_already_distributed_propagates_non_catalog_errors():

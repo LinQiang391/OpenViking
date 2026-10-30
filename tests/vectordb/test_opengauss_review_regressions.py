@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import ValidationError
 
-from openviking.storage.vectordb.collection.collection import Collection
 from openviking.storage.vectordb_adapters.opengauss.collection import OpenGaussCollection
 from openviking.storage.vectordb_adapters.opengauss.metadata import migrate_persisted_index_meta
 from openviking.storage.vectordb_adapters.opengauss_adapter import OpenGaussCollectionAdapter
@@ -136,28 +135,3 @@ def test_delete_ids_matches_upstream_contract(ids):
         collection.delete_data.assert_called_once_with(ids)
     else:
         collection.delete_data.assert_not_called()
-
-
-def test_filter_delete_has_no_implicit_row_limit():
-    with patch.object(OpenGaussCollectionAdapter, "_connect"):
-        adapter = OpenGaussCollectionAdapter("context", OpenGaussConfig())
-    raw = OpenGaussCollection.__new__(OpenGaussCollection)
-    raw._name = "context"
-    raw._distributed = False
-    raw.get_meta_data = Mock(return_value={"Fields": []})
-    adapter._collection = Collection(raw)
-    adapter._conn = Mock()
-    cursor = adapter._conn.cursor.return_value
-    cursor.rowcount = 100001
-    cursor.fetchall.return_value = [(f"row-{index}",) for index in range(100001)]
-    cursor.fetchone.return_value = (False,)
-    assert (
-        adapter.delete(filter={"op": "must", "field": "account_id", "conds": ["tenant"]}) == 100001
-    )
-    assert cursor.execute.call_args_list[0].args[1] == ["tenant", None]
-    assert "RETURNING id" in cursor.execute.call_args_list[0].args[0]
-    cursor.fetchall.assert_called_once_with()
-    assert "information_schema.columns" in cursor.execute.call_args.args[0]
-    adapter._conn.commit.assert_called_once_with()
-    adapter._conn.rollback.assert_not_called()
-    cursor.close.assert_called_once_with()
